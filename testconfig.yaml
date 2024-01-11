@@ -1,0 +1,6 @@
+port: 8088
+dbconfig:
+  host: localhost
+#  port: 9000
+#  user: default
+  dbname: db

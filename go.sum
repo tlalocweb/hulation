@@ -635,6 +635,8 @@ github.com/ClickHouse/clickhouse-go/v2 v2.15.0 h1:G0hTKyO8fXXR1bGnZ0DY3vTG01xYfO
 github.com/ClickHouse/clickhouse-go/v2 v2.15.0/go.mod h1:kXt1SRq0PIRa6aKZD7TnFnY9PQKmc2b13sHtOYcK6cQ=
 github.com/Depado/bfchroma/v2 v2.0.0 h1:IRpN9BPkNwEpR6w1ectIcNWOuhDSLx+8f1pn83fzxx8=
 github.com/Depado/bfchroma/v2 v2.0.0/go.mod h1:wFwW/Pw8Tnd0irzgO9Zxtxgzp3aPS8qBWlyadxujxmw=
+github.com/IzumaNetworks/conftagz v0.0.1 h1:fMitHCtxQGcFvDP5qCCEA+7dqYcCS4wMb2uNMPBmhLs=
+github.com/IzumaNetworks/conftagz v0.0.1/go.mod h1:179Q9iaJ9T1dVLKZNhccGg60upmJjWsoD4RBDDLJ4bw=
 github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c/go.mod h1:X0CRv0ky0k6m906ixxpzmDRLvX58TFUKS2eePweuyxk=
 github.com/MicahParks/keyfunc/v2 v2.1.0 h1:6ZXKb9Rp6qp1bDbJefnG7cTH8yMN1IC/4nf+GVjO99k=
 github.com/MicahParks/keyfunc/v2 v2.1.0/go.mod h1:rW42fi+xgLJ2FRRXAfNx9ZA8WpD4OeE/yHVMteCkw9k=
@@ -1408,6 +1410,8 @@ github.com/mailru/easyjson v0.0.0-20190614124828-94de47d64c63/go.mod h1:C1wdFJiN
 github.com/mailru/easyjson v0.0.0-20190626092158-b2ccc519800e/go.mod h1:C1wdFJiN94OJF2b5HbByQZoLdCWB1Yqtg26g4irojpc=
 github.com/mailru/easyjson v0.7.0/go.mod h1:KAzv3t3aY1NaHWoQz1+4F1ccyAH66Jk7yos7ldAVICs=
 github.com/mailru/easyjson v0.7.6/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
+github.com/mailru/go-clickhouse v1.8.0 h1:wqTHVsfR4g+BSwKso7X90RdOsVXaSwqJ96GmgBPSgVA=
+github.com/mailru/go-clickhouse v1.8.0/go.mod h1:crHi+yrqslIClnYPm8IOxYVX6GmYVYymJ601I4jDqvo=
 github.com/marstr/guid v1.1.0/go.mod h1:74gB1z2wpxxInTG6yaqA7KrtM0NZ+RbrcqDvYHefzho=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
