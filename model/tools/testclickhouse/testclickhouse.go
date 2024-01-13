@@ -118,6 +118,8 @@ func main() {
 	if err := conn.PingContext(ctx); err != nil {
 		if exception, ok := err.(*chapi.Exception); ok {
 			fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+		} else {
+			fmt.Printf("Error: %s\n", err.Error())
 		}
 		os.Exit(1)
 	} else {

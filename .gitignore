@@ -21,3 +21,5 @@
 go.work
 
 ch_*
+model/tools/setupdb/setupdb
+model/tools/testclickhouse/testclickhouse
