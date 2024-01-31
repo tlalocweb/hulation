@@ -1,0 +1,9 @@
+port: 8088
+servers:
+  - host: localhost
+    id: testid
+dbconfig:
+  host: localhost
+#  port: 9000
+#  user: default
+  dbname: dbtestmodel

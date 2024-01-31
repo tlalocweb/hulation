@@ -7,11 +7,11 @@ import (
 )
 
 type Form struct {
-	gorm.Model
+	HModel
 	ID            uint   `json:"id" gorm:"primary_key"`
 	URL           string `json:"url"`
 	Description   string `json:"description"`
-	TemplateEvent Event  `json:"template_event"`
+	TemplateEvent *Event `json:"template_event" gorm:"foreignKey:ID"`
 	FieldsJSON    string `json:"fields"`
 }
 

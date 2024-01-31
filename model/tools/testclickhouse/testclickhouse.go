@@ -11,6 +11,7 @@ import (
 	// _ "github.com/mailru/go-clickhouse"
 	// click "github.com/mailru/go-clickhouse/v2"
 	chapi "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/tlalocweb/hulation/config"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
@@ -84,6 +85,7 @@ func main() {
 		fmt.Printf("Error loading config: (%s) %s", confpath, err.Error())
 		os.Exit(1)
 	}
+	fmt.Printf("Got config:\n%s\n", spew.Sdump(hulationconf))
 
 	dsn := config.GetDSNFromConfig(hulationconf)
 	fmt.Printf("Connecting to %s\n", dsn)

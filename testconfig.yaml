@@ -1,4 +1,23 @@
 port: 8088
+# ssl:
+#   cert: cert.pem
+#   key: key.pem
+proxies:
+  - target: http://localhost:1314
+    by_path: "/"
+servers:
+  - host: localhost
+    id: abc123
+    ignore_port_in_host: true
+    publish_port: true
+    http_scheme: http
+    path_prefix: "/hula"
+cors:
+  allow_origins: "http://localhost:1314"
+  # will set the Access-Control-Allow-Origin header to the value of the originating request's host
+  # this should only be set for debug / development reasons
+  unsafe_any_origin: true
+  allow_credentials: true
 dbconfig:
   host: localhost
 #  port: 9000

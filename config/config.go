@@ -1,10 +1,13 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/IzumaNetworks/conftagz"
+	"github.com/tlalocweb/hulation/log"
 	"gopkg.in/yaml.v2"
 )
 
@@ -22,12 +25,150 @@ type DBConfig struct {
 	Port     int    `yaml:"port,omitempty" env:"DB_PORT" test:"<65536,>0" default:"9000"`
 }
 
+type CookieOpts struct {
+	// there are various implications of prefixing cookies with a beginning _ underscore character
+	// research for a later time
+	CookiePrefix string `yaml:"cookie_prefix,omitempty" env:"SERVER_COOKIE_PREFIX" test:"~.+" default:"hula"`
+	// the default is to set the cookie to expire in 1 year
+	// this is also the default for Google Analytics
+	ExpireDays int    `yaml:"expire_days,omitempty" env:"COOKIE_EXPIRE_DAYS" test:">0" default:"365"`
+	SameSite   string `yaml:"same_site,omitempty" env:"COOKIE_SAME_SITE" test:"~^(Strict|Lax|None)$" default:"None"`
+	// if true, do not set the Secure flag on the cookie
+	NoSecure bool `yaml:"no_secure,omitempty" env:"COOKIE_NO_SECURE"`
+}
+type Server struct {
+	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
+	// ID should be a short random string - it is used as a parameter to the hulation server to identify the server
+	// and do a check with the Host header. It must be set - there is no default. This is not a secret.
+	ID         string      `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
+	Domain     string      `yaml:"domain,omitempty" env:"SERVER_DOMAIN"`
+	APIPath    string      `yaml:"api_path,omitempty" env:"SERVER_API_PATH" test:"~\\/.+" default:"/api"`
+	CookieOpts *CookieOpts `yaml:"cookie_opts,omitempty"`
+	// not common - will ignore port in Host header when validating - useful for local testing
+	IgnorePortInHeader bool `yaml:"ignore_port_in_host"`
+	// When dynamically creating the hula.js script - publish the port hula is running on
+	// (this would only be done if not running hulation behind a transparent proxy - not common)
+	PublishPort bool `yaml:"publish_port"`
+	// When dynamically creating the hula.js script - publish which protocol hula is running on (externally visible)
+	HttpScheme string `yaml:"http_scheme,omitempty" env:"SERVER_HTTP_SCHEME" test:"~.+" default:"https"`
+	// computed string
+	externalUrl string
+}
+
+func (s *Server) GetExternalUrl() string {
+	return s.externalUrl
+}
+
+type CORSConfig struct {
+	// the default '*' is not recommended as it will often block requests from happening in some browsers
+	// specificity is recommended
+	// see: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS/Errors/CORSNotSupportingCredentials?utm_source=devtools&utm_medium=firefox-cors-errors&utm_campaign=default
+	AllowOrigins     string `yaml:"allow_origins,omitempty" env:"CORS_ALLOW_ORIGINS"`
+	AllowMethods     string `yaml:"allow_methods,omitempty" env:"CORS_ALLOW_METHODS" default:"GET,POST,HEAD,PUT,DELETE,PATCH,OPTIONS"`
+	AllowHeaders     string `yaml:"allow_headers,omitempty" env:"CORS_ALLOW_HEADERS"` // default:"Origin,Content-Type,Accept,Content-Length,Accept-Language,Accept-Encoding,Connection,Access-Control-Allow-Origin"`
+	AllowCredentials bool   `yaml:"allow_credentials,omitempty" env:"CORS_ALLOW_CREDENTIALS"`
+	// if true, this external URL of this server will not be added to CORS allow origins
+	NoAddInHula bool `yaml:"no_add_in_hula"`
+	// will set the Access-Control-Allow-Origin header to the value of the originating request's host
+	// this should only be set for debug / development reasons
+	UnsafeAnyOrigin bool `yaml:"unsafe_any_origin" env:"UNSAFE_ANY_ORIGIN"`
+}
+
+type SSLConfig struct {
+	// can be either the cert / key itself infline or a path to the cert / key
+	Cert string `yaml:"cert,omitempty" env:"SSL_CERT"`
+	Key  string `yaml:"key,omitempty" env:"SSL_KEY"`
+	// if the above is a path, it moved here
+	certPath string
+	keyPath  string
+	tlsCert  *tls.Certificate
+}
+
+func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
+	return cfg.tlsCert
+}
+
+func (cfg *SSLConfig) LoadSSLConfig() (err error) {
+	if len(cfg.Cert) > 0 {
+		if _, err := os.Stat(cfg.Cert); err == nil {
+			cfg.certPath = cfg.Cert
+		}
+	}
+	if len(cfg.Key) > 0 {
+		if _, err := os.Stat(cfg.Key); err == nil {
+			cfg.keyPath = cfg.Key
+		}
+	}
+	// now read each file and place in struct
+	if len(cfg.certPath) > 0 && len(cfg.keyPath) > 0 {
+		cert, err := os.ReadFile(cfg.certPath)
+		if err != nil {
+			log.Fatalf("TLS: error reading cert file: %s", err.Error())
+		}
+		key, err := os.ReadFile(cfg.keyPath)
+		if err != nil {
+			log.Fatalf("TLS: error reading key file: %s", err.Error())
+		}
+		cfg.Cert = string(cert)
+		cfg.Key = string(key)
+	}
+	var cert tls.Certificate
+	cert, err = tls.X509KeyPair([]byte(cfg.Cert), []byte(cfg.Key))
+	if err != nil {
+		log.Fatalf("TLS: error parsing cert/key: %s", err.Error())
+	} else {
+		log.Infof("TLS: loaded cert/key")
+		cfg.tlsCert = &cert
+	}
+	return
+}
+
 type Config struct {
-	Port     int       `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
-	DBConfig *DBConfig `yaml:"dbconfig,omitempty"`
+	Port     int         `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
+	DBConfig *DBConfig   `yaml:"dbconfig,omitempty"`
+	Servers  []*Server   `yaml:"servers,omitempty"`
+	CORS     *CORSConfig `yaml:"cors,omitempty"`
+	SSL      *SSLConfig  `yaml:"ssl,omitempty"`
+	Proxies  []*Proxy    `yaml:"proxies,omitempty"`
+	// allows customization of the hula.js script filename - this changes what HTTP GET path is used to serve the script
+	// default: https://server.com/hula.js
+	PublishedScriptFilename         string `yaml:"script_filename,omitempty" env:"PUBLISHED_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hula.js"`
+	PublishedIFrameHelloFileName    string `yaml:"iframe_hello_filename,omitempty" env:"PUBLISHED_IFRAME_HELLO_FILENAME" test:"~[^\\/]+" default:"hula_hello.html"`
+	PublishedIFrameNoScriptFilename string `yaml:"iframe_noscript_filename,omitempty" env:"PUBLISHED_IFRAME_NOSCRIPT_FILENAME" test:"~[^\\/]+" default:"hulans.html"`
+	// use only for debugging - this will will prevent hila from looking
+	// at the Host header when validating the request
+	UnsafeNoHostCheck bool `yaml:"unsafe_no_host_check,omitempty" env:"UNSAFE_NO_HOST_CHECK"`
+	// the amount of time we wait for all
+	// methods of a visitor to return before we write the visitor to the DB
+	BounceTimeout int64 `yaml:"bounce_timeout,omitempty" env:"BOUNCE_TIMEOUT" test:">0" default:"2000"`
 	// Store *store.StoreConfig `yaml:"store"`
 	// List of IP addresses to accept connections from
 	// AcceptIPs []string `yaml:"accept_ips"`
+	byServer map[string]*Server
+	// script folder - default fine if hulation exec is in the top folder of repo
+	ScriptFolder        string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
+	LocalScriptFilename string `yaml:"local_script_filename,omitempty" env:"LOCAL_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hello.js"`
+}
+
+type Proxy struct {
+	// The taret URL to proxy to - such http://127.0.0.1:8080 for a local server
+	Target string `yaml:"target,omitempty" test:"~.+"`
+	// use by_domain if you want to proxy an entire host
+	ByDomain string `yaml:"by_domain,omitempty"`
+	ByPath   string `yaml:"by_path,omitempty"`
+}
+
+const (
+	getDomain_re = `(?m)(?:.+\.)?([^.]+\.[^.]+)`
+)
+
+var getDomainRE = regexp.MustCompile(getDomain_re)
+
+func (cfg *Config) GetServer(host string) *Server {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.byServer[host]
 }
 
 func LoadConfig(filename string) (*Config, error) {
@@ -43,9 +184,60 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
 
-	_, err = conftagz.Process(nil, &cfg)
+	err = conftagz.Process(nil, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("bad config: %s,", err.Error())
+	}
+
+	if len(cfg.Servers) < 1 {
+		return nil, fmt.Errorf("no servers defined")
+	}
+
+	cfg.byServer = make(map[string]*Server)
+	for _, s := range cfg.Servers {
+		if len(s.Domain) < 1 {
+			res := getDomainRE.FindAllStringSubmatch(s.Host, -1)
+			if len(res) > 0 && len(res[0]) > 1 {
+				s.Domain = res[0][1]
+			} else {
+				s.Domain = s.Host
+			}
+			log.Debugf("server[%s].domain = %s", s.Host, s.Domain)
+		}
+		var portstring string
+		if s.PublishPort {
+			if cfg.Port != 443 && cfg.Port != 80 {
+				portstring = fmt.Sprintf(":%d", cfg.Port)
+			}
+		}
+		s.externalUrl = fmt.Sprintf("%s://%s%s", s.HttpScheme, s.Host, portstring)
+
+		cfg.byServer[s.Host] = s
+	}
+
+	if cfg.CORS != nil {
+		if !cfg.CORS.NoAddInHula {
+			alloworigins := cfg.CORS.AllowOrigins
+			for _, s := range cfg.Servers {
+				if len(alloworigins) > 0 {
+					alloworigins += ", "
+				}
+				alloworigins += s.externalUrl
+			}
+			cfg.CORS.AllowOrigins = alloworigins
+			log.Debugf("CORS.AllowOrigins = %s", alloworigins)
+		}
+	}
+
+	if cfg.SSL != nil {
+		// skip if these are both entirely empty - it means the user
+		// did not want SSL, otherwise let the error handling work
+		if len(cfg.SSL.Cert) > 0 || len(cfg.SSL.Key) > 1 {
+			err = cfg.SSL.LoadSSLConfig()
+			if err != nil {
+				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
+			}
+		}
 	}
 
 	return &cfg, nil
