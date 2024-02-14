@@ -1,0 +1,9 @@
+hello:
+    # some comment
+    world:
+        - name: John
+          info:
+        - name: Name
+          info:
+            data1: 123
+            data2: 789

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 
+	"github.com/gofiber/contrib/opafiber/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -10,6 +12,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/router"
 )
 
@@ -27,6 +30,100 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 	appfiber := fiber.New(fiber.Config{
 		// Views: engine,
 	})
+
+	opaModule := `
+	package hulation.authz
+	
+	import rego.v1
+
+	default allow := false
+	
+#	allow {
+#		input.method == "GET"
+#	}
+	# always allow the root user
+	allow if {
+		input.userid == input.rootname
+	}
+	allow if {
+		some cap in input.attrs
+		cap == "admin"
+	}
+	`
+	// Interesting - but we aren't using it:
+	// claims := payload if {
+	// 	# Verify the signature on the Bearer token. In this example the secret is
+	// 	# hardcoded into the policy however it could also be loaded via data or
+	// 	# an environment variable. Environment variables can be accessed using
+	// 	# the opa.runtime() built-in function.
+	// 	io.jwt.verify_hs256(bearer_token, "%s")
+
+	// 	# This statement invokes the built-in function io.jwt.decode passing the
+	// 	# parsed bearer_token as a parameter. The io.jwt.decode function returns an
+	// 	# array:
+	// 	#
+	// 	#	[header, payload, signature]
+	// 	#
+	// 	# In Rego, you can pattern match values using the = and := operators. This
+	// 	# example pattern matches on the result to obtain the JWT payload.
+	// 	[_, payload, _] := io.jwt.decode(bearer_token)
+	// }
+
+	// bearer_token := t if {
+	// 	# Bearer tokens are contained inside of the HTTP Authorization header. This rule
+	// 	# parses the header and extracts the Bearer token value. If no Bearer token is
+	// 	# provided, the bearer_token value is undefined.
+	// 	v := input.attributes.request.http.headers.authorization
+	// 	startswith(v, "Bearer ")
+	// 	t := substring(v, count("Bearer "), -1)
+	// }
+
+	cfg := opafiber.Config{
+		RegoQuery:             "data.hulation.authz.allow",
+		RegoPolicy:            bytes.NewBufferString(opaModule),
+		IncludeQueryString:    true,
+		DeniedStatusCode:      fiber.StatusForbidden,
+		DeniedResponseMessage: "status forbidden",
+		IncludeHeaders:        []string{"Authorization"},
+		InputCreationMethod: func(ctx *fiber.Ctx) (map[string]interface{}, error) {
+			ahdr := ctx.Get("Authorization")
+			var token string
+			n, err := fmt.Sscanf("Bearer %s", ahdr, token)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing token: %w", err)
+			}
+			if n < 1 {
+				return nil, fmt.Errorf("no token")
+			}
+
+			// lookup token here
+			ok, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+			if err != nil {
+				return nil, fmt.Errorf("error verifying token: %w", err)
+			}
+			if !ok {
+				return nil, fmt.Errorf("token not valid")
+			}
+			ctx.Locals("jwt", token)
+			ctx.Locals("perms", perms)
+			// then add capabilities to the map we pass to OPA
+
+			// lookup token here
+			return map[string]interface{}{
+				"method":   ctx.Method(),
+				"path":     ctx.Path(),
+				"jwt":      token,
+				"jwtkey":   app.GetConfig().JWTKey,
+				"rootname": app.GetConfig().Admin.Username,
+				"userid":   perms.UserID,
+				"attrs":    perms.ListCaps(), // this is the input.attributes
+				"ip":       ctx.IP(),
+			}, nil
+		},
+	}
+
+	appfiber.Use([]string{"/form/model"}, opafiber.New(cfg))
+
 	var corsconfig cors.Config
 	if conf.CORS != nil {
 		if conf.CORS.UnsafeAnyOrigin {

@@ -1,4 +1,6 @@
 port: 8088
+admin:
+  hash: blah
 servers:
   - host: localhost
     id: testid

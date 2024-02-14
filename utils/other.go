@@ -1,12 +1,46 @@
 package utils
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"crypto/sha256"
+	"fmt"
+
+	"github.com/tlalocweb/argon2id"
 )
+
+const reStrGetURLPieces = `(http[s]?)\:\/\/([^\/:]+)(?:\:([0-9]+))?(.*)`
+
+var reGetURLPieces *regexp.Regexp
+
+func GetURLPieces(url string) (proto string, host string, port int64, path string) {
+	var portStr string
+	if reGetURLPieces == nil {
+		reGetURLPieces = regexp.MustCompile(reStrGetURLPieces)
+	}
+	res := reGetURLPieces.FindAllStringSubmatch(url, -1)
+	if len(res) > 0 && len(res[0]) > 1 {
+		proto = res[0][1]
+		host = res[0][2]
+		if len(res[0]) > 3 {
+			portStr = res[0][3]
+			path = res[0][4]
+		}
+	}
+	if len(portStr) > 0 {
+		port, _ = strconv.ParseInt(portStr, 10, 0)
+	} else {
+		port = 80
+		if proto == "https" {
+			port = 443
+		}
+	}
+	return
+}
 
 // SqlStr replace ^ or ” with `
 func SqlStr(s string) (ret string) {
@@ -73,3 +107,82 @@ func GetURLHostPath(path string) (host string, urlpath string) {
 	}
 	return
 }
+
+// func main() {
+// 	// Pass the plaintext password and parameters to our generateFromPassword
+// 	// helper function.
+// 	hash, err := generateFromPassword("password123", p)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+
+// 	fmt.Println(hash)
+// }
+
+// Argon2 is the password hash (key derivation) algorithm we use to store password hasesh.
+// ...Establish the parameters to use for Argon2.
+// See: https://www.alexedwards.net/blog/how-to-hash-and-verify-passwords-with-argon2-in-go
+// Author's default below.
+// we don't want to eat this much memory for a password hasher
+// so we increase the iterations
+// p := &params{
+// 	memory:      64 * 1024,
+// 	iterations:  3,
+// 	parallelism: 2,
+// 	saltLength:  16,
+// 	keyLength:   32,
+// }
+
+var defaultArgon2Params = &argon2id.Params{
+	Memory:      16 * 1024,
+	Iterations:  12,
+	Parallelism: 4,
+	SaltLength:  16,
+	KeyLength:   48,
+}
+
+// Argon2GenerateFromPasswordDefaults is a helper function that uses the default parameters as determined in utils/other.go
+func Argon2GenerateFromSecretDefaults(password string) (encodedHash string, err error) {
+	return Argon2GenerateFromSecret(password, defaultArgon2Params)
+}
+
+// Generagtes an Argon2 hash (key) from a password/secret and parameters.
+// See: https://www.alexedwards.net/blog/how-to-hash-and-verify-passwords-with-argon2-in-go
+func Argon2GenerateFromSecret(password string, p *argon2id.Params) (hash string, err error) {
+	hash, err = argon2id.CreateHash(password, defaultArgon2Params)
+	return
+}
+
+func Argon2CompareHashAndSecret(secret, hash string) (match bool, err error) {
+	match, err = argon2id.ComparePasswordAndHash(secret, hash)
+	return
+}
+
+// this is a function which hashes a password for use with /login
+// with Hula. It is a sha256 hash of the password.
+func GenerateHulaNetworkPassHash(password string) (hash string) {
+	sum := sha256.Sum256([]byte(password))
+	hash = fmt.Sprintf("%x", sum)
+	return
+}
+
+// This generate the hash we store in the database. It is built from the sha256 hash of the password
+// which is sent to use with auth API. The user should never send their actual password
+func GenerateHulaHashFromPlaintextPass(password string) (argonhash string, stringsum string, err error) {
+	// we never actually should keep or know the real password - so first we hash it using sha256
+	stringsum = GenerateHulaNetworkPassHash(password)
+	fmt.Printf("sha256: %s\n", stringsum)
+	// then we hash it using argon2
+	argonhash, err = Argon2GenerateFromSecretDefaults(stringsum)
+	return
+}
+
+// func GenerateRandomBytes(n uint32) ([]byte, error) {
+// 	b := make([]byte, n)
+// 	_, err := rand.Read(b)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	return b, nil
+// }

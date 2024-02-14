@@ -15,6 +15,7 @@ const (
 	EventCodeStartForm         = 0x00000004
 	EventCodeReferredFromKnown = 0x00000008
 	EventCodeScrolledIntoView  = 0x00000010
+	EventCodeFormSubmission    = 0x00000020
 )
 
 type Event struct {
@@ -41,6 +42,11 @@ func NewEvent(code uint64) (ret *Event) {
 		// FromIP:    fromIP,
 		// BrowserUA: browserUA,
 	}
+	uuid7, err := uuid.NewV7()
+	if err != nil {
+		model_attn_debugf("Error creating new event uuid: %v", err)
+	}
+	ret.ID = uuid7.String()
 	return
 }
 
@@ -89,6 +95,9 @@ func (e *Event) CommitTo(db *gorm.DB, v *Visitor) error {
 }
 
 func (e *Event) BeforeCreate(tx *gorm.DB) (err error) {
+	if e.ID != "" {
+		return
+	}
 	uuid7, err := uuid.NewV7()
 	if err != nil {
 		return err

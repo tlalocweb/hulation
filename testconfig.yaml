@@ -1,3 +1,5 @@
+admin:
+  hash: "$argon2id$v=19$m=16384,t=12,p=4$wgJ+pzUyMgQTCOu6/Wi4xQ$pd7IPBD0GeKuYDs40Osni9hvCrgH8g7mkosDUxkm3EqYf/1zesUamtPRa9cNfLNW"
 port: 8088
 # ssl:
 #   cert: cert.pem

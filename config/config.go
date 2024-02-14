@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/IzumaNetworks/conftagz"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/utils"
 	"gopkg.in/yaml.v2"
 )
 
@@ -123,16 +125,30 @@ func (cfg *SSLConfig) LoadSSLConfig() (err error) {
 	return
 }
 
+func ValidTimeDuration(val interface{}, fieldname string) bool {
+	_, err := time.ParseDuration(val.(string))
+	return err == nil
+}
+
+type Admin struct {
+	Username string `yaml:"username,omitempty" env:"ADMIN_USERNAME" test:"~.+" default:"admin"`
+	Hash     string `yaml:"hash" env:"HULA_ADMIN_HASH" test:"~.+"`
+}
+
 type Config struct {
-	Port     int         `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
-	DBConfig *DBConfig   `yaml:"dbconfig,omitempty"`
-	Servers  []*Server   `yaml:"servers,omitempty"`
-	CORS     *CORSConfig `yaml:"cors,omitempty"`
-	SSL      *SSLConfig  `yaml:"ssl,omitempty"`
-	Proxies  []*Proxy    `yaml:"proxies,omitempty"`
+	Admin         *Admin      `yaml:"admin,omitempty"`
+	Port          int         `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
+	DBConfig      *DBConfig   `yaml:"dbconfig,omitempty"`
+	Servers       []*Server   `yaml:"servers,omitempty"`
+	CORS          *CORSConfig `yaml:"cors,omitempty"`
+	SSL           *SSLConfig  `yaml:"ssl,omitempty"`
+	Proxies       []*Proxy    `yaml:"proxies,omitempty"`
+	JWTKey        string      `yaml:"jwt_key,omitempty"`
+	JWTExpiration string      `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// allows customization of the hula.js script filename - this changes what HTTP GET path is used to serve the script
 	// default: https://server.com/hula.js
-	PublishedScriptFilename         string `yaml:"script_filename,omitempty" env:"PUBLISHED_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hula.js"`
+	PublishedHelloScriptFilename    string `yaml:"hello_script_filename,omitempty" env:"PUBLISHED_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hula.js"`
+	PublishedFormsScriptFilename    string `yaml:"forms_script_filename,omitempty" env:"PUBLISHED_FORMS_SCRIPT_FILENAME" test:"~[^\\/]+" default:"forms.js"`
 	PublishedIFrameHelloFileName    string `yaml:"iframe_hello_filename,omitempty" env:"PUBLISHED_IFRAME_HELLO_FILENAME" test:"~[^\\/]+" default:"hula_hello.html"`
 	PublishedIFrameNoScriptFilename string `yaml:"iframe_noscript_filename,omitempty" env:"PUBLISHED_IFRAME_NOSCRIPT_FILENAME" test:"~[^\\/]+" default:"hulans.html"`
 	// use only for debugging - this will will prevent hila from looking
@@ -146,8 +162,9 @@ type Config struct {
 	// AcceptIPs []string `yaml:"accept_ips"`
 	byServer map[string]*Server
 	// script folder - default fine if hulation exec is in the top folder of repo
-	ScriptFolder        string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
-	LocalScriptFilename string `yaml:"local_script_filename,omitempty" env:"LOCAL_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hello.js"`
+	ScriptFolder             string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
+	LocalHelloScriptFilename string `yaml:"local_hello_script_filename,omitempty" env:"LOCAL_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hello.js"`
+	LocalFormsScriptFilename string `yaml:"local_forms_script_filename,omitempty" env:"LOCAL_FORMS_SCRIPT_FILENAME" test:"~[^\\/]+" default:"forms.js"`
 }
 
 type Proxy struct {
@@ -183,6 +200,7 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
+	conftagz.RegisterTestFunc("validtimeduration", ValidTimeDuration)
 
 	err = conftagz.Process(nil, &cfg)
 	if err != nil {
@@ -191,6 +209,14 @@ func LoadConfig(filename string) (*Config, error) {
 
 	if len(cfg.Servers) < 1 {
 		return nil, fmt.Errorf("no servers defined")
+	}
+
+	if len(cfg.JWTKey) < 1 {
+		log.Warnf("JWTKey not set - this is not recommended. Tokens will be invalid on server restart.")
+		cfg.JWTKey, err = utils.GenerateBase64RandomString(32)
+		if err != nil {
+			return nil, fmt.Errorf("error generating JWTKey: %s", err.Error())
+		}
 	}
 
 	cfg.byServer = make(map[string]*Server)

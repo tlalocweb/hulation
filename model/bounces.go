@@ -149,6 +149,18 @@ func (b *BounceMap) NewBounceWithVisitor(v *Visitor, cb OnBounce, data ...map[ui
 	return
 }
 
+// NOTE: there is no mutex around Data b/c it is assumed that
+// the data is only written to by the creator or accessor of the bounce, and tht such access
+// is naturally linear. If this is not the case, then a mutex should be added to the Bounce struct
+func (b *BounceMap) GetDataByBounceID(bounceid string, dataid uint32) (data interface{}, ok bool) {
+	bnc, loaded := b.byBouncID.Get(bounceid)
+	if loaded {
+		data = bnc.Data[dataid]
+		ok = true
+	}
+	return
+}
+
 // Given a CookieID, this will return a
 func (b *BounceMap) ReportBounceBack(bounceid string, cb OnBounce, data ...map[uint32]interface{}) (err error) {
 	bnc, loaded := b.byBouncID.GetAndDel(bounceid)

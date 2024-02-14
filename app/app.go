@@ -117,6 +117,16 @@ func LoadConfig() (err error) {
 	return err
 }
 
+// only used in test harness
+func LoadConfigWithFile(configfile string) (configret *config.Config, err error) {
+	appConfig, err = config.LoadConfig(configfile)
+	if err != nil {
+		return nil, err
+	}
+	configret = appConfig
+	return
+}
+
 func GetLogLevel() int {
 	return appDebugLevel
 }

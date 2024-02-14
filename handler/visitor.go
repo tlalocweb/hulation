@@ -104,6 +104,19 @@ func Hello(c *fiber.Ctx) error {
 		return c.Status(404).SendString("404 Not Found - No bounce query param")
 	}
 
+	// figure out visitor
+	var sscookiem *model.VisitorCookie
+	var sscookie string
+	rawdat, ok := visitorBounceMap.GetDataByBounceID(bounce, BMIndexSSCookieM)
+	if ok {
+		sscookiem = rawdat.(*model.VisitorCookie)
+	} else {
+		log.Debugf("in /hello - no sscookie found for bounce: %s", bounce)
+	}
+	if sscookiem != nil {
+		sscookie = sscookiem.Cookie
+	}
+
 	visitorBounceMap.ReportBounceBack(bounce, func(b *model.Bounce) (err error) {
 		// should only write to DB if changed
 		err = b.Visitor.Commit(model.GetDB())
@@ -142,7 +155,7 @@ func Hello(c *fiber.Ctx) error {
 		return err
 	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
 
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "ok", "vc": sscookie})
 }
 
 const iframehello = `<!doctype html>
@@ -354,7 +367,7 @@ func HelloIframe(c *fiber.Ctx) error {
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(url), BMIndexCookieM: cookiem, BMIndexSSCookieM: sscookiem,
 		BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
 
-	body, err = iframeHelloTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
+	body, err = iframeHelloTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
 		"b": bounceS, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
 	if err != nil {
 		return c.Status(500).SendString("error rendering iframe template: " + err.Error())
@@ -662,7 +675,7 @@ func HelloNoScript(c *fiber.Ctx) error {
 		}, map[uint32]interface{}{BMIndexURL: strings.Clone(url), BMIndexCookieM: cookiem, BMIndexSSCookieM: sscookiem,
 			BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
 
-		body, err = iframeTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
+		body, err = iframeTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
 			"b": bounceS, "iframename": app.GetConfig().PublishedIFrameNoScriptFilename, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
 		if err != nil {
 			return c.Status(500).SendString("error rendering iframe template: " + err.Error())

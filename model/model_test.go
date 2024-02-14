@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/assert"
+	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"gorm.io/gorm"
@@ -348,11 +350,20 @@ func TestNoVisitorByThatSSCookie(t *testing.T) {
 	assert.Nil(t, v)
 }
 
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
 func TestMain(m *testing.M) {
 	var err error
 	var conf *config.Config
-	conf, err = config.LoadConfig("./testmodel.yaml")
-	SetDebugDBLogging(2)
+	conf, err = app.LoadConfigWithFile("./testmodel.yaml")
+	doDebugDbModelTest(func() {
+		// use -tags modeldbdebug to enable this
+		// prints out all sql statements and more
+		SetDebugDBLogging(2)
+	})
+
 	if err != nil {
 		log.Errorf("Error with config: %v", err)
 		fmt.Printf("Error with config: %v", err)
@@ -376,4 +387,92 @@ func TestMain(m *testing.M) {
 	// Close the database
 	CloseDB(testdb)
 	os.Exit(exitval)
+}
+
+// ////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////
+func TestUserCreate(t *testing.T) {
+	// cleanup any previous test in db
+	err := DeleteUserByEmail(testdb, "ed@test.com")
+	assert.NoError(t, err)
+	user, err := CreateNewUser(testdb, "ed@test.com", "Ed", "Test")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, user.ID)
+	var user2 *User
+	user2, err = GetUserById(testdb, user.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, user2)
+	assert.Equal(t, user.ID, user2.ID)
+	err = DeleteUser(testdb, user.ID)
+	assert.NoError(t, err)
+}
+
+func TestLoginUserWithClaims(t *testing.T) {
+	//	assert.NotNil(t, app.GetConfig())
+	// cleanup any previous test in db
+	err := DeleteUserByEmail(testdb, "random@test.com")
+	assert.NoError(t, err)
+	fmt.Printf("Sleeping for 1 second to allow db to catch up post OPTIMIZE\n")
+	err = DeleteRole(testdb, "examplerole")
+	assert.NoError(t, err)
+	time.Sleep(1 * time.Second)
+
+	user, err := CreateNewUser(testdb, "random@test.com", "TestLoginUserWithClaims", "Test")
+	assert.NotNil(t, user)
+	assert.NoError(t, err)
+	if user == nil {
+		return
+	}
+	assert.NotEmpty(t, user.ID)
+
+	// Add a role to the user
+	role, err2 := CreateRole(testdb, "examplerole", "examplecap.*")
+	if err2 != nil {
+		t.Errorf("Error creating role: %v", err2)
+		return
+	}
+	assert.NotEmpty(t, role.CreatedAt)
+
+	err = AddRoleToUser(testdb, user.ID, role.Name)
+	assert.NoError(t, err)
+
+	err = AddAttrToUser(testdb, user.ID, "testattr")
+	assert.NoError(t, err)
+
+	// check user roles - make sure the role is there
+	roles, err := GetRolesByUserId(testdb, user.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, roles)
+	assert.Equal(t, 1, len(roles))
+	assert.Equal(t, role.Name, roles[0].Name)
+	// check user attrs - make sure the attr is there
+	attrs, err := GetAttrsByUserId(testdb, user.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, attrs)
+	assert.Equal(t, 1, len(attrs))
+	assert.Equal(t, "testattr", attrs[0].Caps)
+
+	err = AddAttrToUser(testdb, user.ID, "testattr2")
+	assert.NoError(t, err)
+	// check user attrs - make sure the attr is there
+	attrs, err = GetAttrsByUserId(testdb, user.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, attrs)
+	assert.Equal(t, 2, len(attrs))
+
+	// create JWT
+	var jwt string
+	jwt, err = NewJWTClaimsCommit(testdb, user.ID, nil)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, jwt)
+	t.Logf("JWT: %s", jwt)
+	// validate JWT
+	ok, perms, err := VerifyJWTClaims(testdb, jwt)
+	assert.True(t, ok)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, perms)
+
+	assert.True(t, perms.HasCap("testattr2"))
+
 }

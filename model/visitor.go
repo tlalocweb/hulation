@@ -223,7 +223,7 @@ type Visitor struct {
 	Aliases []*Alias `gorm:"many2many:visitor_to_alias" json:"aliases"` // many:many
 
 	// true if the struct has been modified since being pulled from the DB
-	wasMod bool
+	needCommit bool
 }
 
 const (
@@ -264,11 +264,11 @@ func (v *Visitor) initmodel() (err error) {
 			return
 		}
 		v.ID = uuid7.String()
-		v.wasMod = true
+		v.needCommit = true
 	}
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now()
-		v.wasMod = true
+		v.needCommit = true
 	}
 	// if v.UpdatedAt.IsZero() {
 	// 	v.UpdatedAt = time.Now()
@@ -285,13 +285,13 @@ func (v *Visitor) initmodelErrorIfOld() (err error) {
 			return
 		}
 		v.ID = uuid7.String()
-		v.wasMod = true
+		v.needCommit = true
 	} else {
 		return fmt.Errorf("Visitor already has an ID: %s", v.ID)
 	}
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now()
-		v.wasMod = true
+		v.needCommit = true
 	}
 	// if v.UpdatedAt.IsZero() {
 	// 	v.UpdatedAt = time.Now()
@@ -377,21 +377,21 @@ func NewVisitor() (ret *Visitor) {
 }
 
 func (v *Visitor) FlagMod() {
-	v.wasMod = true
+	v.needCommit = true
 }
 
 func (v *Visitor) SetEmail(email string) {
-	v.wasMod = true
+	v.needCommit = true
 	v.Email = email
 }
 
 func (v *Visitor) SetFirstName(firstname string) {
-	v.wasMod = true
+	v.needCommit = true
 	v.FirstName = firstname
 }
 
 func (v *Visitor) SetLastName(lastname string) {
-	v.wasMod = true
+	v.needCommit = true
 	v.LastName = lastname
 }
 
