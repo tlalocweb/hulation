@@ -3,9 +3,9 @@ package server
 import (
 	"fmt"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"

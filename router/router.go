@@ -10,8 +10,8 @@ import (
 	"github.com/tlalocweb/hulation/middleware"
 	"github.com/tlalocweb/hulation/model"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/logger"
 	hulation "github.com/tlalocweb/hulation/app"
 )
 
@@ -45,7 +45,7 @@ func SetupRoutes(app *fiber.App) {
 		DeniedStatusCode:      fiber.StatusForbidden,
 		DeniedResponseMessage: "status forbidden",
 		IncludeHeaders:        []string{"Authorization"},
-		InputCreationMethod: func(ctx *fiber.Ctx) (map[string]interface{}, int, string, error) {
+		InputCreationMethod: func(ctx fiber.Ctx) (map[string]interface{}, int, string, error) {
 			log.Debugf("In input creation method")
 			ahdr := ctx.Get("Authorization")
 			var token string

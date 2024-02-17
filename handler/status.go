@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
-func StatusOKAuth(c *fiber.Ctx) error {
+func StatusOKAuth(c fiber.Ctx) error {
 
 	hostconf, _, httperr, err := GetHostConfig(c)
 	if err != nil {

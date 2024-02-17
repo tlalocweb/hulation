@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
@@ -17,14 +17,17 @@ type LoginInput struct {
 }
 
 // Login get user and password
-func Login(c *fiber.Ctx) error {
+func Login(c fiber.Ctx) error {
 	var input LoginInput
 
-	log.Debugf("Body: %s", string(c.Body()))
-	if err := c.BodyParser(&input); err != nil {
+	bytes := c.Body()
+	err := json.Unmarshal(bytes, &input)
+	if err != nil {
 		c.SendString("bad parse: " + err.Error())
 		return c.SendStatus(fiber.StatusUnauthorized)
 	}
+
+	log.Debugf("Body: %s", string(bytes))
 	// input.Userid
 	// input.PasswordHash
 	var authok bool
@@ -70,7 +73,7 @@ type StatusAuthOKResp struct {
 	Jwt    string `json:"jwt"`
 }
 
-func StatusAuthOK(c *fiber.Ctx) error {
+func StatusAuthOK(c fiber.Ctx) error {
 
 	jwt := c.Locals("jwt")
 	permsi := c.Locals("perms")
@@ -106,7 +109,7 @@ func StatusAuthOK(c *fiber.Ctx) error {
 	return c.Status(200).Send(resp)
 }
 
-func Logout(c *fiber.Ctx) error {
+func Logout(c fiber.Ctx) error {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())
@@ -120,7 +123,7 @@ func Logout(c *fiber.Ctx) error {
 	return c.Status(http.StatusNoContent).SendString("UNIMPLEMENTED")
 }
 
-func NewUser(c *fiber.Ctx) error {
+func NewUser(c fiber.Ctx) error {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())
@@ -134,7 +137,7 @@ func NewUser(c *fiber.Ctx) error {
 	return c.Status(http.StatusNoContent).SendString("UNIMPLEMENTED")
 }
 
-func GetUser(c *fiber.Ctx) error {
+func GetUser(c fiber.Ctx) error {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())
@@ -148,7 +151,7 @@ func GetUser(c *fiber.Ctx) error {
 	return c.Status(http.StatusNoContent).SendString("UNIMPLEMENTED")
 }
 
-func ModifyUser(c *fiber.Ctx) error {
+func ModifyUser(c fiber.Ctx) error {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())

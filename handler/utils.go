@@ -5,14 +5,14 @@ package handler
 import (
 	"fmt"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 )
 
-func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperror int, err error) {
+func GetHostConfig(c fiber.Ctx) (hostconf *config.Server, host string, httperror int, err error) {
 	host = c.Get("Host")
 	hostonly := utils.GetHostOnly(host)
 	hostconf = app.GetConfig().GetServer(hostonly)

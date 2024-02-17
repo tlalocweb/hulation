@@ -1,10 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/cbroglie/mustache"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
@@ -71,7 +72,7 @@ func InitVistorHandlers() {
 // See: https://stackoverflow.com/questions/3420004/access-parent-url-from-iframe/7739035#7739035
 
 // Hello is the basic API call made by the client anytime a visitor to website hits a page
-func Hello(c *fiber.Ctx) error {
+func Hello(c fiber.Ctx) error {
 	_, _, httperr, err := GetHostConfig(c)
 
 	if err != nil {
@@ -82,9 +83,10 @@ func Hello(c *fiber.Ctx) error {
 
 	var hello HelloMsg
 
-	err = c.BodyParser(&hello)
+	bytes := c.Body()
+	err = json.Unmarshal(bytes, &hello)
 	if err != nil {
-		c.Status(400).SendString("bad parse: " + err.Error())
+		return c.Status(fiber.StatusUnauthorized).SendString("bad parse: " + err.Error())
 	}
 
 	if len(hello.URL) > 0 {
@@ -170,7 +172,7 @@ var iframeHelloTemplate *mustache.Template
 
 // This is the handler for when a normal (not at noscript) iframe is loaded
 // We will set a visitor cookie and a sscookie if one does not exist.
-func HelloIframe(c *fiber.Ctx) error {
+func HelloIframe(c fiber.Ctx) error {
 	var err error
 	if iframeHelloTemplate == nil {
 		iframeHelloTemplate, err = mustache.ParseString(iframehello)
@@ -395,7 +397,7 @@ const iframe2 = `<!doctype html>
 var iframeTemplate *mustache.Template
 
 // noscript / iframe way of doing hello
-func HelloNoScript(c *fiber.Ctx) error {
+func HelloNoScript(c fiber.Ctx) error {
 	var err error
 	if iframeTemplate == nil {
 		iframeTemplate, err = mustache.ParseString(iframe)
@@ -546,71 +548,6 @@ func HelloNoScript(c *fiber.Ctx) error {
 			//			sscookiem.Commit(model.GetDB())
 		}
 
-		// // check for httponly cookie
-
-		// if len(sscookie) > 0 {
-		// 	log.Debugf("saw sscookie (hellonoscript): %s", sscookie)
-		// 	// cookie exists - find visitor
-		// 	visitor, err = model.GetVisitorBySSCookie(model.GetDB(), sscookie)
-		// 	if err != nil {
-		// 		// ignore not found error
-		// 		return c.Status(500).SendString("error getting visitor by sscookie: " + err.Error())
-		// 	} else {
-		// 		if visitor != nil {
-		// 			log.Debugf("visitor seen by sscookie: %s", visitor.ID)
-		// 		} else {
-		// 			log.Debugf("no known visitor by sscookie")
-		// 		}
-		// 	}
-		// }
-		// // check for normal cookie
-		// // if we find both, the normal cookie takes priority over sscookie
-		// // when we look up the Visitor
-
-		// if visitor == nil && len(cookie) > 0 {
-		// 	log.Debugf("saw cookie (hellonoscript): %s", cookie)
-		// 	// cookie exists - find visitor
-		// 	visitor, err = model.GetVisitorByCookie(model.GetDB(), cookie)
-		// 	if err != nil {
-		// 		// ignore not found error
-		// 		return c.Status(500).SendString("error getting visitor by cookie: " + err.Error())
-		// 	} else {
-		// 		if visitor != nil {
-		// 			log.Debugf("visitor seen by cookie (helloiframe): %s", visitor.ID)
-		// 		} else {
-		// 			log.Debugf("no known visitor by cookie")
-		// 		}
-		// 	}
-		// }
-
-		// if visitor == nil {
-		// 	visitor = model.NewVisitor()
-		// }
-
-		// var sscookiem *model.VisitorCookie
-		// var cookiem *model.VisitorCookie
-
-		// if len(cookie) < 1 {
-		// 	cookiem, err := visitor.NewVisitorCookie()
-		// 	if err != nil {
-		// 		return c.Status(500).SendString("error creating cookie: " + err.Error())
-		// 	}
-		// 	cookie = cookiem.Cookie
-		// 	log.Debugf("new cookie (hellonoscript): %s", cookie)
-		// 	// err = model.AddCookieToVisitor(model.GetDB(), visitor, cookiem)
-		// 	// if err != nil {
-		// 	// 	return c.Status(500).SendString("error adding cookie to visitor: " + err.Error())
-		// 	// }
-		// }
-
-		// if len(sscookie) < 1 {
-		// 	sscookiem, err = visitor.NewVisitorSSCookie()
-		// 	if err != nil {
-		// 		return c.Status(500).SendString("error creating sscookie: " + err.Error())
-		// 	}
-		// 	sscookie = sscookiem.Cookie
-		// 	log.Debugf("new sscookie (hellonoscript): %s", sscookie)
-		// }
 		c.Cookie(&fiber.Cookie{
 			Name:     hostconf.CookieOpts.CookiePrefix + "_hello",
 			Value:    cookie,
@@ -685,8 +622,5 @@ func HelloNoScript(c *fiber.Ctx) error {
 		return c.SendString(body)
 
 	}
-
-	// }
-	//	return c.SendString("ok")
 
 }

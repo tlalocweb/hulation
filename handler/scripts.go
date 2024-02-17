@@ -4,7 +4,7 @@ import (
 	"bytes"
 
 	"github.com/cbroglie/mustache"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
@@ -14,7 +14,7 @@ import (
 var helloJS *mustache.Template
 var formsJS *mustache.Template
 
-func HelloScriptFile(c *fiber.Ctx) (err error) {
+func HelloScriptFile(c fiber.Ctx) (err error) {
 	//host := c.Get("Host")
 
 	if helloJS == nil {
@@ -63,7 +63,7 @@ func HelloScriptFile(c *fiber.Ctx) (err error) {
 	return
 }
 
-func FormsScriptFile(c *fiber.Ctx) (err error) {
+func FormsScriptFile(c fiber.Ctx) (err error) {
 	//host := c.Get("Host")
 
 	if formsJS == nil {

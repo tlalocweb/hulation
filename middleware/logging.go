@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/gofiber/contrib/fiberzerolog"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/tlalocweb/hulation/log"
 )
 

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/santhosh-tekuri/jsonschema"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
@@ -16,7 +16,7 @@ type FormPostReq struct {
 	SSCookie string `json:"vc"`
 }
 
-func FormSubmit(c *fiber.Ctx) (err error) {
+func FormSubmit(c fiber.Ctx) (err error) {
 	hostconf, _, httperr, err := GetHostConfig(c)
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
@@ -31,12 +31,18 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 		return c.Status(404).SendString("404 Not Found - No formid")
 	}
 
-	formdata := new(FormPostReq)
+	var formdata FormPostReq
 
-	err = c.BodyParser(formdata)
+	bytes := c.Body()
+	err = json.Unmarshal(bytes, &formdata)
 	if err != nil {
-		c.Status(400).SendString("bad parse: " + err.Error())
+		return c.Status(400).SendString("bad parse: " + err.Error())
 	}
+
+	// err = c.BodyParser(formdata)
+	// if err != nil {
+	// 	c.Status(400).SendString("bad parse: " + err.Error())
+	// }
 
 	// let's get the visitor:
 	// if it's there (it should be) we will just use the cookie value passed by in the API call the /hello endpoint
@@ -196,7 +202,7 @@ func FormRawJSONMessageToFormModelReq(raw map[string]json.RawMessage, formmodelr
 	return
 }
 
-func FormCreate(c *fiber.Ctx) (err error) {
+func FormCreate(c fiber.Ctx) (err error) {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())
@@ -260,7 +266,7 @@ func FormCreate(c *fiber.Ctx) (err error) {
 	return c.Status(200).Send(resp)
 }
 
-func FormModify(c *fiber.Ctx) (err error) {
+func FormModify(c fiber.Ctx) (err error) {
 	// hostconf, _, httperr, err := GetHostConfig(c)
 	// if err != nil {
 	// 	return c.Status(httperr).SendString(err.Error())
@@ -270,10 +276,13 @@ func FormModify(c *fiber.Ctx) (err error) {
 	// 	return c.Status(400).SendString("host id mismmatch")
 	// }
 
-	formmodelreq := new(FormModelReq)
-	err = c.BodyParser(formmodelreq)
+	var formmodelreq FormModelReq
+
+	bytes := c.Body()
+	err = json.Unmarshal(bytes, &formmodelreq)
 	if err != nil {
-		return c.Status(400).SendString("bad parse: " + err.Error())
+		c.SendString("bad parse: " + err.Error())
+		return c.SendStatus(400)
 	}
 
 	formmodel, err := model.GetFormModelById(model.GetDB(), formmodelreq.Name)

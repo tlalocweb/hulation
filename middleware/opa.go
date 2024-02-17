@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/utils"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/utils"
 	"github.com/open-policy-agent/opa/rego"
 	"github.com/tlalocweb/hulation/log"
 	// "golang.org/x/crypto/openpgp"
@@ -17,7 +17,7 @@ import (
 
 // InputCreationFunc is a function that creates the input for the rego policy
 // returns the input, the status code to return in case of error along with a string message, and an error
-type InputCreationFunc func(c *fiber.Ctx) (map[string]interface{}, int, string, error)
+type InputCreationFunc func(c fiber.Ctx) (map[string]interface{}, int, string, error)
 
 type OpaConfig struct {
 	RegoPolicy            io.Reader
@@ -61,7 +61,7 @@ func NewOpaMiddleware(cfg OpaConfig) fiber.Handler {
 	if err != nil {
 		panic(fmt.Sprint("rego policy error: %w", err))
 	}
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		input, statuscode, errorstring, err := cfg.InputCreationMethod(c)
 		if err != nil {
 			log.Debugf("Error creating input (opa): %v %d %s", err, statuscode, errorstring)
@@ -126,7 +126,7 @@ func (c *OpaConfig) fillAndValidate() error {
 	return nil
 }
 
-func defaultInput(ctx *fiber.Ctx) (map[string]interface{}, int, string, error) {
+func defaultInput(ctx fiber.Ctx) (map[string]interface{}, int, string, error) {
 	input := map[string]interface{}{
 		"method": ctx.Method(),
 		"path":   ctx.Path(),
