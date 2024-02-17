@@ -41,11 +41,6 @@ type FormModel struct {
 
 func (f *FormModel) BeforeCreate(tx *gorm.DB) (err error) {
 	// UUID version 7
-	var yes bool
-	yes, err = CheckIsNameUsedFormModel(tx, f.Name)
-	if yes {
-		f.ID = fmt.Sprintf("%s-%s", f.Name, utils.FastRandString(5))
-	}
 	return
 }
 
@@ -128,15 +123,28 @@ func init() {
 }
 
 func CheckIsNameUsedFormModel(db *gorm.DB, name string) (ret bool, err error) {
-	_, ok := formModelIDCache.Get(name)
-	if ok {
-		ret = true
-		return
-	}
+	// _, ok := formModelIDCache.Get(name)
+	// if ok {
+	// 	ret = true
+	// 	return
+	// }
 	var count int64
 	err = db.Model(&FormModel{}).Where("name = ?", name).Count(&count).Error
 	ret = count > 0
-	formModelIDCache.SetAlways(name, 1)
+	// formModelIDCache.SetAlways(name, 1)
+	return
+}
+
+func CheckIsIdUsedFormModel(db *gorm.DB, id string) (ret bool, err error) {
+	// _, ok := formModelIDCache.Get(name)
+	// if ok {
+	// 	ret = true
+	// 	return
+	// }
+	var count int64
+	err = db.Model(&FormModel{}).Where("id = ?", id).Count(&count).Error
+	ret = count > 0
+	// formModelIDCache.SetAlways(name, 1)
 	return
 }
 
@@ -159,8 +167,49 @@ func CreateNewFormModel(id string, name string, description string, schema strin
 	return
 }
 
+// Validate checks if the FormModel is valid
+// it also creates a new ID
+// This should be done before committing the FormModel to the database
+func (f *FormModel) ValidateModel(db *gorm.DB) (id string, err error) {
+	var yes bool
+	id = utils.CamelCase(f.Name)
+	yes, err = CheckIsIdUsedFormModel(db, id)
+	if yes {
+		id = fmt.Sprintf("%s-%s", id, utils.FastRandString(5))
+	}
+	f.ID = id
+	if err != nil {
+		err = fmt.Errorf("error checking if name is used: %v", err)
+		return
+	}
+	// check schema to make sure its valid
+	_, err = jsonschema.CompileString(fmt.Sprintf("form_model_%s.json", f.Name), f.Schema)
+	if err != nil {
+		err = fmt.Errorf("error compiling schema: %v", err)
+		return
+	}
+	// now marshal/unmarshal json to remove spaces etc.
+	var fields interface{}
+	if err = json.Unmarshal([]byte(f.Schema), &fields); err != nil {
+		err = fmt.Errorf("error unmarshalling schema: %v", err)
+		return
+	}
+	var newSchema []byte
+	newSchema, err = json.Marshal(fields)
+	if err != nil {
+		err = fmt.Errorf("error marshalling schema: %v", err)
+		return
+	}
+	f.Schema = string(newSchema)
+	return
+}
+
+// returns the ID of the form model
 func (f *FormModel) Commit(db *gorm.DB) (err error) {
-	err = db.Save(f).Error
+	err = db.Create(f).Error
+	if err != nil {
+		return
+	}
 	return
 }
 
@@ -173,7 +222,10 @@ func GetFormModelById(db *gorm.DB, id string) (ret *FormModel, err error) {
 			err = nil
 			return
 		}
+	} else {
+		formModelIDCache.SetAlways(ret.Name, ret.ID)
 	}
+
 	return
 }
 

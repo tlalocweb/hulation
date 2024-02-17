@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"crypto/sha256"
 	"fmt"
 
@@ -177,12 +180,19 @@ func GenerateHulaHashFromPlaintextPass(password string) (argonhash string, strin
 	return
 }
 
-// func GenerateRandomBytes(n uint32) ([]byte, error) {
-// 	b := make([]byte, n)
-// 	_, err := rand.Read(b)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return b, nil
-// }
+func CamelCase(s string) string {
+	// Courtesy of https://stackoverflow.com/questions/70083837/how-to-convert-a-string-to-camelcase-in-go
+	// Remove all characters that are not alphanumeric or spaces or underscores
+	s = regexp.MustCompile("[^a-zA-Z0-9_ ]+").ReplaceAllString(s, "")
+	// Replace all underscores with spaces
+	s = strings.ReplaceAll(s, "_", " ")
+	// Title case s
+	s = cases.Title(language.AmericanEnglish, cases.NoLower).String(s)
+	// Remove all spaces
+	s = strings.ReplaceAll(s, " ", "")
+	// Lowercase the first letter
+	if len(s) > 0 {
+		s = strings.ToLower(s[:1]) + s[1:]
+	}
+	return s
+}

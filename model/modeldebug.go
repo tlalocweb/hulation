@@ -3,32 +3,16 @@
 
 package model
 
-import "fmt"
+import (
+	"fmt"
 
-var (
-	Black   = Color("\033[1;30m%s\033[0m")
-	Grey    = Color("\033[38;5;242m%s\033[0m")
-	Red     = Color("\033[1;31m%s\033[0m")
-	Green   = Color("\033[1;32m%s\033[0m")
-	Yellow  = Color("\033[1;33m%s\033[0m")
-	Purple  = Color("\033[1;34m%s\033[0m")
-	Magenta = Color("\033[1;35m%s\033[0m")
-	Teal    = Color("\033[1;36m%s\033[0m")
-	White   = Color("\033[1;37m%s\033[0m")
+	"github.com/tlalocweb/hulation/utils"
 )
 
-func Color(colorString string) func(...interface{}) string {
-	sprint := func(args ...interface{}) string {
-		return fmt.Sprintf(colorString,
-			fmt.Sprint(args...))
-	}
-	return sprint
+func model_debugf(format string, args ...any) {
+	fmt.Printf(fmt.Sprintf(utils.Grey("model_debug: ")+"%s\n", format), args...)
 }
 
-func model_debugf(format string, args ...interface{}) {
-	fmt.Printf(fmt.Sprintf(Grey("model_debug: ")+"%s\n", format), args...)
-}
-
-func model_attn_debugf(format string, args ...interface{}) {
-	fmt.Printf(fmt.Sprintf(Red("model_debug: !! ")+"%s\n", format), args...)
+func model_attn_debugf(format string, args ...any) {
+	fmt.Printf(fmt.Sprintf(utils.Red("model_debug: !! ")+"%s\n", format), args...)
 }

@@ -153,12 +153,17 @@ func VerifyJWTClaims(db *gorm.DB, token string) (valid bool, perms *UserPermissi
 		userid, err = LookupLoginToken(db, claims.LoginToken)
 		if err != nil {
 			err = fmt.Errorf("error LookupLoginToken: %w", err)
+			valid = false
 			return
 		}
 		if userid != claims.Id {
 			err = fmt.Errorf("user id does not match login token")
+			valid = false
 			return
 		}
+	} else {
+		err = fmt.Errorf("token not valid")
+		return
 	}
 	perms = &UserPermissions{}
 	perms.mapcaps = make(map[string]bool, len(claims.Caps))

@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/santhosh-tekuri/jsonschema"
 	"github.com/tlalocweb/hulation/log"
@@ -125,31 +128,122 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 }
 
 type FormModelReq struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Schema string `json:"schema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Schema      string `json:"schema"`
+}
+
+// type FormModelReqAlt struct {
+// 	Name        string                      `json:"name"`
+// 	Description string                      `json:"description"`
+// 	Schema       `json:"schema"`
+// }
+
+type FormModelResponse struct {
+	Id string `json:"id"`
+}
+
+func FormRawJSONMessageToFormModelReq(raw map[string]json.RawMessage, formmodelreq *FormModelReq) (err error) {
+	err = json.Unmarshal(raw["name"], &formmodelreq.Name)
+	if err != nil {
+		err = fmt.Errorf("error unmarshalling name: %w", err)
+		return
+	}
+	if len(raw["description"]) > 0 {
+		err = json.Unmarshal(raw["description"], &formmodelreq.Description)
+		if err != nil {
+			err = fmt.Errorf("error unmarshalling description: %w", err)
+			return
+		}
+	}
+	var schema interface{}
+
+	err = json.Unmarshal(raw["schema"], &schema)
+	if err != nil {
+		err = fmt.Errorf("error unmarshalling schema: %w", err)
+		return
+	}
+
+	schemas, err := json.Marshal(schema)
+	if err != nil {
+		err = fmt.Errorf("error marshalling schema: %w", err)
+		return
+	}
+
+	// schema, err := raw["schema"].MarshalJSON()
+	// if err != nil {
+	// 	return
+	// }
+	// var m json.RawMessage
+	// err = json.Unmarshal(raw["schema"], &m)
+	// if err != nil {
+	// 	return
+	// }
+	// schema, err := json.Marshal(m)
+	// if err != nil {
+	// 	return
+	// }
+	// schema, err := raw["schema"].MarshalJSON()
+	// if err != nil {
+	// 	return
+	// }
+	fmt.Printf("schema: %s", string(schemas))
+	formmodelreq.Schema = string(schemas)
+	// err = json.Unmarshal(, &formmodelreq.Schema)
+	// if err != nil {
+	// 	return
+	// }
+	return
 }
 
 func FormCreate(c *fiber.Ctx) (err error) {
-	hostconf, _, httperr, err := GetHostConfig(c)
+	// hostconf, _, httperr, err := GetHostConfig(c)
+	// if err != nil {
+	// 	return c.Status(httperr).SendString(err.Error())
+	// }
+	// id := c.Query("h")
+	// if id != hostconf.ID {
+	// 	return c.Status(400).SendString("host id mismmatch")
+	// }
+
+	body := c.Body()
+
+	var formmodelreq FormModelReq
+	var formmodelreqalt map[string]json.RawMessage
+
+	err = json.Unmarshal(body, &formmodelreq)
 	if err != nil {
-		return c.Status(httperr).SendString(err.Error())
+		err = json.Unmarshal(body, &formmodelreqalt)
+		if err != nil {
+			return c.Status(400).SendString("bad parse: " + err.Error())
+		}
+		err = FormRawJSONMessageToFormModelReq(formmodelreqalt, &formmodelreq)
+		if err != nil {
+			return c.Status(400).SendString("bad parse (2): " + err.Error())
+		}
 	}
-	id := c.Query("h")
-	if id != hostconf.ID {
-		return c.Status(400).SendString("host id mismmatch")
+	// err = c.BodyParser(formmodelreq)
+	// if err != nil {
+	// 	return c.Status(400).SendString("bad parse: " + err.Error())
+	// }
+
+	if formmodelreq.Name == "" {
+		return c.Status(400).SendString("name is required")
+	}
+	if formmodelreq.Schema == "" {
+		return c.Status(400).SendString("schema is required")
 	}
 
-	formmodelreq := new(FormModelReq)
-	err = c.BodyParser(formmodelreq)
-	if err != nil {
-		return c.Status(400).SendString("bad parse: " + err.Error())
-	}
-
-	formmodel, err := model.CreateNewFormModel(formmodelreq.Name, formmodelreq.Name, formmodelreq.Name, formmodelreq.Schema)
+	formmodel, err := model.CreateNewFormModel(formmodelreq.Name, formmodelreq.Name, formmodelreq.Description, formmodelreq.Schema)
 
 	if err != nil {
 		return c.Status(400).SendString("error creating form model: " + err.Error())
+	}
+
+	id, err := formmodel.ValidateModel(model.GetDB())
+
+	if err != nil {
+		return c.Status(400).SendString("error validating form model: " + err.Error())
 	}
 
 	err = formmodel.Commit(model.GetDB())
@@ -158,18 +252,23 @@ func FormCreate(c *fiber.Ctx) (err error) {
 		return c.Status(500).SendString("error committing form model: " + err.Error())
 	}
 
-	return c.Status(200).SendString("Form model created")
+	resp, err := json.Marshal(FormModelResponse{Id: id})
+	if err != nil {
+		return c.Status(500).SendString("error marshalling response: " + err.Error())
+	}
+
+	return c.Status(200).Send(resp)
 }
 
 func FormModify(c *fiber.Ctx) (err error) {
-	hostconf, _, httperr, err := GetHostConfig(c)
-	if err != nil {
-		return c.Status(httperr).SendString(err.Error())
-	}
-	id := c.Query("h")
-	if id != hostconf.ID {
-		return c.Status(400).SendString("host id mismmatch")
-	}
+	// hostconf, _, httperr, err := GetHostConfig(c)
+	// if err != nil {
+	// 	return c.Status(httperr).SendString(err.Error())
+	// }
+	// id := c.Query("h")
+	// if id != hostconf.ID {
+	// 	return c.Status(400).SendString("host id mismmatch")
+	// }
 
 	formmodelreq := new(FormModelReq)
 	err = c.BodyParser(formmodelreq)
@@ -177,12 +276,12 @@ func FormModify(c *fiber.Ctx) (err error) {
 		return c.Status(400).SendString("bad parse: " + err.Error())
 	}
 
-	formmodel, err := model.GetFormModelById(model.GetDB(), formmodelreq.ID)
+	formmodel, err := model.GetFormModelById(model.GetDB(), formmodelreq.Name)
 	if err != nil {
 		return c.Status(500).SendString("error getting form model: " + err.Error())
 	}
 	if formmodel == nil {
-		return c.Status(404).SendString("404 Not Found - No form model by id " + formmodelreq.ID)
+		return c.Status(404).SendString("404 Not Found - No form model by id " + formmodelreq.Name)
 	}
 
 	if formmodelreq.Name != "" {

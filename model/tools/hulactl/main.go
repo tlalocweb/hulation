@@ -2,14 +2,12 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -19,9 +17,12 @@ import (
 	// _ "github.com/mailru/go-clickhouse"
 	chapi "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/chzyer/readline"
+	"github.com/rivo/tview"
 	"gopkg.in/yaml.v3"
 
+	"github.com/tlalocweb/hulation/client"
 	"github.com/tlalocweb/hulation/config"
+	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
 	"gorm.io/driver/clickhouse"
@@ -106,6 +107,60 @@ type HulactlConfig struct {
 	HulationConfigPath string `yaml:"hulaconf" flag:"hulaconf" usage:"path to hulation config file" default:"/etc/hulation/hulation.yaml" env:"HULA_CONF"`
 	DontSaveAuth       bool   `flag:"nosaveauth" usage:"do not save the auth token to the config file"`
 	Token              string `yaml:"token" flag:"token" usage:"authorization"`
+	DebugMode          bool   `yaml:"debug" flag:"debug" usage:"debug mode"`
+	ANSIColors         bool   `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
+	GetBodyFromFile    string `flag:"bodyfile" usage:"get body from file"`
+	GetBodyFromStdin   bool   `flag:"bodystdin" usage:"get body from stdin"`
+	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"` // uses readline
+}
+
+func doAltGetBody(config *HulactlConfig) bool {
+	if config.GetBodyFromFile != "" {
+		// get body from file
+		return true
+	}
+	if config.GetBodyFromStdin {
+		// get body from stdin
+		return true
+	}
+	if config.GetInteractive {
+		// get body from readline
+		return true
+	}
+	return false
+}
+
+// get's Body from file or stdin
+func getAltBody(config *HulactlConfig) (body string, err error) {
+	if config.GetBodyFromFile != "" {
+		// get body from file
+		var data []byte
+		data, err = os.ReadFile(config.GetBodyFromFile)
+		if err != nil {
+			err = fmt.Errorf("error reading file: %w", err)
+			return
+		}
+		body = string(data)
+		return
+	}
+	if config.GetBodyFromStdin {
+		// get body from stdin
+		fi, _ := os.Stdin.Stat()
+		if (fi.Mode() & os.ModeCharDevice) == 0 {
+			var bodybytes []byte
+			bodybytes, err = io.ReadAll(os.Stdin)
+			if err != nil {
+				err = fmt.Errorf("error reading from stdin: %w", err)
+				return
+			}
+			body = string(bodybytes)
+		} else {
+			err = fmt.Errorf("stdin is not a character device")
+			return
+		}
+		return
+	}
+	return
 }
 
 func GetConfig(opts *HulactlConfig) (err error) {
@@ -191,6 +246,23 @@ func GetHulationServerConfigOrExit(confpath string) (hulationconf *config.Config
 	} else {
 		fmt.Printf("Need the hulation.yaml config file.\n")
 		os.Exit(1)
+	}
+	return
+}
+
+func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
+	c = client.NewClient(hulactlconfig.HulationApiUrl, hulactlconfig.Token)
+	if hulactlconfig.DebugMode {
+		c.Noisy = true
+		c.NoisyErr = true
+	}
+	if hulactlconfig.ANSIColors {
+		c.ErrOut = func(format string, a ...any) (int, error) {
+			return fmt.Printf(fmt.Sprintf(utils.Red("error: ")+"%s", format), a...)
+		}
+		c.Output = func(format string, a ...any) (int, error) {
+			return fmt.Printf(fmt.Sprintf(utils.Grey("client: ")+"%s", format), a...)
+		}
 	}
 	return
 }
@@ -300,59 +372,19 @@ func main() {
 		}
 		password = string(pass)
 		// make request against the server using /login
-
-		// make request
-		var url string
-		fmt.Printf("Using /login endpoint... %s\n", hulactlconfig.HulationApiUrl)
-		proto, host, port, path := utils.GetURLPieces(hulactlconfig.HulationApiUrl)
-		url = fmt.Sprintf("%s://%s:%d%s/auth/login", proto, host, port, path)
-		// if proto == "https" {
-		// 	url = fmt.Sprintf("https://%s:%d%s/auth/login", host, port, path)
-		// } else {
-		// 	url = fmt.Sprintf("http://%s:%d%s/auth/login", host, port, path)
+		// client := client.NewClient(hulactlconfig.HulationApiUrl, "")
+		// if hulactlconfig.DebugMode {
+		// 	client.Noisy = true
+		// 	client.NoisyErr = true
 		// }
-		fmt.Printf("Using /login endpoint... %s\n", url)
-		// if hulationconf.SSL != nil && len(hulationconf.SSL.Cert) > 0 {
-		// 	url = fmt.Sprintf("https://localhost:%d/auth/login", hulationconf.Port)
-		// } else {
-		// 	url = fmt.Sprintf("http://localhost:%d/auth/login", hulationconf.Port)
-		// }
-		fmt.Printf("URL: %s\n", url)
-		hash := utils.GenerateHulaNetworkPassHash(password)
-		// make request
-		//		http.Post(url, "application/json", bytes.NewBuffer([]byte(fmt.Sprintf(`{"userid": "%s", "hash": "%s"}`, identity, hash))))
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(fmt.Sprintf(`{"userid": "%s", "hash": "%s"}`, identity, hash))))
+		client := GetHulactlClient(hulactlconfig)
+		_, token, err := client.Auth(identity, password)
 		if err != nil {
-			fmt.Printf("Error creating request: %s\n", err.Error())
-			os.Exit(1)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Printf("client: error making http request: %s\n", err)
+			fmt.Printf("Error: %s\n", err.Error())
 			os.Exit(1)
 		}
 
-		fmt.Printf("response: %d\n", res.StatusCode)
-
-		resBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Printf("client: could not read response body: %s\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("body: %s\n", string(resBody))
-
-		type AuthResponse struct {
-			Token string `json:"jwt"`
-		}
-
-		var authresp AuthResponse
-		err = json.Unmarshal(resBody, &authresp)
-		if err != nil {
-			fmt.Printf("Error unmarshalling response: %s\n", err.Error())
-			os.Exit(1)
-		}
-		fmt.Printf("Token: %s\n", authresp.Token)
+		fmt.Printf("Token: %s\n", token)
 		if !hulactlconfig.DontSaveAuth {
 			// check if a file exists
 			_, err = os.Stat(hulactlconfigfile)
@@ -372,15 +404,96 @@ func main() {
 			// save the token to the config file
 			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"token"}, &yaml.Node{
 				Kind:  yaml.ScalarNode,
-				Value: authresp.Token,
+				Value: token,
 			})
 			if err != nil {
 				fmt.Printf("Error saving token to config file (%s): %s\n", hulactlconfigfile, err.Error())
+			} else {
+				fmt.Printf("Token saved to config file (%s)\n", hulactlconfigfile)
 			}
 		}
 
 	case "createform":
+		var body string
+		if doAltGetBody(hulactlconfig) {
+			if hulactlconfig.GetInteractive {
+				app := tview.NewApplication()
+				form := tview.NewForm().
+					//		AddDropDown("Title", []string{"Mr.", "Ms.", "Mrs.", "Dr.", "Prof."}, 0, nil).
+					AddInputField("Form name", "Original", 50, nil, nil).
+					//		AddInputField("Last name", "", 20, nil, nil).
+					AddTextArea("JSON schema", "", 0, 20, 0, nil).
+					AddInputField("Description (optional)", "", 100, nil, nil).
+					// AddTextView("Notes", "This is just a demo.\nYou can enter whatever you wish.", 40, 2, true, false).
+					// AddCheckbox("Age 18+", false, nil).
+					// AddPasswordField("Password", "", 10, '*', nil).
+					AddButton("Cancel", func() {
+						fmt.Printf("Canceled.")
+						os.Exit(1)
+					}).
+					AddButton("Done (or CTRL-C)", func() {
+						app.Stop()
+					})
 
+				form.SetTitle("Enter some data").SetTitleAlign(tview.AlignLeft) //SetBorder(true)
+				if err := app.SetRoot(form, true).Run(); err != nil {           // .EnableMouse(true)
+					fmt.Printf("Error from terminal (tview): %s", err)
+					os.Exit(1)
+				}
+
+				name := form.GetFormItem(0).(*tview.InputField).GetText()
+				txt := form.GetFormItem(1).(*tview.TextArea).GetText()
+				desc := form.GetFormItem(2).(*tview.InputField).GetText()
+				// create body using FormModelReq
+				// encode as JSON
+				var fmodel handler.FormModelReq
+
+				fmodel.Name = name
+				fmodel.Description = desc
+				fmodel.Schema = txt
+
+				var d []byte
+				d, err = json.Marshal(fmodel)
+				if err != nil {
+					fmt.Printf("Error marshalling form model (1): %s\n", err.Error())
+					os.Exit(1)
+				}
+				body = string(d)
+			} else {
+				body, err = getAltBody(hulactlconfig)
+				if err != nil {
+					fmt.Printf("Error getting body for request: %s\n", err.Error())
+					os.Exit(1)
+				}
+			}
+		} else {
+			if len(argz) < 2 || len(argz[1]) < 1 {
+				fmt.Printf("Need the form model json file.\n")
+				os.Exit(1)
+			}
+			body = argz[1]
+		}
+		client := GetHulactlClient(hulactlconfig)
+		err := client.FormCreate(body)
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Form created.\n")
+	case "authok":
+		client := GetHulactlClient(hulactlconfig)
+		resp, err := client.StatusAuthOK()
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Status auth ok.\n")
+		prettyout, err := json.MarshalIndent(resp.Response.(*handler.StatusAuthOKResp), "", "  ")
+		if err != nil {
+			fmt.Printf("Error marshalling JSON after response: %s\n", err.Error())
+		} else {
+			fmt.Printf("%s\n", string(prettyout))
+		}
 	case "createuser":
 
 	case "deletedb":

@@ -32,12 +32,21 @@ func TestFormBasicValidation(t *testing.T) {
 	formmodel, err := CreateNewFormModel("TestFormBasicValidation", "TestFormBasicValidation", "Test Form", contactInfoFormSchema)
 	// Create new form
 	if err != nil {
-		err = formmodel.Commit(testdb)
+		t.Errorf("Unexpected error: %v", err)
+		return
 	}
+	var id string
+	id, err = formmodel.ValidateModel(testdb)
 	if err != nil {
-		t.Errorf("Error creating form model: %v", err)
+		t.Logf("Unexpected error on Validate(): %v", err)
+		return
+	}
+	err = formmodel.Commit(testdb)
+	if err != nil {
+		t.Errorf("Error committing form model: %v", err)
+		return
 	} else {
-		t.Log("Insert ok. ID of new form is: ", formmodel.ID)
+		t.Log("Insert ok. ID of new form is: ", id)
 	}
 
 	// Create new submission
@@ -85,19 +94,27 @@ func TestFormBasicValidation(t *testing.T) {
 
 }
 
-func TestFormShouldNotValidate(t *testing.T) {
+func TestFormEntryShouldNotValidate(t *testing.T) {
 	// Create new form
 	formmodel, err := CreateNewFormModel("TestFormShouldNotValidate", "TestFormShouldNotValidate", "Test Form", contactInfoFormSchema)
-
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	var id string
+	id, err = formmodel.ValidateModel(testdb)
+	if err != nil {
+		t.Logf("Unexpected error on Validate(): %v", err)
+		return
+	}
 	// Create new form
 	if err != nil {
 		err = formmodel.Commit(testdb)
 	}
-
 	if err != nil {
 		t.Errorf("Error creating form model: %v", err)
 	} else {
-		t.Log("Insert ok. ID of new form is: ", formmodel.ID)
+		t.Log("Insert ok. ID of new form is: ", id)
 	}
 
 	// Create new submission
@@ -118,20 +135,28 @@ func TestFormShouldNotValidate(t *testing.T) {
 
 }
 
-func TestFormShouldNotValidate2(t *testing.T) {
+func TestFormEntryShouldNotValidate2(t *testing.T) {
 	// Create new form
 	formmodel := &FormModel{
 		Name:        "TestFormShouldNotValidate2",
 		Description: "Test Form",
 		Schema:      contactInfoFormSchema,
 	}
+	var err error
+	var id string
+	id, err = formmodel.ValidateModel(testdb)
+	if err != nil {
+		t.Logf("Unexpected error on Validate(): %v", err)
+		return
+	}
+
 	// Create new form
-	err := formmodel.Commit(testdb)
+	err = formmodel.Commit(testdb)
 
 	if err != nil {
 		t.Errorf("Error creating form model: %v", err)
 	} else {
-		t.Log("Insert ok. ID of new form is: ", formmodel.ID)
+		t.Log("Insert ok. ID of new form is: ", id)
 	}
 
 	// Create new submission
