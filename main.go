@@ -44,7 +44,11 @@ func main() {
 			model.SetDebugDBLogging(debuglevel)
 		}
 	}
-	model.SetupAppDB(app.GetConfig())
+	_, _, _, err = model.SetupAppDB(app.GetConfig())
+	if err != nil {
+		log.Fatalf("Error setting up database: %s", err.Error())
+		utils.CleanShutdown(1)
+	}
 
 	utils.CleanShutdown(server.Run(app.GetConfig()))
 

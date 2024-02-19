@@ -22,6 +22,7 @@ cors:
   allow_credentials: true
 dbconfig:
   host: localhost
-#  port: 9000
-#  user: default
-  dbname: db
+  port: 9000
+  user: hula
+  pass: hula 
+  dbname: hula

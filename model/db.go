@@ -37,7 +37,7 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 	// fmt.Printf("Connecting to %s\n", dsn)
 	//	var dsn = "clickhouse://default:@127.0.0.1:9000/db?dial_timeout=200ms&max_execution_time=60"
 
-	log.Debugf("connecting with clickhouse-go library...\n")
+	log.Debugf("connecting with clickhouse-go library... (db %s user %s)\n", dbname, hulationconf.DBConfig.Username)
 
 	opts := &chapi.Options{
 		Addr: []string{fmt.Sprintf("%s:%d", hulationconf.DBConfig.Host, hulationconf.DBConfig.Port)},
@@ -126,20 +126,22 @@ func SetupDB(hulationconf *config.Config, premodelhook PreConnectModelFunc) (con
 		log.Debugf("Connecting to clickhouse (premodelhook)\n")
 		conn, ctx, err = setupInitConn(hulationconf, "")
 		if err != nil {
-			err = fmt.Errorf("error on connect: %s", err.Error())
-			return
+			log.Warnf("Error on connect (premodelhook): %s ...Perhaps DB already setup and locked down.", err.Error())
+			// err = fmt.Errorf("error on connect: %s", err.Error())
+			//return
 		}
 		err = premodelhook(ctx, conn)
 		if err != nil {
-			log.Errorf("Error on premodelhook: %s", err.Error())
-			return
+			log.Warnf("Error on premodelhook: %s  ...Perhaps DB already setup and locked down.", err.Error())
+			// log.Errorf("Error on premodelhook: %s", err.Error())
+			//return
 		}
 		conn.Close()
 	}
 	log.Debugf("Connecting to %s\n", hulationconf.DBConfig.DBName)
 	conn, ctx, err = setupInitConn(hulationconf, hulationconf.DBConfig.DBName)
 	if err != nil {
-		err = fmt.Errorf("error on connect: %s", err.Error())
+		err = fmt.Errorf("error on connect (2): %s", err.Error())
 		return
 	}
 

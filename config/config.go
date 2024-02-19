@@ -20,10 +20,10 @@ const (
 )
 
 type DBConfig struct {
-	Username string `yaml:"username,omitempty" env:"DB_USERNAME" test:"~.+" default:"default"`
-	Password string `yaml:"password,omitempty" env:"DB_PASSWORD"`
+	Username string `yaml:"user,omitempty" env:"DB_USERNAME" test:"~.+" default:"hula"`
+	Password string `yaml:"pass,omitempty" env:"DB_PASSWORD"`
 	Host     string `yaml:"host,omitempty" env:"DB_HOST" test:"~.+" default:"localhost"`
-	DBName   string `yaml:"dbname,omitempty" env:"DB_NAME" test:"~.+" default:"db"`
+	DBName   string `yaml:"dbname,omitempty" env:"DB_NAME" test:"~.+" default:"hula"`
 	Port     int    `yaml:"port,omitempty" env:"DB_PORT" test:"<65536,>0" default:"9000"`
 }
 
@@ -200,6 +200,9 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
+
+	log.Debugf("config: db %+v", *cfg.DBConfig)
+
 	conftagz.RegisterTestFunc("validtimeduration", ValidTimeDuration)
 
 	err = conftagz.Process(nil, &cfg)

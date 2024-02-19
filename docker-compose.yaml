@@ -1,0 +1,17 @@
+version: "3"
+services:
+    hulation-clickhouse:
+      image: clickhouse/clickhouse-server:latest
+      container_name: hulation-clickhouse
+      volumes:
+        - ./ch_data:/var/lib/clickhouse
+        - ./ch_logs:/var/log/clickhouse-server
+      environment:
+        - CLICKHOUSE_DB=hula
+        - CLICKHOUSE_USER=hula
+        - CLICKHOUSE_PASSWORD=hula
+        - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      ports:
+      - "9000:9000"
+      - "8123:8123"
+    
