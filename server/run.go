@@ -3,9 +3,9 @@ package server
 import (
 	"fmt"
 
+	"github.com/gofiber/contrib/fiberzerolog"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
@@ -85,12 +85,15 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		appfiber.Use("/", cors.New(corsconfig))
 	}
 
-	if app.GetAppRuntimeOpts().LogAllVisits {
-		appfiber.Use(logger.New(
-			logger.Config{
-				Format: "${time} ${locals:requestid} ${status} - ${method} from ${ip} ${ua} ${url}​\n",
-			},
-		))
+	if !app.GetAppRuntimeOpts().NoLogVisits {
+		appfiber.Use(fiberzerolog.New(fiberzerolog.Config{
+			Logger: log.GetLogger(),
+		}))
+		// appfiber.Use(logger.New(
+		// 	logger.Config{
+		// 		Format: "${time} ${locals:requestid} ${status} - ${method} from ${ip} ${ua} ${url}​\n",
+		// 	},
+		// ))
 	}
 
 	//	store.ConnectDB()

@@ -22,8 +22,9 @@ var jsonLogs bool
 type AppRuntimeOpts struct {
 	// log DB if at debug level?
 	NoDebugDbLog     bool
-	LogAllVisits     bool
+	NoLogVisits      bool
 	NoLogErrorVisits bool
+	JsonLog          bool
 }
 
 var appRuntimeOpts AppRuntimeOpts
@@ -37,18 +38,22 @@ func ParseFlags() {
 	logopts := flag.String("logopts", "", "sets log options")
 	debuglevel := flag.Int("debug", 0, "sets log level to debug")
 	configfile := flag.String("config", "config.yaml", "config file to use")
-	jsonlogs := flag.Bool("J", false, "use JSON logs")
+	//	jsonlogs := flag.Bool("J", false, "use JSON logs")
 
 	flag.Parse()
 	if logopts != nil {
 		splitLogOpts := strings.Split(*logopts, ",")
 		for _, opt := range splitLogOpts {
 			switch opt {
+			case "json":
+				jsonLogs = true
+				appRuntimeOpts.JsonLog = true
 			case "nodebugdb":
 				appRuntimeOpts.NoDebugDbLog = true
-			case "logallvisits":
-				appRuntimeOpts.LogAllVisits = true
+			case "nologvisits":
+				appRuntimeOpts.NoLogVisits = true
 			case "nologerrorvisits":
+				fmt.Printf("No log error visits NOT IMPLEMENTED\n")
 				appRuntimeOpts.NoLogErrorVisits = true
 
 				// case "nocolor":
@@ -69,7 +74,6 @@ func ParseFlags() {
 	if configfile != nil {
 		appConfigFile = *configfile
 	}
-	jsonLogs = *jsonlogs
 	if jsonLogs {
 		log.UseJsonLogs()
 	}

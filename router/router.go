@@ -11,7 +11,6 @@ import (
 	"github.com/tlalocweb/hulation/model"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	hulation "github.com/tlalocweb/hulation/app"
 )
 
@@ -89,8 +88,8 @@ func SetupRoutes(app *fiber.App) {
 	}
 
 	// NOTE: login is not protected by OPA
-	app.Post("/api/auth/login", logger.New(), handler.Login)
-	api := app.Group("/api", logger.New(), middleware.NewOpaMiddleware(cfg))
+	app.Post("/api/auth/login", handler.Login)                 // logger.New(),
+	api := app.Group("/api", middleware.NewOpaMiddleware(cfg)) // logger.New(),
 	// Middleware
 	//	api.Use("/api",
 
