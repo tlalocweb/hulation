@@ -20,6 +20,8 @@
 # Go workspace file
 go.work
 
+*~
+
 ch_*
 model/tools/setupdb/setupdb
 model/tools/testclickhouse/testclickhouse
@@ -28,7 +30,5 @@ hulation
 cert.pem
 key.pem
 model/tools/timertest/timertest
-start-clickhouse.sh~
 model/tools/hulactl/hulactl
-model/tools/hulactl/form-schema.txt~
 model/tools/tviewtest/tviewtest
