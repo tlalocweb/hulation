@@ -1,19 +1,32 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"time"
 
+	"github.com/cbroglie/mustache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/santhosh-tekuri/jsonschema"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	"github.com/tlalocweb/hulation/utils"
 )
 
 type FormPostReq struct {
-	URL      string `json:"url"`
-	Fields   string `json:"fields"`
-	SSCookie string `json:"vc"`
+	URL      string            `json:"url"`
+	Fields   map[string]string `json:"fields"`
+	SSCookie string            `json:"vc"`
+	// Google Captcha or Cloudflare turnsile field - some unique string used by their API
+	Captcha string `json:"captcha"`
+}
+
+type FormPostResponse struct {
+	Ok       string `json:"ok"`
+	Feedback string `json:"feedback"`
+	TicketID string `json:"ticketid"`
 }
 
 func FormSubmit(c *fiber.Ctx) (err error) {
@@ -25,6 +38,7 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 	if id != hostconf.ID {
 		return c.Status(400).SendString("host id mismmatch")
 	}
+	onetimeid := c.Query("r")
 
 	formid := c.Params("formid")
 	if len(formid) == 0 {
@@ -52,7 +66,11 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 		if err != nil {
 			log.Errorf("Error getting visitor by sscookie via /form request: %s", err.Error())
 		} else {
-			log.Debugf("visitor seen by sscookie (via /form): %s", visitor.ID)
+			if visitor != nil {
+				log.Debugf("visitor seen by sscookie (via /form): %s", visitor.ID)
+			} else {
+				log.Debugf("no known visitor by sscookie (via /form)")
+			}
 		}
 	}
 	if visitor == nil {
@@ -99,7 +117,7 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 		}
 
 	}
-
+	// check the captcha
 	// ok - get the form model
 	formmodel, err := model.GetFormModelById(model.GetDB(), formid)
 	if err != nil {
@@ -108,29 +126,76 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 	if formmodel == nil {
 		return c.Status(404).SendString("404 Not Found - No form model by id " + formid)
 	}
-	submission, err := formmodel.NewFormSubmissionWithEvent(visitor, formdata.Fields)
+
+	// See if the form requires captcha - if it does, determine the type and
+	// then validate the captcha
+	err = formmodel.ValidateCaptcha(hostconf.CaptchaSecret, formdata.Captcha)
+	if err != nil {
+		return c.Status(http.StatusForbidden).SendString("error validating captcha: " + err.Error())
+	}
+
+	fieldsstr, err := json.Marshal(formdata.Fields)
+	if err != nil {
+		return c.Status(400).SendString("error marshalling fields: " + err.Error())
+	}
+	submission, err := formmodel.NewFormSubmissionWithEvent(visitor, string(fieldsstr))
 	validationerr, ok := err.(*jsonschema.ValidationError)
 	if ok {
 		return c.Status(400).SendString("error validating form submission: " + validationerr.Error())
 	} else if err != nil {
-		return c.Status(500).SendString("error creating form submission: " + err.Error())
+		return c.Status(528).SendString("error creating form submission: " + err.Error())
 	}
-
-	// TODO - now check turnstile validation if turnstile is included
 
 	err = submission.Commit(model.GetDB())
 	if err != nil {
 		return c.Status(HTTPErrorDBFailure).SendString("error committing form submission: " + err.Error())
 	}
 
+	postresp := FormPostResponse{
+		Ok:       onetimeid,
+		TicketID: submission.Form.TicketId,
+	}
+
+	if formmodel.Feedback != "" {
+		feedbacktmp, err := mustache.ParseString(formmodel.Feedback)
+		if err == nil {
+			var feedbackbuf bytes.Buffer
+			vars := make(map[string]string)
+
+			for k, v := range formdata.Fields {
+				vars["field:"+k] = v
+			}
+			vars["ticketid"] = submission.Form.TicketId
+
+			err = feedbacktmp.FRender(&feedbackbuf, vars)
+			if err == nil {
+				postresp.Feedback = feedbackbuf.String()
+			} else {
+				log.Errorf("error rendering feedback template: %s", err.Error())
+			}
+			// errors ignored - we did record the submission anyway
+		}
+
+	}
+
+	postrespout, err := json.Marshal(postresp)
+	if err != nil {
+		// just print an error. we don't want to fail the request - we did record it.
+		log.Errorf("error marshalling post response: %s", err.Error())
+		return c.Status(200).SendString(`{"ok": "` + onetimeid + `"}`)
+	} else {
+		return c.Status(200).Send(postrespout)
+	}
 	//	formmodel
-	return c.Status(200).SendString("Form submitted")
+
 }
 
 type FormModelReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Schema      string `json:"schema"`
+	Captcha     string `json:"captcha"`
+	Feedback    string `json:"feedback"`
 }
 
 // type FormModelReqAlt struct {
@@ -153,6 +218,20 @@ func FormRawJSONMessageToFormModelReq(raw map[string]json.RawMessage, formmodelr
 		err = json.Unmarshal(raw["description"], &formmodelreq.Description)
 		if err != nil {
 			err = fmt.Errorf("error unmarshalling description: %w", err)
+			return
+		}
+	}
+	if len(raw["feedback"]) > 0 {
+		err = json.Unmarshal(raw["feedback"], &formmodelreq.Feedback)
+		if err != nil {
+			err = fmt.Errorf("error unmarshalling feedback: %w", err)
+			return
+		}
+	}
+	if len(raw["captcha"]) > 0 {
+		err = json.Unmarshal(raw["captcha"], &formmodelreq.Captcha)
+		if err != nil {
+			err = fmt.Errorf("error unmarshalling captcha: %w", err)
 			return
 		}
 	}
@@ -234,13 +313,13 @@ func FormCreate(c *fiber.Ctx) (err error) {
 		return c.Status(400).SendString("schema is required")
 	}
 
-	formmodel, err := model.CreateNewFormModel(formmodelreq.Name, formmodelreq.Name, formmodelreq.Description, formmodelreq.Schema)
+	formmodel, err := model.CreateNewFormModel(formmodelreq.Name, formmodelreq.Name, formmodelreq.Description, formmodelreq.Schema, formmodelreq.Captcha, formmodelreq.Feedback)
 
 	if err != nil {
 		return c.Status(400).SendString("error creating form model: " + err.Error())
 	}
 
-	id, err := formmodel.ValidateModel(model.GetDB())
+	id, err := formmodel.ValidateNewModel(model.GetDB())
 
 	if err != nil {
 		return c.Status(400).SendString("error validating form model: " + err.Error())
@@ -260,28 +339,35 @@ func FormCreate(c *fiber.Ctx) (err error) {
 	return c.Status(200).Send(resp)
 }
 
+var formOptimizeRunner *utils.RunOnceMaxInterval
+
+func init() {
+	// don't optimize the form models table too often (no more than every 5 seconds)
+	formOptimizeRunner = utils.NewRunOnceMaxInterval(5 * time.Second)
+}
+
 func FormModify(c *fiber.Ctx) (err error) {
-	// hostconf, _, httperr, err := GetHostConfig(c)
-	// if err != nil {
-	// 	return c.Status(httperr).SendString(err.Error())
-	// }
-	// id := c.Query("h")
-	// if id != hostconf.ID {
-	// 	return c.Status(400).SendString("host id mismmatch")
-	// }
+
+	formid := c.Params("formid")
+	if len(formid) == 0 {
+		return c.Status(404).SendString("404 Not Found - No formid")
+	}
 
 	formmodelreq := new(FormModelReq)
-	err = c.BodyParser(formmodelreq)
+
+	err = json.Unmarshal(c.Body(), &formmodelreq)
 	if err != nil {
+		log.Errorf("error unmarshalling form model request: %s", err.Error())
 		return c.Status(400).SendString("bad parse: " + err.Error())
 	}
 
-	formmodel, err := model.GetFormModelById(model.GetDB(), formmodelreq.Name)
+	formmodel, err := model.GetFormModelById(model.GetDB(), c.Params("formid"))
 	if err != nil {
+		log.Errorf("error getting form model: %s", err.Error())
 		return c.Status(500).SendString("error getting form model: " + err.Error())
 	}
 	if formmodel == nil {
-		return c.Status(404).SendString("404 Not Found - No form model by id " + formmodelreq.Name)
+		return c.Status(404).SendString("404 Not Found - No form model by id " + c.Params("formid"))
 	}
 
 	if formmodelreq.Name != "" {
@@ -290,11 +376,36 @@ func FormModify(c *fiber.Ctx) (err error) {
 	if formmodelreq.Schema != "" {
 		formmodel.Schema = formmodelreq.Schema
 	}
-	err = formmodel.Commit(model.GetDB())
+	if formmodelreq.Description != "" {
+		formmodel.Description = formmodelreq.Description
+	}
+	if formmodelreq.Captcha != "" {
+		formmodel.Captcha = formmodelreq.Captcha
+	}
+	if formmodelreq.Feedback != "" {
+		formmodel.Feedback = formmodelreq.Feedback
+	}
 
+	err = formmodel.ValidateExistingModel(model.GetDB())
+	if err != nil {
+		log.Errorf("error validating form model: %s", err.Error())
+		return c.Status(400).SendString("error validating form model: " + err.Error())
+	}
+	err = formmodel.Commit(model.GetDB())
 	if err != nil {
 		return c.Status(500).SendString("error committing form model: " + err.Error())
 	}
+
+	// we will have multiple entries in the table (which uses ReplacingMergeTree)
+	// for a single form. so we need to OPTIMIZE the table to remove the old entries
+	// at some point soon.
+	formOptimizeRunner.Run(func() (err error) {
+		err = model.OptimizeFormModels(model.GetDB())
+		if err != nil {
+			log.Errorf("error optimizing form model: %s", err.Error())
+		}
+		return
+	})
 
 	return c.Status(200).SendString("Form model modified")
 }

@@ -1,12 +1,16 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 	"gorm.io/gorm"
 )
@@ -19,11 +23,21 @@ const (
 		^created_at^ DateTime64(3),
 		^updated_at^ DateTime64(3),
 		^name^ String,
+		^captcha^ String,
 		^schema^ String,
 		^description^ String,
+		^feedback^ String
 	)
 	ENGINE = ReplacingMergeTree(updated_at)
 	ORDER BY id;`
+)
+
+const (
+	// Supported captcha types
+	// Cloudflare captcha ()
+	TURNSTILE_CAPTCHA = "turnstile"
+	GOOGLE_RECAPTCHA  = "recaptcha2"
+	GOOGLE_RECAPTCHA3 = "recaptcha3"
 )
 
 type FormModel struct {
@@ -35,8 +49,14 @@ type FormModel struct {
 	Schema string `json:"schema"`
 	// an optional description of the form
 	Description string `json:"description"`
-	needCommit  bool
-	isDeleted   bool
+	// A feedback template message. This will be sent in the reply
+	// to the caller when the form is successfully submitted
+	Feedback string `json:"feedback"`
+	// uses one of the supported captcha types
+	// See: TURNSTILE_CAPTCHA, GOOGLE_RECAPTCHA, GOOGLE_RECAPTCHA3
+	Captcha    string `json:"captcha"`
+	needCommit bool
+	isDeleted  bool
 }
 
 func (f *FormModel) BeforeCreate(tx *gorm.DB) (err error) {
@@ -50,6 +70,9 @@ type FormSubmission struct {
 	SubmissionDate time.Time `json:"submission_date"`
 	ModelID        string    `json:"formid"` // one:many relationship with FormModel - which FormModel is this submission for?
 	URL            string    `json:"url"`    // url that script pulled before furm submitted
+	// Will be a randomly generated ID - which is safe to provide to the caller
+	// which identifies the form submission. This is useful for tracking
+	TicketId string `json:"ticket_id"`
 	// The Event associated with this form submission
 	SubmitEvent string `json:"template_event"` // ID of event that triggered this form submission
 	FieldsJSON  string `json:"fields"`
@@ -154,12 +177,14 @@ func (f *FormModel) initForm() (err error) {
 	return
 }
 
-func CreateNewFormModel(id string, name string, description string, schema string) (ret *FormModel, err error) {
+func CreateNewFormModel(id string, name string, description string, schema string, captcha string, feedback string) (ret *FormModel, err error) {
 	ret = &FormModel{
 		HModel:      HModel{ID: id},
 		Name:        name,
 		Schema:      schema,
 		Description: description,
+		Captcha:     captcha,
+		Feedback:    feedback,
 		needCommit:  true,
 	}
 	err = ret.initForm()
@@ -167,10 +192,21 @@ func CreateNewFormModel(id string, name string, description string, schema strin
 	return
 }
 
+func OptimizeFormModels(db *gorm.DB) (err error) {
+	// optimize table
+	err = db.Exec("OPTIMIZE TABLE form_models").Error
+	if err == nil {
+		log.Debugf("model: form model optimized")
+	} else {
+		log.Errorf("model: form model optimize error: %v", err)
+	}
+	return
+}
+
 // Validate checks if the FormModel is valid
 // it also creates a new ID
 // This should be done before committing the FormModel to the database
-func (f *FormModel) ValidateModel(db *gorm.DB) (id string, err error) {
+func (f *FormModel) ValidateNewModel(db *gorm.DB) (id string, err error) {
 	var yes bool
 	id = utils.CamelCase(f.Name)
 	yes, err = CheckIsIdUsedFormModel(db, id)
@@ -201,6 +237,81 @@ func (f *FormModel) ValidateModel(db *gorm.DB) (id string, err error) {
 		return
 	}
 	f.Schema = string(newSchema)
+	return
+}
+
+func (f *FormModel) ValidateExistingModel(db *gorm.DB) (err error) {
+	// check schema to make sure its valid
+	_, err = jsonschema.CompileString(fmt.Sprintf("form_model_%s.json", f.Name), f.Schema)
+	if err != nil {
+		err = fmt.Errorf("error compiling schema: %v", err)
+		return
+	}
+	// now marshal/unmarshal json to remove spaces etc.
+	var fields interface{}
+	if err = json.Unmarshal([]byte(f.Schema), &fields); err != nil {
+		err = fmt.Errorf("error unmarshalling schema: %v", err)
+		return
+	}
+	var newSchema []byte
+	newSchema, err = json.Marshal(fields)
+	if err != nil {
+		err = fmt.Errorf("error marshalling schema: %v", err)
+		return
+	}
+	f.Schema = string(newSchema)
+	return
+}
+
+type TurnstileResponse struct {
+	Success bool     `json:"success"`
+	Errors  []string `json:"error-codes"`
+}
+
+func (f *FormModel) ValidateCaptcha(captchasecret string, captchadat string) (err error) {
+
+	switch f.Captcha {
+	case TURNSTILE_CAPTCHA:
+		// check if the visitor has a valid token
+		url := "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+		body := fmt.Sprintf("secret=%s&response=%s", captchasecret, captchadat)
+		var req *http.Request
+		var resp *http.Response
+		req, err = http.NewRequest("POST", url, bytes.NewBuffer([]byte(body)))
+		if err != nil {
+			return fmt.Errorf("error validating captcha response (req): %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		client := &http.Client{Timeout: time.Second * 10}
+		log.Debugf("Validating captcha response: POST to %s body %s", url, body)
+		resp, err = client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error validating captcha response (resp): %v", err)
+		}
+		defer resp.Body.Close()
+		respbody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("error validating captcha response (body): %v", err)
+		}
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("error validating captcha response: %d  Response body: %s", resp.StatusCode, string(respbody))
+		}
+		var authresp TurnstileResponse
+		err = json.Unmarshal(respbody, &authresp)
+		if err != nil {
+			return fmt.Errorf("error unmarshalling captcha response: %v", err)
+		}
+		if !authresp.Success {
+			return fmt.Errorf("captcha failed: %v", authresp.Errors)
+		} else {
+			log.Debugf("Captcha success.")
+		}
+		return nil
+	case GOOGLE_RECAPTCHA:
+		return fmt.Errorf("not implemented")
+	case GOOGLE_RECAPTCHA3:
+		return fmt.Errorf("not implemented")
+	}
 	return
 }
 
@@ -271,6 +382,8 @@ func (m *FormModel) NewFormSubmissionWithEvent(visitor *Visitor, formdata string
 			VisitorID:      visitor.ID,
 			SubmissionDate: time.Now(),
 			ModelID:        m.ID,
+			FieldsJSON:     formdata,
+			TicketId:       utils.FastRandString(10),
 		},
 	}
 	ret.Event = NewEvent(EventCodeFormSubmission)

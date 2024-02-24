@@ -84,12 +84,13 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 	}), chapi.WithProgress(func(p *chapi.Progress) {
 		fmt.Println("progress: ", p)
 	}))
-	if err := conn.PingContext(ctx); err != nil {
+	if err = conn.PingContext(ctx); err != nil {
 		if exception, ok := err.(*chapi.Exception); ok {
 			//fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-			err = fmt.Errorf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+			err = fmt.Errorf("catch exception on ping db [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
 		} else {
 			fmt.Printf("Error: %s\n", err.Error())
+			err = fmt.Errorf("error on ping db: %w", err)
 		}
 	} else {
 		fmt.Println("Ping OK")
@@ -111,7 +112,8 @@ type HulactlConfig struct {
 	ANSIColors         bool   `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
 	GetBodyFromFile    string `flag:"bodyfile" usage:"get body from file"`
 	GetBodyFromStdin   bool   `flag:"bodystdin" usage:"get body from stdin"`
-	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"` // uses readline
+	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
+	HostId             string `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
 }
 
 func doAltGetBody(config *HulactlConfig) bool {
@@ -287,7 +289,7 @@ func main() {
 	fmt.Printf("Command: %s\n", command)
 
 	switch command {
-	case "generatehash":
+	case CMD_GENERATEHASH:
 		fi, _ := os.Stdin.Stat()
 		var password string
 		if (fi.Mode() & os.ModeCharDevice) == 0 {
@@ -347,7 +349,7 @@ func main() {
 		} else {
 			fmt.Printf("ERROR: Hash verification failed.\n")
 		}
-	case "auth":
+	case CMD_AUTH:
 		fmt.Printf("Generate Authorization header bearer token:\n")
 		l, err := readline.NewEx(&readline.Config{})
 		if err != nil {
@@ -424,6 +426,8 @@ func main() {
 					//		AddInputField("Last name", "", 20, nil, nil).
 					AddTextArea("JSON schema", "", 0, 20, 0, nil).
 					AddInputField("Description (optional)", "", 100, nil, nil).
+					AddInputField("Captcha (turnstile, recpatcha2, recaptcha3)", "", 50, nil, nil).
+					AddTextArea("Feedback template (optiona)", "", 0, 15, 0, nil).
 					// AddTextView("Notes", "This is just a demo.\nYou can enter whatever you wish.", 40, 2, true, false).
 					// AddCheckbox("Age 18+", false, nil).
 					// AddPasswordField("Password", "", 10, '*', nil).
@@ -444,6 +448,8 @@ func main() {
 				name := form.GetFormItem(0).(*tview.InputField).GetText()
 				txt := form.GetFormItem(1).(*tview.TextArea).GetText()
 				desc := form.GetFormItem(2).(*tview.InputField).GetText()
+				cap := form.GetFormItem(3).(*tview.InputField).GetText()
+				feedback := form.GetFormItem(4).(*tview.TextArea).GetText()
 				// create body using FormModelReq
 				// encode as JSON
 				var fmodel handler.FormModelReq
@@ -451,6 +457,8 @@ func main() {
 				fmodel.Name = name
 				fmodel.Description = desc
 				fmodel.Schema = txt
+				fmodel.Captcha = cap
+				fmodel.Feedback = feedback
 
 				var d []byte
 				d, err = json.Marshal(fmodel)
@@ -480,6 +488,173 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Form created.\n")
+	case CMD_MODIFYFORM:
+		if len(argz) < 2 || len(argz[1]) < 1 {
+			fmt.Printf("Need the form ID as first arg\n")
+			getCommandUsage(command)
+			os.Exit(1)
+		}
+		formid := argz[1]
+		var body string
+		if doAltGetBody(hulactlconfig) {
+			if hulactlconfig.GetInteractive {
+				app := tview.NewApplication()
+				form := tview.NewForm().
+					//		AddDropDown("Title", []string{"Mr.", "Ms.", "Mrs.", "Dr.", "Prof."}, 0, nil).
+					AddInputField("Form name", "Original", 50, nil, nil).
+					//		AddInputField("Last name", "", 20, nil, nil).
+					AddTextArea("JSON schema", "", 0, 20, 0, nil).
+					AddInputField("Description (optional)", "", 100, nil, nil).
+					AddInputField("Captcha (turnstile, recpatcha2, recaptcha3)", "", 50, nil, nil).
+					AddTextArea("Feedback template (optiona)", "", 0, 15, 0, nil).
+
+					// AddTextView("Notes", "This is just a demo.\nYou can enter whatever you wish.", 40, 2, true, false).
+					// AddCheckbox("Age 18+", false, nil).
+					// AddPasswordField("Password", "", 10, '*', nil).
+					AddButton("Cancel", func() {
+						fmt.Printf("Canceled.")
+						os.Exit(1)
+					}).
+					AddButton("Done (or CTRL-C)", func() {
+						app.Stop()
+					})
+
+				form.SetTitle("Enter some data").SetTitleAlign(tview.AlignLeft) //SetBorder(true)
+				if err := app.SetRoot(form, true).Run(); err != nil {           // .EnableMouse(true)
+					fmt.Printf("Error from terminal (tview): %s", err)
+					os.Exit(1)
+				}
+
+				name := form.GetFormItem(0).(*tview.InputField).GetText()
+				txt := form.GetFormItem(1).(*tview.TextArea).GetText()
+				desc := form.GetFormItem(2).(*tview.InputField).GetText()
+				cap := form.GetFormItem(3).(*tview.InputField).GetText()
+				feedback := form.GetFormItem(4).(*tview.TextArea).GetText()
+
+				// create body using FormModelReq
+				// encode as JSON
+				var fmodel handler.FormModelReq
+
+				fmodel.Name = name
+				fmodel.Description = desc
+				fmodel.Schema = txt
+				fmodel.Captcha = cap
+				fmodel.Feedback = feedback
+
+				var d []byte
+				d, err = json.Marshal(fmodel)
+				if err != nil {
+					fmt.Printf("Error marshalling form model (1): %s\n", err.Error())
+					os.Exit(1)
+				}
+				body = string(d)
+			} else {
+				body, err = getAltBody(hulactlconfig)
+				if err != nil {
+					fmt.Printf("Error getting body for request: %s\n", err.Error())
+					os.Exit(1)
+				}
+			}
+		} else {
+			if len(argz) < 2 || len(argz[1]) < 1 {
+				fmt.Printf("Need the form model json file.\n")
+				os.Exit(1)
+			}
+			body = argz[1]
+		}
+		client := GetHulactlClient(hulactlconfig)
+		err := client.FormModify(formid, body)
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Form created.\n")
+
+	case CMD_SUBMITFORM:
+		var body string
+		if len(argz) < 2 || len(argz[1]) < 1 {
+			fmt.Printf("Need the form ID as first arg\n")
+			getCommandUsage(command)
+			os.Exit(1)
+		}
+		formid := argz[1]
+		if doAltGetBody(hulactlconfig) {
+			if hulactlconfig.GetInteractive {
+				app := tview.NewApplication()
+				form := tview.NewForm().
+					//		AddDropDown("Title", []string{"Mr.", "Ms.", "Mrs.", "Dr.", "Prof."}, 0, nil).
+					AddInputField("URL", "http://...", 50, nil, nil).
+					//		AddInputField("Last name", "", 20, nil, nil).
+					AddTextArea("Fields (JSON)", "", 0, 20, 0, nil).
+					AddInputField("VC (cookie)", "", 100, nil, nil).
+					AddInputField("Captcha", "", 100, nil, nil).
+					// AddTextView("Notes", "This is just a demo.\nYou can enter whatever you wish.", 40, 2, true, false).
+					// AddCheckbox("Age 18+", false, nil).
+					// AddPasswordField("Password", "", 10, '*', nil).
+					AddButton("Cancel", func() {
+						fmt.Printf("Canceled.")
+						os.Exit(1)
+					}).
+					AddButton("Done (or CTRL-C)", func() {
+						app.Stop()
+					})
+
+				form.SetTitle("Enter form submission").SetTitleAlign(tview.AlignLeft) //SetBorder(true)
+				if err := app.SetRoot(form, true).Run(); err != nil {                 // .EnableMouse(true)
+					fmt.Printf("Error from terminal (tview): %s", err)
+					os.Exit(1)
+				}
+
+				url := form.GetFormItem(0).(*tview.InputField).GetText()
+				fields := form.GetFormItem(1).(*tview.TextArea).GetText()
+				vc := form.GetFormItem(2).(*tview.InputField).GetText()
+				captcha := form.GetFormItem(3).(*tview.InputField).GetText()
+				// create body using FormModelReq
+				// encode as JSON
+				var fmodel handler.FormPostReq
+				fmodel.URL = url
+				fmodel.Captcha = captcha
+				fmodel.Fields = make(map[string]string)
+				err = json.Unmarshal([]byte(fields), &fmodel.Fields)
+				if err != nil {
+					fmt.Printf("Error unmarshalling fields (JSON error): %s\n", err.Error())
+					os.Exit(1)
+				}
+				fmodel.SSCookie = vc
+
+				var d []byte
+				d, err = json.Marshal(fmodel)
+				if err != nil {
+					fmt.Printf("Error marshalling form submission (1): %s\n", err.Error())
+					os.Exit(1)
+				}
+				body = string(d)
+			} else {
+				body, err = getAltBody(hulactlconfig)
+				if err != nil {
+					fmt.Printf("Error getting body for request: %s\n", err.Error())
+					os.Exit(1)
+				}
+			}
+		} else {
+			if len(argz) < 3 || len(argz[2]) < 1 {
+				fmt.Printf("Need the form data submission file.\n")
+				os.Exit(1)
+			}
+			body = argz[2]
+		}
+		client := GetHulactlClient(hulactlconfig)
+		resp, err := client.FormSubmit([]byte(body), formid, hulactlconfig.HostId)
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if resp.StatusCode != 200 {
+			fmt.Printf("Error: %d\n", resp.StatusCode)
+			fmt.Printf("Body: %s\n", resp.Body)
+			os.Exit(1)
+		}
+		fmt.Printf("Form submitted.\n")
 	case "authok":
 		client := GetHulactlClient(hulactlconfig)
 		resp, err := client.StatusAuthOK()
@@ -594,6 +769,7 @@ func main() {
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		fmt.Printf("Usage: %s <configfile> <command>\n", os.Args[0])
+		printHelp()
 	}
 
 }

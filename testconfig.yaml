@@ -1,5 +1,7 @@
 admin:
   hash: "$argon2id$v=19$m=16384,t=12,p=4$wgJ+pzUyMgQTCOu6/Wi4xQ$pd7IPBD0GeKuYDs40Osni9hvCrgH8g7mkosDUxkm3EqYf/1zesUamtPRa9cNfLNW"
+# use hulactl to generate a random string
+jwt_key: "randomstringhere"
 port: 8088
 # ssl:
 #   cert: cert.pem
@@ -9,11 +11,14 @@ proxies:
     by_path: "/"
 servers:
   - host: localhost
+    aliases: 
+     - "127.0.0.1"
     id: abc123
     ignore_port_in_host: true
     publish_port: true
     http_scheme: http
     path_prefix: "/hula"
+    captcha_secret: "1x0000000000000000000000000000000AA"
 cors:
   allow_origins: "http://localhost:1314"
   # will set the Access-Control-Allow-Origin header to the value of the originating request's host

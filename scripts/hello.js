@@ -13,12 +13,12 @@
     var vc = null
 
 
-    var HulaSubmitForm = function(formid, data, onsuccess, onerror) {
+    var HulaSubmitForm = function(formid, url, captcha, data, onsuccess, onerror) {
 
         if (typeof(data) != "object") {
             console.log("HulaSubmitForm: 'data' is not an object");
             if (onerror) {
-                onerror(nil, "data is not an object")
+                onerror(null, "data is not an object")
             }
             return;
         }
@@ -26,13 +26,14 @@
 
         // NOTE: bounce map - will not work as bounce already used - why not put the sscookie in the payload also?
 
-        xhr.open("POST", "{{hulaurl}}/v/form/"+formid+"?h={{hostid}}&r="+randid(), true);
+        xhr.open("POST", "{{hulaurl}}/v/sub/"+formid+"?h={{hostid}}&r="+randid(), true);
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
         xhr.send(JSON.stringify(
             { 
                 url: url,
-                form: data,
+                fields: data,
                 vc: vc,
+                captcha: captcha
             }
         ));
 
@@ -133,7 +134,7 @@
                 console.error("hello.js: error parsing JSON: " + e)
                 return
             }
-            HulaSubmitForm(dat.formid, dat.data, function(resp) {
+            HulaSubmitForm(dat.formid, dat.url, dat.captcha, dat.fields, function(resp) {
                 // on success
                 console.log("hello.js: HulaSubmitForm success: " + resp)
                 var msg = {

@@ -40,19 +40,28 @@ type CookieOpts struct {
 }
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
+	// optional - other names the Host header can be to match this server
+	Aliases []string `yaml:"aliases,omitempty"`
 	// ID should be a short random string - it is used as a parameter to the hulation server to identify the server
 	// and do a check with the Host header. It must be set - there is no default. This is not a secret.
-	ID         string      `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
-	Domain     string      `yaml:"domain,omitempty" env:"SERVER_DOMAIN"`
-	APIPath    string      `yaml:"api_path,omitempty" env:"SERVER_API_PATH" test:"~\\/.+" default:"/api"`
-	CookieOpts *CookieOpts `yaml:"cookie_opts,omitempty"`
+	ID     string `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
+	Domain string `yaml:"domain,omitempty" env:"SERVER_DOMAIN"`
+	// anything related to hulation functionality uses this prefix (optional)
+	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
+	// and APIs would be under /hula/api/...
+	// UNIMPLEMENTED for now
+	PathPrefix      string      `yaml:"path_prefix,omitempty" env:"SERVER_PATH_PREFIX"`
+	APIPath         string      `yaml:"api_path,omitempty" env:"SERVER_API_PATH" test:"~\\/.+" default:"/api"`
+	TurnstileSecret string      `yaml:"turnstile_secret,omitempty" env:"TURNSTILE_SECRET"`
+	CookieOpts      *CookieOpts `yaml:"cookie_opts,omitempty"`
 	// not common - will ignore port in Host header when validating - useful for local testing
 	IgnorePortInHeader bool `yaml:"ignore_port_in_host"`
 	// When dynamically creating the hula.js script - publish the port hula is running on
 	// (this would only be done if not running hulation behind a transparent proxy - not common)
 	PublishPort bool `yaml:"publish_port"`
 	// When dynamically creating the hula.js script - publish which protocol hula is running on (externally visible)
-	HttpScheme string `yaml:"http_scheme,omitempty" env:"SERVER_HTTP_SCHEME" test:"~.+" default:"https"`
+	HttpScheme    string `yaml:"http_scheme,omitempty" env:"SERVER_HTTP_SCHEME" test:"~.+" default:"https"`
+	CaptchaSecret string `yaml:"captcha_secret,omitempty"`
 	// computed string
 	externalUrl string
 }
@@ -176,10 +185,14 @@ type Proxy struct {
 }
 
 const (
-	getDomain_re = `(?m)(?:.+\.)?([^.]+\.[^.]+)`
+	getDomain_re        = `(?m)(?:.+\.)?([^.]+\.[^.]+)`
+	ValidIpAddressRegex = `^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`
+	ValidHostnameRegex  = `^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$`
 )
 
 var getDomainRE = regexp.MustCompile(getDomain_re)
+var validIpAddressRE = regexp.MustCompile(ValidIpAddressRegex)
+var validHostnameRE = regexp.MustCompile(ValidHostnameRegex)
 
 func (cfg *Config) GetServer(host string) *Server {
 	if cfg == nil {
@@ -196,7 +209,7 @@ func LoadConfig(filename string) (*Config, error) {
 		return &cfg, fmt.Errorf("read file: %s", err.Error())
 	}
 
-	err = yaml.Unmarshal(buf, &cfg)
+	err = yaml.UnmarshalStrict(buf, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
@@ -240,8 +253,20 @@ func LoadConfig(filename string) (*Config, error) {
 			}
 		}
 		s.externalUrl = fmt.Sprintf("%s://%s%s", s.HttpScheme, s.Host, portstring)
-
 		cfg.byServer[s.Host] = s
+		// look at aliases
+		for _, a := range s.Aliases {
+			_, ok := cfg.byServer[a]
+			if ok {
+				log.Errorf(`alias "%s" for server config %s already referenced`, a, s.Host)
+			}
+			if validIpAddressRE.MatchString(a) || validHostnameRE.MatchString(a) {
+				log.Debugf(`server[%s] alias %s`, s.Host, a)
+				cfg.byServer[a] = s
+			} else {
+				log.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
+			}
+		}
 	}
 
 	if cfg.CORS != nil {

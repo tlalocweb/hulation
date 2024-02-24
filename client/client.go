@@ -160,7 +160,7 @@ func (c *Client) Auth(identity string, pass string) (resp *ClientResponse, token
 }
 
 func (c *Client) StatusAuthOK() (resp *ClientResponse, err error) {
-	url := fmt.Sprintf("%s://%s:%d%s/auth/ok", c.proto, c.host, c.port, c.path)
+	url := fmt.Sprintf("%s://%s:%d%s/api/auth/ok", c.proto, c.host, c.port, c.path)
 	c.out("GET statusauthok url: %s\n", url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

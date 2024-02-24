@@ -29,14 +29,14 @@ const contactInfoFormSchema = `{
 
 func TestFormBasicValidation(t *testing.T) {
 	// Create new form
-	formmodel, err := CreateNewFormModel("TestFormBasicValidation", "TestFormBasicValidation", "Test Form", contactInfoFormSchema)
+	formmodel, err := CreateNewFormModel("TestFormBasicValidation", "TestFormBasicValidation", "Test Form", contactInfoFormSchema, TURNSTILE_CAPTCHA, "feedback")
 	// Create new form
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
 	var id string
-	id, err = formmodel.ValidateModel(testdb)
+	id, err = formmodel.ValidateNewModel(testdb)
 	if err != nil {
 		t.Logf("Unexpected error on Validate(): %v", err)
 		return
@@ -96,13 +96,13 @@ func TestFormBasicValidation(t *testing.T) {
 
 func TestFormEntryShouldNotValidate(t *testing.T) {
 	// Create new form
-	formmodel, err := CreateNewFormModel("TestFormShouldNotValidate", "TestFormShouldNotValidate", "Test Form", contactInfoFormSchema)
+	formmodel, err := CreateNewFormModel("TestFormShouldNotValidate", "TestFormShouldNotValidate", "Test Form", contactInfoFormSchema, TURNSTILE_CAPTCHA, "feedback")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
 	var id string
-	id, err = formmodel.ValidateModel(testdb)
+	id, err = formmodel.ValidateNewModel(testdb)
 	if err != nil {
 		t.Logf("Unexpected error on Validate(): %v", err)
 		return
@@ -144,7 +144,7 @@ func TestFormEntryShouldNotValidate2(t *testing.T) {
 	}
 	var err error
 	var id string
-	id, err = formmodel.ValidateModel(testdb)
+	id, err = formmodel.ValidateNewModel(testdb)
 	if err != nil {
 		t.Logf("Unexpected error on Validate(): %v", err)
 		return
@@ -179,7 +179,7 @@ func TestFormEntryShouldNotValidate2(t *testing.T) {
 
 func TestFormSchemaCache(t *testing.T) {
 	// Create new form
-	formmodel, err := CreateNewFormModel("TestSchemaCache", "TestSchemaCache", "Test Form", contactInfoFormSchema)
+	formmodel, err := CreateNewFormModel("TestSchemaCache", "TestSchemaCache", "Test Form", contactInfoFormSchema, TURNSTILE_CAPTCHA, "feedback")
 	// Create new form
 	if err != nil {
 		err = formmodel.Commit(testdb)

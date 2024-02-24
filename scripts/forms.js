@@ -15,9 +15,9 @@
                 window.Hula.FormData[currentForm].submitbtn.addEventListener('click', function(e) {
                     e.preventDefault();
                     console.log("Hula: submit button clicked")
-                    HulaSubmitForm(currentForm, window.Hula.FormData[currentForm].fields, 
-                        attr.ownerElement.getAttribute('data-hula-onsuccess'), 
-                        attr.ownerElement.getAttribute('data-hula-onfailure'))
+                    HulaSubmitForm(currentForm,
+                        window.Hula.FormData[currentForm].onsuccess, 
+                        window.Hula.FormData[currentForm].onerror)
                 })
                 return true
             }
@@ -59,9 +59,11 @@
                 topwindow.Hula.FormData[currentForm] = {}
                 topwindow.Hula.FormData[currentForm]['fields'] = {}
                 topwindow.Hula.FormData[currentForm]['fieldsel'] = {}
+                topwindow.Hula.FormData[currentForm]['onsuccess'] = form.getAttribute('data-hula-onsuccess')
+                topwindow.Hula.FormData[currentForm]['onerror'] = form.getAttribute('data-hula-onerror')
                 // Find all the input fields inside the current form
 
-                const inputFields = form.querySelectorAll('input, textarea, select, button');
+                const inputFields = form.querySelectorAll('input, textarea, select, button, div');
                 
                 // Loop through each input field
                 inputFields.forEach((field, fieldIndex) => {
@@ -115,16 +117,41 @@
         hulaframeid = hulaframeid_def
     }
 
-    var HulaSubmitForm = function(formid, data, onsuccess, onerror) {
+    var captchaToken = null
+
+    var HulaSetCaptcha = function(captcha) {
+        console.log("HulaSetCaptcha: " + captcha)
+        captchaToken = captcha
+    }
+    // var hulaTurnstileCb = function(data) {
+    //     console.log("hulaTurnstileCb: " + data)
+    // }
+
+    // window.hulaTurnstileCb = hulaTurnstileCb
+
+    var HulaSubmitForm = function(formid, onsuccess, onerror) {
             
             console.log("HulaSubmitForm: formid: " + formid)
 
-            if (typeof(data) != "object") {
-                console.error("HulaSubmitForm: 'data' is not an object");
-                return;
+            // if (typeof(data) != "object") {
+            //     console.error("HulaSubmitForm: 'data' is not an object");
+            //     return;
+            // }
+
+            // gather up the data
+            var fields = window.Hula.FormData[formid].fields
+            var fieldsel = window.Hula.FormData[formid].fieldsel
+
+            for (const [key, value] of Object.entries(fields)) {
+                fields[key] = fieldsel[key].value
             }
 
-            data = { formid: formid, data: data, unique: randid() }
+            var url = window.location.href
+            if (window.location != window.parent.location) {
+                url = window.parent;
+            }
+        
+            var data = { url: url, formid: formid, fields: fields, captcha: captchaToken, unique: randid() }
 
             var iframeWin = document.getElementById("hulaframe").contentWindow        
 
@@ -139,13 +166,15 @@
                 }
                 console.log("HulaSubmitForm: received message from iframe: " + event.origin + ">> " + event.data)
                 console.dir(event)
-                if (event.data == "success") {
+                data = JSON.parse(event.data)
+                if (data.ok) {
+                    console.log("HulaSubmitForm: got ok. calling onsuccess: " + onsuccess)
                     if (onsuccess) {
-                        onsuccess(event.data)
+                        window[onsuccess](data)
                     }
                 } else {
                     if (onerror) {
-                        onerror(event.data)
+                        window[onerror](data)
                     }
                 }
             }, false);
@@ -159,6 +188,7 @@
     }
     topwindow.Hula.SubmitForm = HulaSubmitForm
     topwindow.Hula.FindForm = HulaFindForm
+    topwindow.Hula.SetCaptcha = HulaSetCaptcha
     topwindow.Hula.FormData = {}
 
     topwindow.addEventListener("load", (event) => {
