@@ -3,12 +3,20 @@ package utils
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )
 
+func TestRandomBytesNoTrailer(t *testing.T) {
+	s, err := GenerateBase64RandomStringNoPadding(10)
+	assert.NoError(t, err)
+	fmt.Printf("GenerateBase64RandomStringNoTrailer = %s\n", s)
+	assert.GreaterOrEqual(t, len(s), 9)
+}
 func TestURLPathAlt(t *testing.T) {
 	s := "http://localhost:8080/a/b/c"
 	h, p := GetURLHostPath(s)
@@ -236,4 +244,78 @@ hello:
 	yaml.Unmarshal([]byte(dat), &testStruct)
 	assert.Equal(t, 789, testStruct.Hello.World[1].Info.Data2)
 
+}
+
+func TestDeferredRunner1(t *testing.T) {
+	r := NewDeferredRunner("test1")
+	r.Start()
+	assert.NotNil(t, r)
+	cnt := 0
+	m := sync.Mutex{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	fmt.Printf("...planned pause ~1second\n")
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 333)
+		return nil
+	})
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 333)
+		return nil
+	})
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 333)
+		return nil
+	})
+	r.Shutdown(func() {
+		wg.Done()
+	})
+	wg.Wait()
+	assert.Equal(t, 3, cnt)
+}
+
+func TestDeferredRunner2(t *testing.T) {
+	r := NewDeferredRunner("test1")
+	r.Start()
+	assert.NotNil(t, r)
+	cnt := 0
+	m := sync.Mutex{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	fmt.Printf("...planned pause ~1second\n")
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 1000)
+		return nil
+	})
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 1000)
+		return nil
+	})
+	r.Run(func() error {
+		m.Lock()
+		cnt++
+		m.Unlock()
+		time.Sleep(time.Millisecond * 1000)
+		return nil
+	})
+	r.ShutdownNow(func() {
+		wg.Done()
+	})
+	wg.Wait()
+	assert.NotEqual(t, 3, cnt)
 }

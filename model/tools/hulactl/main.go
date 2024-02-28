@@ -415,7 +415,7 @@ func main() {
 			}
 		}
 
-	case "createform":
+	case CMD_CREATEFORM:
 		var body string
 		if doAltGetBody(hulactlconfig) {
 			if hulactlconfig.GetInteractive {
@@ -655,6 +655,78 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Form submitted.\n")
+
+	case CMD_CREATELANDER:
+		var body string
+		if doAltGetBody(hulactlconfig) {
+			if hulactlconfig.GetInteractive {
+				app := tview.NewApplication()
+				form := tview.NewForm().
+					//		AddDropDown("Title", []string{"Mr.", "Ms.", "Mrs.", "Dr.", "Prof."}, 0, nil).
+					AddInputField("Lander Name", "lander1", 50, nil, nil).
+					AddInputField("Server", "hostname.com", 50, nil, nil).
+					AddInputField("Description (optional)", "", 50, nil, nil).
+					//		AddInputField("Last name", "", 20, nil, nil).
+					AddInputField("Redirect", "", 100, nil, nil).
+					AddCheckbox("NoServe", false, nil).
+					AddButton("Cancel", func() {
+						fmt.Printf("Canceled.")
+						os.Exit(1)
+					}).
+					AddButton("Done (or CTRL-C)", func() {
+						app.Stop()
+					})
+
+				form.SetTitle("Enter lander info").SetTitleAlign(tview.AlignLeft) //SetBorder(true)
+				if err := app.SetRoot(form, true).Run(); err != nil {             // .EnableMouse(true)
+					fmt.Printf("Error from terminal (tview): %s", err)
+					os.Exit(1)
+				}
+
+				name := form.GetFormItem(0).(*tview.InputField).GetText()
+				server := form.GetFormItem(1).(*tview.InputField).GetText()
+				desc := form.GetFormItem(2).(*tview.InputField).GetText()
+				redirect := form.GetFormItem(3).(*tview.InputField).GetText()
+				noserve := form.GetFormItem(4).(*tview.Checkbox).IsChecked()
+				// create body using FormModelReq
+				// encode as JSON
+				var model handler.LanderReq
+
+				model.Name = name
+				model.Server = server
+				model.Description = desc
+				model.Redirect = redirect
+				model.NoServe = noserve
+
+				var d []byte
+				d, err = json.Marshal(model)
+				if err != nil {
+					fmt.Printf("Error marshalling form model (1): %s\n", err.Error())
+					os.Exit(1)
+				}
+				body = string(d)
+			} else {
+				body, err = getAltBody(hulactlconfig)
+				if err != nil {
+					fmt.Printf("Error getting body for request: %s\n", err.Error())
+					os.Exit(1)
+				}
+			}
+		} else {
+			if len(argz) < 2 || len(argz[1]) < 1 {
+				fmt.Printf("Need the lander model json file.\n")
+				os.Exit(1)
+			}
+			body = argz[1]
+		}
+		client := GetHulactlClient(hulactlconfig)
+		resp, err := client.LanderCreate(body)
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Lander created. url: %s id: %s\n", resp.FinalUrl, resp.ID)
+
 	case "authok":
 		client := GetHulactlClient(hulactlconfig)
 		resp, err := client.StatusAuthOK()

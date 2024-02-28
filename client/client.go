@@ -13,10 +13,10 @@ import (
 )
 
 type Client struct {
-	apiUrl   string `yaml:"apiurl" json:"apiurl"`
-	token    string `yaml:"token" json:"token"`
-	Noisy    bool   // set to true to print output to OutputFunc
-	NoisyErr bool   // set to true to error output to ErrOutFunc
+	apiUrl   string
+	token    string
+	Noisy    bool // set to true to print output to OutputFunc
+	NoisyErr bool // set to true to error output to ErrOutFunc
 	// url breakdown
 	proto  string                            // protocol
 	host   string                            // host

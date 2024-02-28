@@ -127,9 +127,9 @@ func (c *Client) FormModify(formid string, modelreq string) (err error) {
 		err = &ClientError{RootCause: fmt.Errorf("error marshalling request body: %v", err)}
 		return
 	}
-	url := c.apiUrl + "/form/modify/" + formid
-	c.out("FormModify: PUT url: %s\n", url)
-	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(modelbody))
+	url := c.apiUrl + "/form/" + formid
+	c.out("FormModify: PATCH url: %s\n", url)
+	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(modelbody))
 	if err != nil {
 		return &ClientError{RootCause: fmt.Errorf("error creating request: %v", err)}
 	}
@@ -154,6 +154,36 @@ func (c *Client) FormModify(formid string, modelreq string) (err error) {
 		return &ClientError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	c.out("FormModify: response: %s\n", body)
+	return
+}
+
+func (c *Client) FormDelete(formid string) (err error) {
+	url := c.apiUrl + "/form/" + formid
+	c.out("FormDelete: DELETE url: %s\n", url)
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return &ClientError{RootCause: fmt.Errorf("error creating request: %v", err)}
+	}
+	// req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := &http.Client{Timeout: time.Second * 10}
+	clientresp := NewResponse()
+	resp, err := client.Do(req)
+	if err != nil {
+		return &ClientError{RootCause: fmt.Errorf("error sending request: %v", err)}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	clientresp.Finish(resp.StatusCode, string(body), nil)
+	if err != nil {
+		return &ClientError{RootCause: fmt.Errorf("error reading response: %v", err)}
+	}
+	if resp.StatusCode != 200 {
+		c.errout("FormDelete: Error: %d  Body: %s\n", resp.StatusCode, string(body))
+		return &ClientError{StatusCode: resp.StatusCode, Body: string(body)}
+	}
+	c.out("FormDelete: response: %s\n", body)
 	return
 }
 

@@ -409,3 +409,25 @@ func FormModify(c *fiber.Ctx) (err error) {
 
 	return c.Status(200).SendString("Form model modified")
 }
+
+func FormDelete(c *fiber.Ctx) (err error) {
+	formid := c.Params("formid")
+	if len(formid) == 0 {
+		return c.Status(404).SendString("404 Not Found - No formid")
+	}
+
+	// get form by id
+	formmodel, err := model.GetFormModelById(model.GetDB(), c.Params("formid"))
+	if err != nil {
+		log.Errorf("error getting form model: %s", err.Error())
+		return c.Status(500).SendString("error getting form model: " + err.Error())
+	}
+	if formmodel == nil {
+		return c.Status(404).SendString("404 Not Found - No form model by id " + c.Params("formid"))
+	}
+	err = formmodel.Delete(model.GetDB())
+	if err != nil {
+		return c.Status(500).SendString("error deleting form: " + err.Error())
+	}
+	return c.Status(200).SendString("form model deleted")
+}

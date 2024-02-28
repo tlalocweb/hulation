@@ -93,32 +93,42 @@ func SetupRoutes(app *fiber.App) {
 	// Middleware
 	//	api.Use("/api",
 
-	api.Get("/status", handler.Status)
+	// visitor API do not need auth
+	visitor := app.Group(hulation.GetConfig().VisitorPrefix)
+	visitor.Post("/hello", handler.Hello)
+	visitor.Get("/"+hulation.GetConfig().PublishedIFrameHelloFileName, handler.HelloIframe)
+	visitor.Get("/"+hulation.GetConfig().PublishedIFrameNoScriptFilename, handler.HelloNoScript)
+	// submit form as visitor
+	visitor.Post("/sub/:formid", handler.FormSubmit)
+	// handle landing as visitor
+	//	log.Debugf("LanderPath: %s", hulation.GetConfig().LanderPath)
+	visitor.Get(fmt.Sprintf("%s/:landerid", hulation.GetConfig().LanderPath), handler.DoLanding)
+	// nor do script downloads
+	app.Get("/scripts/"+hulation.GetConfig().PublishedHelloScriptFilename, handler.HelloScriptFile)
+	app.Get("/scripts/"+hulation.GetConfig().PublishedFormsScriptFilename, handler.FormsScriptFile)
 
+	api.Get("/status", handler.Status)
 	// Auth
 	auth := api.Group("/auth")
 	auth.Post("/logout", handler.Logout)
 	auth.Post("/user", handler.NewUser)
 	auth.Get("/user/:userlookup", handler.GetUser)
-	auth.Put("/user/:userid", handler.ModifyUser)
+	auth.Patch("/user/:userid", handler.ModifyUser)
+	// TODO
+	//auth.Delete("/user/:userid", handler.DeleteUser)
 	auth.Get("/ok", handler.StatusAuthOK)
-
-	app.Get("/scripts/"+hulation.GetConfig().PublishedHelloScriptFilename, handler.HelloScriptFile)
-	app.Get("/scripts/"+hulation.GetConfig().PublishedFormsScriptFilename, handler.FormsScriptFile)
-	visitor := app.Group("/v")
-	visitor.Post("/hello", handler.Hello)
-	visitor.Get("/"+hulation.GetConfig().PublishedIFrameHelloFileName, handler.HelloIframe)
-	visitor.Get("/"+hulation.GetConfig().PublishedIFrameNoScriptFilename, handler.HelloNoScript)
 
 	form := api.Group("/form")
 	// order is important - the most generic path :/formid - must be at the end
 	form.Post("/create", handler.FormCreate)
-	form.Put("/modify/:formid", handler.FormModify)
-	visitor.Post("/sub/:formid", handler.FormSubmit)
-	// Products
-	// product := api.Group("/product")
-	// product.Get("/", handler.GetAllProducts)
-	// product.Get("/:id", handler.GetProduct)
-	// product.Post("/", middleware.Protected(), handler.CreateProduct)
-	// product.Delete("/:id", middleware.Protected(), handler.DeleteProduct)
+	// TODO apparently DELETE is sometimes blocked by proxies
+	// so we should provide an alternate later
+	form.Delete("/:formid", handler.FormDelete)
+	form.Patch("/:formid", handler.FormModify)
+
+	lander := api.Group("/lander")
+	lander.Post("/create", handler.LanderCreate)
+	lander.Delete("/:landerid", handler.LanderDelete)
+	lander.Patch("/:landerid", handler.LanderModify)
+
 }

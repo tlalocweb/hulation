@@ -61,3 +61,17 @@ func GenerateBase64RandomString(s int) (string, error) {
 	b, err := GenerateRandomBytes(s)
 	return base64.URLEncoding.EncodeToString(b), err
 }
+
+func GenerateBase64RandomStringNoPadding(s int) (string, error) {
+	b, err := GenerateRandomBytes(s)
+	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b), err
+	// b, err := GenerateRandomBytes(s)
+	// if err != nil {
+	// 	return "", err
+	// }
+	// var ret []byte
+	// n := base64.URLEncoding.EncodedLen(len(b))
+	// ret = make([]byte, n)
+	// base64.URLEncoding.Encode(b, ret)
+	// return string(ret[:n-1]), nil
+}

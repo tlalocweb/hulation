@@ -28,6 +28,14 @@ type HModel struct {
 	// DeletedAt DeletedAt `gorm:"index"`
 }
 
+// read only version of HModel
+// has no UpdatedAt
+type HModelRO struct {
+	ID        string `gorm:"primarykey"`
+	CreatedAt time.Time
+	// DeletedAt DeletedAt `gorm:"index"`
+}
+
 type HasUID interface {
 	GenID() string
 }
@@ -190,6 +198,10 @@ func SetupDB(hulationconf *config.Config, premodelhook PreConnectModelFunc) (con
 	err = AutoMigrateAuthModels(gormdb)
 	if err != nil {
 		log.Errorf("Error automigrating auth models: %s", err.Error())
+	}
+	err = AutoMigrateLanderModels(gormdb)
+	if err != nil {
+		log.Errorf("Error automigrating lander models: %s", err.Error())
 	}
 
 	return

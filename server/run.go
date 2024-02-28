@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gofiber/contrib/fiberzerolog"
 	"github.com/gofiber/fiber/v2"
@@ -99,6 +100,47 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 	//	store.ConnectDB()
 
 	router.SetupRoutes(appfiber)
+	// setup static serving
+	var err error
+	for _, server := range conf.Servers {
+		if server.Root != "" {
+			var duration time.Duration
+			if len(server.RootCacheDuration) > 0 {
+				duration, err = time.ParseDuration(server.RootCacheDuration)
+				if err != nil {
+					log.Warnf("Error parsing cache duration for root static folder for server entry %s: %s", server.Host, err.Error())
+				}
+			}
+			appfiber.Static("/", server.Root, fiber.Static{
+				Compress:      server.RootCompress,
+				ByteRange:     server.RootByteRange,
+				Index:         server.RootIndex,
+				MaxAge:        int(server.RootMaxAge),
+				CacheDuration: duration,
+			})
+			log.Infof("Server %s: Serving static files from %s", server.Host, server.Root)
+		}
+
+		if server.NonRootStaticFolders != nil && len(server.NonRootStaticFolders) > 0 {
+			for _, folder := range server.NonRootStaticFolders {
+				var duration time.Duration
+				if len(folder.CacheDuration) > 0 {
+					duration, err = time.ParseDuration(folder.CacheDuration)
+					if err != nil {
+						log.Warnf("Error parsing cache duration for static folder %s for server entry %s: %s", folder.Root, server.Host, err.Error())
+					}
+				}
+				appfiber.Static(folder.URLPrefix, folder.Root, fiber.Static{
+					Compress:      folder.Compress,
+					ByteRange:     folder.ByteRange,
+					Index:         folder.Index,
+					MaxAge:        int(folder.MaxAge),
+					CacheDuration: duration,
+				})
+				log.Infof("Server %s: Serving static files from %s at URL prefix %s", server.Host, folder.Root, folder.URLPrefix)
+			}
+		}
+	}
 
 	// check for TLS
 
@@ -113,7 +155,7 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 	}
 	log.Infof("Starting server on port %d", conf.Port)
 	handler.InitVistorHandlers()
-	err := appfiber.Listen(fmt.Sprintf(":%d", conf.Port))
+	err = appfiber.Listen(fmt.Sprintf(":%d", conf.Port))
 	if err != nil {
 		log.Fatalf("Error listening on port %d: %s", conf.Port, err.Error())
 		return 1

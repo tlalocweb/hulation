@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"fmt"
 
 	"github.com/tlalocweb/argon2id"
+	"github.com/tlalocweb/hulation/log"
 )
 
 const reStrGetURLPieces = `(http[s]?)\:\/\/([^\/:]+)(?:\:([0-9]+))?(.*)`
@@ -195,4 +197,13 @@ func CamelCase(s string) string {
 		s = strings.ToLower(s[:1]) + s[1:]
 	}
 	return s
+}
+
+func JsonifyStr(i string) string {
+	b, err := json.Marshal(i)
+	if err != nil {
+		log.Errorf("jsonEscape: error marshalling string: %s", err.Error())
+	}
+	// DONT Trim the beginning and trailing " character
+	return string(b) //string(b[1 : len(b)-1])
 }

@@ -38,6 +38,19 @@ type CookieOpts struct {
 	// if true, do not set the Secure flag on the cookie
 	NoSecure bool `yaml:"no_secure,omitempty" env:"COOKIE_NO_SECURE"`
 }
+
+type StaticFolder struct {
+	Root      string `yaml:"root,omitempty" test:"~.+"`
+	URLPrefix string `yaml:"url_prefix,omitempty" test:"~\\/.+"`
+	Compress  bool   `yaml:"compress,omitempty"`
+	ByteRange bool   `yaml:"byte_range,omitempty"`
+	Browse    bool   `yaml:"browse,omitempty"`
+	Index     string `yaml:"index,omitempty"`
+	// uses string representation of time.Duration
+	CacheDuration string `yaml:"cache_duration,omitempty"` // test:"$(validtimeduration)"`
+	MaxAge        uint   `yaml:"max_age,omitempty"`
+}
+
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
 	// optional - other names the Host header can be to match this server
@@ -62,6 +75,18 @@ type Server struct {
 	// When dynamically creating the hula.js script - publish which protocol hula is running on (externally visible)
 	HttpScheme    string `yaml:"http_scheme,omitempty" env:"SERVER_HTTP_SCHEME" test:"~.+" default:"https"`
 	CaptchaSecret string `yaml:"captcha_secret,omitempty"`
+	// root is the root directory of the server - this is used to serve static files
+	// static serving is optional
+	Root          string `yaml:"root,omitempty" env:"SERVER_ROOT"`
+	RootCompress  bool   `yaml:"root_compress,omitempty"`
+	RootByteRange bool   `yaml:"root_byte_range,omitempty"`
+	RootBrowse    bool   `yaml:"root_browse,omitempty"`
+	RootIndex     string `yaml:"root_index,omitempty"`
+	// uses string representation of time.Duration
+	RootCacheDuration string `yaml:"root_cache_duration,omitempty"` // test:"$(validtimeduration)"`
+	RootMaxAge        uint   `yaml:"root_max_age,omitempty"`
+
+	NonRootStaticFolders []*StaticFolder `yaml:"static_folders,omitempty"`
 	// computed string
 	externalUrl string
 }
@@ -174,6 +199,10 @@ type Config struct {
 	ScriptFolder             string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
 	LocalHelloScriptFilename string `yaml:"local_hello_script_filename,omitempty" env:"LOCAL_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hello.js"`
 	LocalFormsScriptFilename string `yaml:"local_forms_script_filename,omitempty" env:"LOCAL_FORMS_SCRIPT_FILENAME" test:"~[^\\/]+" default:"forms.js"`
+	// the prefix in the url for all Landers
+	LanderPath string `yaml:"lander_path,omitempty" test:"~\\/.+" default:"/land"`
+	// the prefix for all URLs used by vistitors
+	VisitorPrefix string `yaml:"visitor_prefix,omitempty" test:"~\\/.+" default:"/v"`
 }
 
 type Proxy struct {
