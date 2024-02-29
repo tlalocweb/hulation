@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -235,6 +237,9 @@ func DoLanding(c *fiber.Ctx) (err error) {
 // DoLandingHit increments the hit count for a lander
 // but does not do a redirect
 func DoLandingHit(c *fiber.Ctx) (err error) {
+	hostconf, _, _, err := GetHostConfig(c)
+	log.Warnf("Error getting GetHostConfig: %s", err.Error())
+
 	landerid := c.Params("landerid")
 	if len(landerid) == 0 {
 		return c.Status(404).SendString("404 Not Found - No landerid")
@@ -247,11 +252,38 @@ func DoLandingHit(c *fiber.Ctx) (err error) {
 	if lander == nil {
 		return c.Status(404).SendString("404 Not Found - No lander by id " + c.Params("landerid"))
 	}
+
+	v, _, _, err_resp := GetVisitorFromContext(c, hostconf)
+	if err_resp != nil {
+		return err_resp.Send(c)
+	}
+
+	requrl := strings.Clone(c.OriginalURL())
+	host := hostconf.Host
+
+	ua := c.Get("User-Agent")
+	ip := c.IP()
+
 	// push to the commit thread
 	landerRunnerCommit.Run(func() (err error) {
 		err = lander.AddHit(model.GetDB())
 		if err != nil {
 			err = fmt.Errorf("error committing lander: %s", err.Error())
+		}
+		ev := model.NewEvent(model.EventCodeLanderHit)
+		ev.SetURL(requrl)
+		u, err := url.Parse(requrl)
+		if err != nil {
+			log.Errorf("error parsing url: %s", err.Error())
+		}
+		ev.SetUrlPath(u.Path)
+		ev.SetHost(host)
+		//		ev.SetMethod("hellonoscript")
+		ev.SetBrowserUA(ua)
+		ev.SetFromIP(ip)
+		err = ev.CommitTo(model.GetDB(), v)
+		if err != nil {
+			log.Errorf("error committing event: %s", err.Error())
 		}
 		// optimize the lander table at some point soon
 		landerOptimizeRunner.Run(func() (err error) {

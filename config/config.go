@@ -34,8 +34,11 @@ type CookieOpts struct {
 	CookiePrefix string `yaml:"cookie_prefix,omitempty" env:"SERVER_COOKIE_PREFIX" test:"~.+" default:"hula"`
 	// the default is to set the cookie to expire in 1 year
 	// this is also the default for Google Analytics
-	ExpireDays int    `yaml:"expire_days,omitempty" env:"COOKIE_EXPIRE_DAYS" test:">0" default:"365"`
-	SameSite   string `yaml:"same_site,omitempty" env:"COOKIE_SAME_SITE" test:"~^(Strict|Lax|None)$" default:"None"`
+	ExpireDays int `yaml:"expire_days,omitempty" env:"COOKIE_EXPIRE_DAYS" test:">0" default:"365"`
+	// If set, will specifically set the SameSite attribute of the cookie
+	// the default (blank) is to let hulation autodetect. In this case it will use Strict if the hulation is serving
+	// the site itself
+	SameSite string `yaml:"same_site,omitempty" env:"COOKIE_SAME_SITE" test:"~^(Strict|Lax|None)?$" default:""`
 	// if true, do not set the Secure flag on the cookie
 	NoSecure bool `yaml:"no_secure,omitempty" env:"COOKIE_NO_SECURE"`
 }

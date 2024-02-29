@@ -16,6 +16,7 @@ var formsJS *mustache.Template
 
 func HelloScriptFile(c *fiber.Ctx) (err error) {
 	//host := c.Get("Host")
+	c.Set(fiber.HeaderCacheControl, "no-cache, must-revalidate")
 
 	if helloJS == nil {
 		var script string
@@ -65,7 +66,7 @@ func HelloScriptFile(c *fiber.Ctx) (err error) {
 
 func FormsScriptFile(c *fiber.Ctx) (err error) {
 	//host := c.Get("Host")
-
+	c.Set(fiber.HeaderCacheControl, "no-cache, must-revalidate")
 	if formsJS == nil {
 		var script string
 		// read the file using the golang std lib

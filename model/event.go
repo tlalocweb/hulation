@@ -16,6 +16,7 @@ const (
 	EventCodeReferredFromKnown = 0x00000008
 	EventCodeScrolledIntoView  = 0x00000010
 	EventCodeFormSubmission    = 0x00000020
+	EventCodeLanderHit         = 0x00000100
 )
 
 type Event struct {

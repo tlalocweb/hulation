@@ -79,6 +79,8 @@ func Hello(c *fiber.Ctx) error {
 	}
 
 	//	contenttype := c.Get("Content-Type", "application/json")
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
 
 	var hello HelloMsg
 
@@ -155,7 +157,7 @@ func Hello(c *fiber.Ctx) error {
 		return err
 	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
 
-	return c.JSON(fiber.Map{"status": "ok", "vc": sscookie})
+	return c.SendString(`{"status":"ok","vc":"` + sscookie + `"}`)
 }
 
 const iframehello = `<!doctype html>
@@ -168,7 +170,7 @@ const iframehello = `<!doctype html>
 
 var iframeHelloTemplate *mustache.Template
 
-// This is the handler for when a normal (not at noscript) iframe is loaded
+// This is the handler for when a normal (not the noscript) iframe is loaded
 // We will set a visitor cookie and a sscookie if one does not exist.
 func HelloIframe(c *fiber.Ctx) error {
 	var err error
@@ -178,6 +180,8 @@ func HelloIframe(c *fiber.Ctx) error {
 			return c.Status(500).SendString("error parsing hello iframe template: " + err.Error())
 		}
 	}
+
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
 
 	hostconf, _, httperr, err := GetHostConfig(c)
 	if err != nil {
@@ -296,12 +300,23 @@ func HelloIframe(c *fiber.Ctx) error {
 		log.Debugf("SSCookieFromSSCookieVal (new?): %s", sscookie)
 		//		sscookiem.Commit(model.GetDB())
 	}
+	samesite := hostconf.CookieOpts.SameSite
+	if len(samesite) < 1 {
+		if AreWeServingThePage(c, hostconf) {
+			// if we are actually serving the content, then we can set the cookie to strict
+			// which should allow the cookie to remain longer
+			samesite = "Strict"
+		} else {
+			samesite = "Lax"
+		}
+	}
+
 	c.Cookie(&fiber.Cookie{
 		Name:     hostconf.CookieOpts.CookiePrefix + "_hello",
 		Value:    cookie,
 		Secure:   !hostconf.CookieOpts.NoSecure,
 		HTTPOnly: false,
-		SameSite: hostconf.CookieOpts.SameSite,
+		SameSite: samesite,
 		MaxAge:   60 * 60 * 24 * hostconf.HelloCookieMaxAge, // 30 days
 	})
 	c.Cookie(&fiber.Cookie{
@@ -309,7 +324,7 @@ func HelloIframe(c *fiber.Ctx) error {
 		Value:    sscookie,
 		Secure:   !hostconf.CookieOpts.NoSecure,
 		HTTPOnly: true,
-		SameSite: hostconf.CookieOpts.SameSite,
+		SameSite: samesite,
 	})
 
 	var body string
@@ -404,6 +419,7 @@ func HelloNoScript(c *fiber.Ctx) error {
 			return c.Status(500).SendString("error parsing hello iframe template: " + err.Error())
 		}
 	}
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
 
 	hostconf, _, httperr, err := GetHostConfig(c)
 	if err != nil {
@@ -547,84 +563,30 @@ func HelloNoScript(c *fiber.Ctx) error {
 			//			sscookiem.Commit(model.GetDB())
 		}
 
-		// // check for httponly cookie
+		samesite := hostconf.CookieOpts.SameSite
+		if len(samesite) < 1 {
+			if AreWeServingThePage(c, hostconf) {
+				// if we are actually serving the content, then we can set the cookie to strict
+				// which should allow the cookie to remain longer
+				samesite = "Strict"
+			} else {
+				samesite = "Lax"
+			}
+		}
 
-		// if len(sscookie) > 0 {
-		// 	log.Debugf("saw sscookie (hellonoscript): %s", sscookie)
-		// 	// cookie exists - find visitor
-		// 	visitor, err = model.GetVisitorBySSCookie(model.GetDB(), sscookie)
-		// 	if err != nil {
-		// 		// ignore not found error
-		// 		return c.Status(500).SendString("error getting visitor by sscookie: " + err.Error())
-		// 	} else {
-		// 		if visitor != nil {
-		// 			log.Debugf("visitor seen by sscookie: %s", visitor.ID)
-		// 		} else {
-		// 			log.Debugf("no known visitor by sscookie")
-		// 		}
-		// 	}
-		// }
-		// // check for normal cookie
-		// // if we find both, the normal cookie takes priority over sscookie
-		// // when we look up the Visitor
-
-		// if visitor == nil && len(cookie) > 0 {
-		// 	log.Debugf("saw cookie (hellonoscript): %s", cookie)
-		// 	// cookie exists - find visitor
-		// 	visitor, err = model.GetVisitorByCookie(model.GetDB(), cookie)
-		// 	if err != nil {
-		// 		// ignore not found error
-		// 		return c.Status(500).SendString("error getting visitor by cookie: " + err.Error())
-		// 	} else {
-		// 		if visitor != nil {
-		// 			log.Debugf("visitor seen by cookie (helloiframe): %s", visitor.ID)
-		// 		} else {
-		// 			log.Debugf("no known visitor by cookie")
-		// 		}
-		// 	}
-		// }
-
-		// if visitor == nil {
-		// 	visitor = model.NewVisitor()
-		// }
-
-		// var sscookiem *model.VisitorCookie
-		// var cookiem *model.VisitorCookie
-
-		// if len(cookie) < 1 {
-		// 	cookiem, err := visitor.NewVisitorCookie()
-		// 	if err != nil {
-		// 		return c.Status(500).SendString("error creating cookie: " + err.Error())
-		// 	}
-		// 	cookie = cookiem.Cookie
-		// 	log.Debugf("new cookie (hellonoscript): %s", cookie)
-		// 	// err = model.AddCookieToVisitor(model.GetDB(), visitor, cookiem)
-		// 	// if err != nil {
-		// 	// 	return c.Status(500).SendString("error adding cookie to visitor: " + err.Error())
-		// 	// }
-		// }
-
-		// if len(sscookie) < 1 {
-		// 	sscookiem, err = visitor.NewVisitorSSCookie()
-		// 	if err != nil {
-		// 		return c.Status(500).SendString("error creating sscookie: " + err.Error())
-		// 	}
-		// 	sscookie = sscookiem.Cookie
-		// 	log.Debugf("new sscookie (hellonoscript): %s", sscookie)
-		// }
 		c.Cookie(&fiber.Cookie{
 			Name:     hostconf.CookieOpts.CookiePrefix + "_hello",
 			Value:    cookie,
 			Secure:   !hostconf.CookieOpts.NoSecure,
 			HTTPOnly: false,
-			SameSite: hostconf.CookieOpts.SameSite,
+			SameSite: samesite,
 		})
 		c.Cookie(&fiber.Cookie{
 			Name:     hostconf.CookieOpts.CookiePrefix + "_helloss",
 			Value:    sscookie,
 			Secure:   !hostconf.CookieOpts.NoSecure,
 			HTTPOnly: true,
-			SameSite: hostconf.CookieOpts.SameSite,
+			SameSite: samesite,
 		})
 
 		var body string

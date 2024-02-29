@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/utils"
 )
 
@@ -19,6 +20,10 @@ type ResponseError struct {
 func (e *ResponseError) Error() (ret string) {
 	ret = "ClientError: " + e.RootCause.Error()
 	return
+}
+
+func (e *ResponseError) Send(c *fiber.Ctx) (err error) {
+	return c.Status(e.StatusCode).SendString(e.RootCause.Error())
 }
 
 func (e *ResponseError) JsonBody() string {
