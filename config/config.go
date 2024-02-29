@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -14,9 +15,9 @@ import (
 )
 
 const (
-	DEFAULT_PORT       = 8080
-	DEFAULT_STORE_TYPE = "bolt"
-	DEFAULT_STORE_PATH = "izvisitors.db"
+	DEFAULT_PORT = 8080
+	// DEFAULT_STORE_TYPE = "bolt"
+	// DEFAULT_STORE_PATH = "izvisitors.db"
 )
 
 type DBConfig struct {
@@ -59,6 +60,9 @@ type Server struct {
 	// and do a check with the Host header. It must be set - there is no default. This is not a secret.
 	ID     string `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
 	Domain string `yaml:"domain,omitempty" env:"SERVER_DOMAIN"`
+	// max age in days of a hello cookie - the hula cookie used for tracking visitors
+	// this is the regular cookie, not the session cookie
+	HelloCookieMaxAge int `yaml:"hello_cookie_max_age,omitempty" test:">0" default:"30"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
@@ -88,11 +92,16 @@ type Server struct {
 
 	NonRootStaticFolders []*StaticFolder `yaml:"static_folders,omitempty"`
 	// computed string
-	externalUrl string
+	externalUrl      string
+	externalHostPort string
 }
 
 func (s *Server) GetExternalUrl() string {
 	return s.externalUrl
+}
+
+func (s *Server) GetExternalHostPort() string {
+	return s.externalHostPort
 }
 
 type CORSConfig struct {
@@ -125,6 +134,14 @@ func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
 }
 
 func (cfg *SSLConfig) LoadSSLConfig() (err error) {
+	cfg.Cert, err = SubstConfVars(cfg.Cert, map[string]string{"confdir": confDir})
+	if err != nil {
+		log.Errorf("error substituting vars in SSL.Cert config var: %s", err.Error())
+	}
+	cfg.Key, err = SubstConfVars(cfg.Key, map[string]string{"confdir": confDir})
+	if err != nil {
+		log.Errorf("error substituting vars in SSL.Key config var: %s", err.Error())
+	}
 	if len(cfg.Cert) > 0 {
 		if _, err := os.Stat(cfg.Cert); err == nil {
 			cfg.certPath = cfg.Cert
@@ -179,6 +196,11 @@ type Config struct {
 	Proxies       []*Proxy    `yaml:"proxies,omitempty"`
 	JWTKey        string      `yaml:"jwt_key,omitempty"`
 	JWTExpiration string      `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
+	// the hostname of the hulation server itself - format: host or host:port
+	// this is used for APIs specifc to hula, visitor tracking, etc.
+	// Hulation will still serve the its visitor APIs to any host which uses a Host header that matches its host ID
+	// See servers section.
+	HulaHost string `yaml:"hula_host,omitempty" env:"HULA_HOST" test:"~.+" default:"localhost"`
 	// allows customization of the hula.js script filename - this changes what HTTP GET path is used to serve the script
 	// default: https://server.com/hula.js
 	PublishedHelloScriptFilename    string `yaml:"hello_script_filename,omitempty" env:"PUBLISHED_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hula.js"`
@@ -222,6 +244,7 @@ const (
 var getDomainRE = regexp.MustCompile(getDomain_re)
 var validIpAddressRE = regexp.MustCompile(ValidIpAddressRegex)
 var validHostnameRE = regexp.MustCompile(ValidHostnameRegex)
+var confDir string
 
 func (cfg *Config) GetServer(host string) *Server {
 	if cfg == nil {
@@ -237,6 +260,9 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return &cfg, fmt.Errorf("read file: %s", err.Error())
 	}
+
+	path, _ := filepath.Abs(filename)
+	confDir := filepath.Dir(path)
 
 	err = yaml.UnmarshalStrict(buf, &cfg)
 	if err != nil {
@@ -264,6 +290,11 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}
 
+	cfg.ScriptFolder, err = SubstConfVars(cfg.ScriptFolder, map[string]string{"confdir": confDir})
+	if err != nil {
+		log.Errorf("error substituting vars in script_folder config var: %s", err.Error())
+	}
+
 	cfg.byServer = make(map[string]*Server)
 	for _, s := range cfg.Servers {
 		if len(s.Domain) < 1 {
@@ -282,6 +313,7 @@ func LoadConfig(filename string) (*Config, error) {
 			}
 		}
 		s.externalUrl = fmt.Sprintf("%s://%s%s", s.HttpScheme, s.Host, portstring)
+		s.externalHostPort = fmt.Sprintf("%s:%d", s.Host, cfg.Port)
 		cfg.byServer[s.Host] = s
 		// look at aliases
 		for _, a := range s.Aliases {
@@ -296,6 +328,17 @@ func LoadConfig(filename string) (*Config, error) {
 				log.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
 			}
 		}
+		s.Root, err = SubstConfVars(s.Root, map[string]string{"confdir": confDir})
+		if err != nil {
+			log.Errorf("error substituting vars in server[%s].root config var: %s", s.Host, err.Error())
+		}
+		for _, f := range s.NonRootStaticFolders {
+			f.Root, err = SubstConfVars(f.Root, map[string]string{"confdir": confDir})
+			if err != nil {
+				log.Errorf("error substituting vars in server[%s].static_folders[%s].root config var: %s", s.Host, f.URLPrefix, err.Error())
+			}
+		}
+
 	}
 
 	if cfg.CORS != nil {

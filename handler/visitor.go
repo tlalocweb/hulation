@@ -302,6 +302,7 @@ func HelloIframe(c *fiber.Ctx) error {
 		Secure:   !hostconf.CookieOpts.NoSecure,
 		HTTPOnly: false,
 		SameSite: hostconf.CookieOpts.SameSite,
+		MaxAge:   60 * 60 * 24 * hostconf.HelloCookieMaxAge, // 30 days
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     hostconf.CookieOpts.CookiePrefix + "_helloss",

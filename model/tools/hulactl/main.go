@@ -669,6 +669,7 @@ func main() {
 					//		AddInputField("Last name", "", 20, nil, nil).
 					AddInputField("Redirect", "", 100, nil, nil).
 					AddCheckbox("NoServe", false, nil).
+					AddCheckbox("IgnorePort", false, nil).
 					AddButton("Cancel", func() {
 						fmt.Printf("Canceled.")
 						os.Exit(1)
@@ -688,6 +689,7 @@ func main() {
 				desc := form.GetFormItem(2).(*tview.InputField).GetText()
 				redirect := form.GetFormItem(3).(*tview.InputField).GetText()
 				noserve := form.GetFormItem(4).(*tview.Checkbox).IsChecked()
+				ignoreport := form.GetFormItem(5).(*tview.Checkbox).IsChecked()
 				// create body using FormModelReq
 				// encode as JSON
 				var model handler.LanderReq
@@ -696,7 +698,8 @@ func main() {
 				model.Server = server
 				model.Description = desc
 				model.Redirect = redirect
-				model.NoServe = noserve
+				model.NoServe = &noserve
+				model.IgnorePort = &ignoreport
 
 				var d []byte
 				d, err = json.Marshal(model)

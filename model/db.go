@@ -187,10 +187,6 @@ func SetupDB(hulationconf *config.Config, premodelhook PreConnectModelFunc) (con
 	if err != nil {
 		log.Errorf("Error automigrating visitor models: %s", err.Error())
 	}
-	err = AutoMigrateLandingModels(gormdb)
-	if err != nil {
-		log.Errorf("Error automigrating landing models: %s", err.Error())
-	}
 	err = AutoMigrateFormModels(gormdb)
 	if err != nil {
 		log.Errorf("Error automigrating form models: %s", err.Error())

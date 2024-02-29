@@ -3,9 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
@@ -20,11 +22,12 @@ type LanderReq struct {
 	Description       string `json:"description"`
 	RequestUrlPostfix string `json:"request_url_postfix"` // the caller can request a specific postfix - but it is not guaranteed to be used
 	Redirect          string `json:"redirect"`
+	IgnorePort        *bool  `json:"ignore_port,omitempty"`
 	// By default if we are serving the target of the redirect,
 	// then we will attempt to just serve the static page
 	// directly instead of redirecting to it.
 	// if NoServe is true then we will _not_ do this.
-	NoServe bool `json:"no_serve"`
+	NoServe *bool `json:"no_serve,omitempty"`
 }
 
 type LanderPostResp struct {
@@ -53,6 +56,12 @@ func LanderCreate(c *fiber.Ctx) (err error) {
 	lander.Server = landerreq.Server
 	//	lander.UrlPostfix = landerreq.UrlPostfix
 	lander.Redirect = landerreq.Redirect
+	if landerreq.IgnorePort != nil {
+		lander.IgnorePort = *landerreq.IgnorePort
+	}
+	if landerreq.NoServe != nil {
+		lander.NoServe = *landerreq.NoServe
+	}
 
 	// commit the lander
 	inst, err := lander.Commit(landerreq.RequestUrlPostfix, model.GetDB())
@@ -118,6 +127,13 @@ func LanderModify(c *fiber.Ctx) (err error) {
 	// }
 	if len(landerreq.Redirect) > 0 {
 		lander.Redirect = landerreq.Redirect
+	}
+
+	if landerreq.IgnorePort != nil {
+		lander.IgnorePort = *landerreq.IgnorePort
+	}
+	if landerreq.NoServe != nil {
+		lander.NoServe = *landerreq.NoServe
 	}
 
 	// commit the lander
@@ -202,9 +218,16 @@ func DoLanding(c *fiber.Ctx) (err error) {
 	if ok {
 		return c.Redirect(redirect)
 	}
-	ok, static := inst.DoStatic()
+	ok, _ = inst.DoStatic()
 	if ok {
-		return c.SendFile(static)
+		err := filesystem.SendFile(c, http.Dir(inst.GetFsRoot()), inst.GetStaticPath())
+		if err != nil {
+			// Handle the error, e.g., return a 404 Not Found response
+			return c.Status(fiber.StatusNotFound).SendString("File not found")
+		}
+		c.Context().SetStatusCode(200)
+		return nil
+		//		return c.SendFile(static)
 	}
 	return c.Status(500).SendString("500 - error handling lander " + c.Params("landerid"))
 }

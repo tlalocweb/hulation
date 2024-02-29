@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,13 +138,13 @@ func (r *DeferredRunner) runner() {
 	}()
 	var requestShutdown bool
 	for {
-		fmt.Printf("DeferredRunner: top of runner loop\n")
+		log.Tracef("DeferredRunner %s: top of runner loop\n", r.name)
 		if len(r.queue) < 1 && requestShutdown {
 			return
 		}
 		select {
 		case shutdown := <-r.shutdown:
-			fmt.Printf("DeferredRunner: shutdown signal received\n")
+			log.Tracef("DeferredRunner %s: shutdown signal received\n", r.name)
 			if shutdown == shutdownDeferredRunnerNow {
 				return
 			} else {
@@ -161,7 +160,7 @@ func (r *DeferredRunner) runner() {
 			if done {
 				return
 			}
-			fmt.Printf("DeferredRunner: running function\n")
+			log.Tracef("DeferredRunner %s: running function\n", r.name)
 			err := f()
 			if err != nil {
 				log.Errorf("DeferredRunner %s: error running function: %s", r.name, err.Error())

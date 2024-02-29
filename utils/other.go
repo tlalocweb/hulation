@@ -207,3 +207,16 @@ func JsonifyStr(i string) string {
 	// DONT Trim the beginning and trailing " character
 	return string(b) //string(b[1 : len(b)-1])
 }
+
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return err == nil
+}
+
+func GetJustHost(host string) string {
+	parts := strings.Split(host, ":")
+	return parts[0]
+}

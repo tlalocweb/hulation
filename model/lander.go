@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"time"
 
@@ -20,13 +21,23 @@ type Lander struct {
 	Server      string `json:"server"` // the server name - as in the server defined in the hula config file
 	UrlPostfix  string `json:"url"`    // the postfix path that is provided on the url - usually just the lander id  - like /19181
 	Redirect    string `json:"redirect"`
+	// if true, then when serving the redirect target, we will ignore the port in the redirect url
+	// so for instance if the redirect target is https://localhost:1313/mypage and our server is called localhost then
+	// we will serve the target as http://localhost/mypage as either redirect or static serve (if the file exists)
+	IgnorePort bool `json:"ignore_port"`
+	// By default if we are serving the target of the redirect,
+	// then we will attempt to just serve the static page
+	// directly instead of redirecting to it.
+	// if NoServe is true then we will _not_ do this.
+	NoServe bool `json:"no_serve"`
 }
 
 type LanderInstance struct {
 	lander     *Lander
 	fullUrl    string
 	redirect   string
-	staticPath string
+	fsRoot     string // the root of the filesystem for the static path
+	staticPath string // the relative path in this filesystem to the static file
 }
 
 const (
@@ -190,8 +201,6 @@ func createLanderInstance(l *Lander) (i *LanderInstance, err error) {
 	i = &LanderInstance{
 		lander: l,
 	}
-	// TODO: determine whether we do a redirect or serve a static file
-	i.redirect = l.Redirect
 
 	hostconf := app.GetConfig().GetServer(l.Server)
 	if hostconf == nil {
@@ -199,11 +208,71 @@ func createLanderInstance(l *Lander) (i *LanderInstance, err error) {
 		return
 	}
 	i.fullUrl = fmt.Sprintf("%s%s", hostconf.GetExternalUrl(), path.Join(app.GetConfig().VisitorPrefix, app.GetConfig().LanderPath, i.lander.UrlPostfix))
+	log.Debugf("creating lander instance for %s: %s", l.Name, i.fullUrl)
+	uredirect, err := url.Parse(l.Redirect)
+	// ulander, err2 := url.Parse(i.fullUrl)
+	var fp string
+	if err == nil { //|| err2 == nil {
+		// look through all servers and see if we are serving a static path which can match this
+		for _, s := range app.GetConfig().Servers {
+			log.Debugf("checking server %s: %s vs %s", s.Host, s.GetExternalUrl(), uredirect.Host)
+			check := s.GetExternalHostPort() == uredirect.Host
+			if l.IgnorePort {
+				check = s.Host == utils.GetJustHost(uredirect.Host)
+			}
+			if check {
+				log.Debugf("Lander %s redirect matches server %s", l.Name, s.Host)
+				if len(s.Root) > 0 {
+					// check if a file exists
+					fp = path.Join(s.Root, path.Base(uredirect.Path))
+					if utils.FileExists(fp) {
+						i.staticPath = uredirect.Path
+						i.fsRoot = s.Root
+						break
+					}
+				}
+				for _, f := range s.NonRootStaticFolders {
+					if len(f.Root) > 0 {
+						fp = path.Join(f.Root, path.Base(uredirect.Path))
+						if utils.FileExists(fp) {
+							i.staticPath = uredirect.Path
+							i.fsRoot = f.Root
+							break
+						}
+					}
+				}
+				log.Errorf("Lander %s redirect matches server %s but file %s does not exist", l.Name, s.Host, fp)
+			}
+		}
+	} else {
+		log.Errorf("error parsing redirect or full url: %v", err)
+	}
+	if len(i.staticPath) < 1 {
+		log.Debugf("Lander %s redirect does not match any static path- using 302", l.Name)
+		i.redirect = l.Redirect
+	}
+	//	hostconf := app.GetConfig().GetServer(l.Server)
 	return
 }
 
 func (i *LanderInstance) GetFinalUrl() string {
 	return i.fullUrl
+}
+
+func (i *LanderInstance) GetLander() *Lander {
+	return i.lander
+}
+
+func (i *LanderInstance) GetRedirect() string {
+	return i.redirect
+}
+
+func (i *LanderInstance) GetStaticPath() string {
+	return i.staticPath
+}
+
+func (i *LanderInstance) GetFsRoot() string {
+	return i.fsRoot
 }
 
 func (i *LanderInstance) DoRedirect() (ok bool, redirect string) {
