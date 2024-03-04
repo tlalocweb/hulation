@@ -3,12 +3,14 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"time"
 
 	"github.com/IzumaNetworks/conftagz"
+	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 	"gopkg.in/yaml.v2"
@@ -55,8 +57,20 @@ type StaticFolder struct {
 	MaxAge        uint   `yaml:"max_age,omitempty"`
 }
 
+const (
+	HOST_USE_HOSTNAME       = "use:hostname"     // tells hulation to accept/use the hostname of the server as the Host header for this server (should not be used in production)
+	ALIAS_USE_INTERFACE_IPS = "use:interfaceips" // tells hulation to accept the network interfaces IPs of the server as the Host header (should not be used in production)
+)
+
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
+	// optionally tell hulation to only run the server on the given network interfaces. By default hulation listens on all interfaces
+	// this can be an ip address or a network interface name. If it's a network interface name, then hulation will listen on first IP it finds
+	// Support for listening on multiple interfaces is not implemented yet b/c fiber v2 isn't super flexible with adding net.listerners when using TLS
+	// so for now, it's just a single string. v3 should fix this
+	ListenOn string `yaml:"listen_if,omitempty"`
+	// the port to listen on - if not set, inherits the port used in hulation's global config
+	Port int `yaml:"port,omitempty"`
 	// optional - other names the Host header can be to match this server
 	Aliases []string `yaml:"aliases,omitempty"`
 	// ID should be a short random string - it is used as a parameter to the hulation server to identify the server
@@ -65,7 +79,9 @@ type Server struct {
 	Domain string `yaml:"domain,omitempty" env:"SERVER_DOMAIN"`
 	// max age in days of a hello cookie - the hula cookie used for tracking visitors
 	// this is the regular cookie, not the session cookie
-	HelloCookieMaxAge int `yaml:"hello_cookie_max_age,omitempty" test:">0" default:"30"`
+	HelloCookieMaxAge int         `yaml:"hello_cookie_max_age,omitempty" test:">0" default:"30"`
+	CORS              *CORSConfig `yaml:"cors,omitempty"`
+	SSL               *SSLConfig  `yaml:"ssl,omitempty"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
@@ -97,6 +113,11 @@ type Server struct {
 	// computed string
 	externalUrl      string
 	externalHostPort string
+	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
+	listenOn string
+	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
+	// actual server port/router to put the APIs on
+	hulacore bool
 }
 
 func (s *Server) GetExternalUrl() string {
@@ -105,6 +126,40 @@ func (s *Server) GetExternalUrl() string {
 
 func (s *Server) GetExternalHostPort() string {
 	return s.externalHostPort
+}
+
+// A Listener is a the entity that listens for incoming requests and processes them
+// We don't configure Listeners - they are configured the config manager here, based on the
+// Server configs. There is only one Listener per port. THat Listener will work for one or more servers.
+// There is a separate Listener per protocol also (http1.1 http2 http3)
+type Listener struct {
+	listenOn     string // the address to listen on - such ":8080" or "127.0.0.1:8080
+	servers      []*Server
+	serverByHost map[string]*Server // same as above but by host string for fast lookup
+	// the combine CORS config for all servers on this listener
+	CORS *CORSConfig
+	SSL  *SSLConfig
+	// the fiber app for this listener - if applicable
+	FiberApp *fiber.App
+	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
+	// actual server port/router to put the APIs on
+	hulacore bool
+}
+
+func (l *Listener) IsHulaCore() bool {
+	return l.hulacore
+}
+
+func (l *Listener) GetListenOn() string {
+	return l.listenOn
+}
+
+func (l *Listener) GetServer(host string) *Server {
+	return l.serverByHost[host]
+}
+
+func (l *Listener) GetServers() []*Server {
+	return l.servers
 }
 
 type CORSConfig struct {
@@ -204,13 +259,16 @@ type Config struct {
 	// Hulation will still serve the its visitor APIs to any host which uses a Host header that matches its host ID
 	// See servers section.
 	HulaHost string `yaml:"hula_host,omitempty" env:"HULA_HOST" test:"~.+" default:"localhost"`
+	// By defalt Hulation will isten on 0.0.0.0:Port - the listen IP or network interface can be set here
+	// Set the port using the Port config var
+	ListenOn string `yaml:"listen_on,omitempty"`
 	// allows customization of the hula.js script filename - this changes what HTTP GET path is used to serve the script
 	// default: https://server.com/hula.js
 	PublishedHelloScriptFilename    string `yaml:"hello_script_filename,omitempty" env:"PUBLISHED_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hula.js"`
 	PublishedFormsScriptFilename    string `yaml:"forms_script_filename,omitempty" env:"PUBLISHED_FORMS_SCRIPT_FILENAME" test:"~[^\\/]+" default:"forms.js"`
 	PublishedIFrameHelloFileName    string `yaml:"iframe_hello_filename,omitempty" env:"PUBLISHED_IFRAME_HELLO_FILENAME" test:"~[^\\/]+" default:"hula_hello.html"`
 	PublishedIFrameNoScriptFilename string `yaml:"iframe_noscript_filename,omitempty" env:"PUBLISHED_IFRAME_NOSCRIPT_FILENAME" test:"~[^\\/]+" default:"hulans.html"`
-	// use only for debugging - this will will prevent hila from looking
+	// use only for debugging - this will will prevent hula from looking
 	// at the Host header when validating the request
 	UnsafeNoHostCheck bool `yaml:"unsafe_no_host_check,omitempty" env:"UNSAFE_NO_HOST_CHECK"`
 	// the amount of time we wait for all
@@ -219,7 +277,8 @@ type Config struct {
 	// Store *store.StoreConfig `yaml:"store"`
 	// List of IP addresses to accept connections from
 	// AcceptIPs []string `yaml:"accept_ips"`
-	byServer map[string]*Server
+	byServer   map[string]*Server
+	byListener map[string]*Listener
 	// script folder - default fine if hulation exec is in the top folder of repo
 	ScriptFolder             string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
 	LocalHelloScriptFilename string `yaml:"local_hello_script_filename,omitempty" env:"LOCAL_HELLO_SCRIPT_FILENAME" test:"~[^\\/]+" default:"hello.js"`
@@ -228,6 +287,8 @@ type Config struct {
 	LanderPath string `yaml:"lander_path,omitempty" test:"~\\/.+" default:"/land"`
 	// the prefix for all URLs used by vistitors
 	VisitorPrefix string `yaml:"visitor_prefix,omitempty" test:"~\\/.+" default:"/v"`
+	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
+	listenOn string
 }
 
 type Proxy struct {
@@ -249,6 +310,20 @@ var validIpAddressRE = regexp.MustCompile(ValidIpAddressRegex)
 var validHostnameRE = regexp.MustCompile(ValidHostnameRegex)
 var confDir string
 
+func (cfg *Config) GetListener(listenOn string) *Listener {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.byListener[listenOn]
+}
+
+func (cfg *Config) GetListeners() map[string]*Listener {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.byListener
+}
+
 func (cfg *Config) GetServer(host string) *Server {
 	if cfg == nil {
 		return nil
@@ -258,6 +333,8 @@ func (cfg *Config) GetServer(host string) *Server {
 
 func LoadConfig(filename string) (*Config, error) {
 	var cfg Config
+
+	cfg.byListener = make(map[string]*Listener)
 
 	buf, err := os.ReadFile(filename)
 	if err != nil {
@@ -298,8 +375,71 @@ func LoadConfig(filename string) (*Config, error) {
 		log.Errorf("error substituting vars in script_folder config var: %s", err.Error())
 	}
 
+	// add in the hula API server to the 'listenOn" server list first
+	if len(cfg.ListenOn) < 1 {
+		cfg.listenOn = fmt.Sprintf(":%d", cfg.Port)
+	} else {
+		res := net.ParseIP(cfg.ListenOn)
+		if res == nil { // not a valid IP
+			addr, err := utils.GetInterfaceIpv4Addr(cfg.ListenOn)
+			if err != nil {
+				log.Errorf("error getting IP for network interface %s: %s", cfg.ListenOn, err.Error())
+				return nil, fmt.Errorf("error getting IP for network interface '%s': %s", cfg.ListenOn, err.Error())
+			} else {
+				cfg.listenOn = fmt.Sprintf("%s:%d", addr, cfg.Port)
+			}
+		} else {
+			cfg.listenOn = fmt.Sprintf("%s:%d", res, cfg.Port)
+		}
+		cfg.listenOn = fmt.Sprintf("%s:%d", cfg.ListenOn, cfg.Port)
+	}
+	cfg.byListener[cfg.listenOn] = &Listener{
+		listenOn:     cfg.listenOn,
+		servers:      []*Server{&Server{hulacore: true}},
+		serverByHost: make(map[string]*Server),
+		hulacore:     true,
+	}
+	cfg.byListener[cfg.listenOn].CORS = cfg.CORS
+	cfg.byListener[cfg.listenOn].SSL = cfg.SSL
+	cfg.byListener[cfg.listenOn].serverByHost["hula"] = cfg.byListener[cfg.listenOn].servers[0]
+
 	cfg.byServer = make(map[string]*Server)
 	for _, s := range cfg.Servers {
+		if s.Port < 1 {
+			s.Port = cfg.Port
+		}
+		if len(s.ListenOn) > 0 {
+			res := net.ParseIP(s.ListenOn)
+			if res == nil { // not a valid IP
+				addr, err := utils.GetInterfaceIpv4Addr(s.ListenOn)
+				if err != nil {
+					log.Errorf("error getting IP for network interface %s: %s", s.ListenOn, err.Error())
+					return nil, fmt.Errorf("error getting IP for network interface '%s': %s", s.ListenOn, err.Error())
+				} else {
+					s.listenOn = fmt.Sprintf("%s:%d", addr, s.Port)
+				}
+			} else {
+				s.listenOn = fmt.Sprintf("%s:%d", res, s.Port)
+			}
+		}
+		if len(s.listenOn) < 1 {
+			s.listenOn = fmt.Sprintf(":%d", s.Port)
+		}
+		listenerforserver, ok := cfg.byListener[s.listenOn]
+		if ok {
+			listenerforserver.servers = append(listenerforserver.servers, s)
+		} else {
+			listenerforserver = &Listener{listenOn: s.listenOn, servers: []*Server{s}, serverByHost: make(map[string]*Server)}
+			cfg.byListener[s.listenOn] = listenerforserver
+		}
+		if listenerforserver.CORS != nil {
+			log.Warnf("CORS config for listener %s will be overwritten - muliple CORS config for same listeber FIXME", s.listenOn)
+		}
+		listenerforserver.CORS = cfg.CORS
+
+		// if host has a special directive, work it out first:
+		// TODO
+
 		if len(s.Domain) < 1 {
 			res := getDomainRE.FindAllStringSubmatch(s.Host, -1)
 			if len(res) > 0 && len(res[0]) > 1 {
@@ -318,6 +458,10 @@ func LoadConfig(filename string) (*Config, error) {
 		s.externalUrl = fmt.Sprintf("%s://%s%s", s.HttpScheme, s.Host, portstring)
 		s.externalHostPort = fmt.Sprintf("%s:%d", s.Host, cfg.Port)
 		cfg.byServer[s.Host] = s
+		// log.Debugf("server[%s].externalUrl = %s", s.Host, s.externalUrl)
+		// log.Debugf("cfg.byListener[%s].servers = %+v", s.listenOn, listenerforserver.servers)
+		// log.Debugf("cfg.byListener[%s].serverByHost[%s] = %+v", s.listenOn, s.Host, listenerforserver.serverByHost)
+		cfg.byListener[s.listenOn].serverByHost[s.Host] = s
 		// look at aliases
 		for _, a := range s.Aliases {
 			_, ok := cfg.byServer[a]
@@ -341,7 +485,6 @@ func LoadConfig(filename string) (*Config, error) {
 				log.Errorf("error substituting vars in server[%s].static_folders[%s].root config var: %s", s.Host, f.URLPrefix, err.Error())
 			}
 		}
-
 	}
 
 	if cfg.CORS != nil {

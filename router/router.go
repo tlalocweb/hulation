@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/tlalocweb/hulation/handler"
+	"github.com/tlalocweb/hulation/config"
+	fhandler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/middleware"
 	"github.com/tlalocweb/hulation/model"
@@ -34,8 +35,8 @@ allow if {
 }
 `
 
-// SetupRoutes setup router api
-func SetupRoutes(app *fiber.App) {
+// SetupRoutesFiber setup router api
+func SetupRoutesFiber(l *config.Listener) {
 
 	cfg := middleware.OpaConfig{
 		RegoQuery:             "data.hulation.authz.allow",
@@ -87,48 +88,50 @@ func SetupRoutes(app *fiber.App) {
 		},
 	}
 
+	var api fiber.Router
 	// NOTE: login is not protected by OPA
-	app.Post("/api/auth/login", handler.Login)                 // logger.New(),
-	api := app.Group("/api", middleware.NewOpaMiddleware(cfg)) // logger.New(),
+	if l.IsHulaCore() {
+		l.FiberApp.Post("/api/auth/login", fhandler.Login)               // logger.New(),
+		api = l.FiberApp.Group("/api", middleware.NewOpaMiddleware(cfg)) // logger.New(),
+		api.Get("/status", fhandler.Status)
+		// Auth
+		auth := api.Group("/auth")
+		auth.Post("/logout", fhandler.Logout)
+		auth.Post("/user", fhandler.NewUser)
+		auth.Get("/user/:userlookup", fhandler.GetUser)
+		auth.Patch("/user/:userid", fhandler.ModifyUser)
+		// TODO
+		//auth.Delete("/user/:userid", fhandler.DeleteUser)
+		auth.Get("/ok", fhandler.StatusAuthOK)
+
+		form := api.Group("/form")
+		// order is important - the most generic path :/formid - must be at the end
+		form.Post("/create", fhandler.FormCreate)
+		// TODO apparently DELETE is sometimes blocked by proxies
+		// so we should provide an alternate later
+		form.Delete("/:formid", fhandler.FormDelete)
+		form.Patch("/:formid", fhandler.FormModify)
+
+		lander := api.Group("/lander")
+		lander.Post("/create", fhandler.LanderCreate)
+		lander.Delete("/:landerid", fhandler.LanderDelete)
+		lander.Patch("/:landerid", fhandler.LanderModify)
+	}
 	// Middleware
 	//	api.Use("/api",
 
 	// visitor API do not need auth
-	visitor := app.Group(hulation.GetConfig().VisitorPrefix)
-	visitor.Post("/hello", handler.Hello)
-	visitor.Get("/"+hulation.GetConfig().PublishedIFrameHelloFileName, handler.HelloIframe)
-	visitor.Get("/"+hulation.GetConfig().PublishedIFrameNoScriptFilename, handler.HelloNoScript)
+	visitor := l.FiberApp.Group(hulation.GetConfig().VisitorPrefix)
+	visitor.Post("/hello", fhandler.Hello)
+	visitor.Get("/"+hulation.GetConfig().PublishedIFrameHelloFileName, fhandler.HelloIframe)
+	visitor.Get("/"+hulation.GetConfig().PublishedIFrameNoScriptFilename, fhandler.HelloNoScript)
 	// submit form as visitor
-	visitor.Post("/sub/:formid", handler.FormSubmit)
+	visitor.Post("/sub/:formid", fhandler.FormSubmit)
 	// handle landing as visitor
 	//	log.Debugf("LanderPath: %s", hulation.GetConfig().LanderPath)
-	visitor.Get(fmt.Sprintf("%s/:landerid", hulation.GetConfig().LanderPath), handler.DoLanding)
+	visitor.Get(fmt.Sprintf("%s/:landerid", hulation.GetConfig().LanderPath), fhandler.DoLanding)
 	// nor do script downloads
-	app.Get("/scripts/"+hulation.GetConfig().PublishedHelloScriptFilename, handler.HelloScriptFile)
-	app.Get("/scripts/"+hulation.GetConfig().PublishedFormsScriptFilename, handler.FormsScriptFile)
-
-	api.Get("/status", handler.Status)
-	// Auth
-	auth := api.Group("/auth")
-	auth.Post("/logout", handler.Logout)
-	auth.Post("/user", handler.NewUser)
-	auth.Get("/user/:userlookup", handler.GetUser)
-	auth.Patch("/user/:userid", handler.ModifyUser)
-	// TODO
-	//auth.Delete("/user/:userid", handler.DeleteUser)
-	auth.Get("/ok", handler.StatusAuthOK)
-
-	form := api.Group("/form")
-	// order is important - the most generic path :/formid - must be at the end
-	form.Post("/create", handler.FormCreate)
-	// TODO apparently DELETE is sometimes blocked by proxies
-	// so we should provide an alternate later
-	form.Delete("/:formid", handler.FormDelete)
-	form.Patch("/:formid", handler.FormModify)
-
-	lander := api.Group("/lander")
-	lander.Post("/create", handler.LanderCreate)
-	lander.Delete("/:landerid", handler.LanderDelete)
-	lander.Patch("/:landerid", handler.LanderModify)
+	l.FiberApp.Get("/scripts/"+hulation.GetConfig().PublishedHelloScriptFilename, fhandler.HelloScriptFile)
+	l.FiberApp.Get("/scripts/"+hulation.GetConfig().PublishedFormsScriptFilename, fhandler.FormsScriptFile)
 
 }

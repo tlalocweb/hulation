@@ -49,7 +49,9 @@ type HelloMsg struct {
 var visitorBounceMap *model.BounceMap
 
 func InitVistorHandlers() {
-	visitorBounceMap = model.NewBounceMap(app.GetConfig().BounceTimeout)
+	if visitorBounceMap == nil {
+		visitorBounceMap = model.NewBounceMap(app.GetConfig().BounceTimeout)
+	}
 	visitorBounceMap.Start()
 }
 

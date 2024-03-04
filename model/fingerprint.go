@@ -13,6 +13,12 @@ const (
 	)`
 )
 
+const (
+	FINGERPRINT_THUMBMARKJS = "thumbmarkjs"
+	FINGERPRINT_CREEPJS     = "creepjs"
+	FINGERPRINT_SERVER      = "server"
+)
+
 // Fingerprints are (supposedly) unique to the visitor
 // We only just record each fingerprint once and we never alter the entry afterwards
 type VisitorFingerprint struct {

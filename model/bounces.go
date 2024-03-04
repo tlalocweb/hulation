@@ -59,6 +59,7 @@ type bounceNofity struct {
 }
 
 type BounceMap struct {
+	started atomic.Bool
 	// a cookie set _ONLY_ for the bounce
 	byBouncID *haxmap.Map[string, *Bounce]
 	// a cookie set for the visitor - expires in a year (or whatever default
@@ -306,6 +307,7 @@ func (b *BounceMap) worker() {
 			// b.notifyQ.Write(&bounceNofity{event: bShutdownnow})
 			b.notifyQ <- &bounceNofity{event: bShutdownnow}
 			atomic.SwapInt32(&b.shutdownWorkers, shutdownWriterNow)
+			b.started.Store(false)
 			return
 		case <-b.shutdown:
 			// write out all bounces
@@ -322,6 +324,7 @@ func (b *BounceMap) worker() {
 			model_debugf("BounceMap: workers all done")
 			b.shutdownCount.Done()
 			close(b.writeQ)
+			b.started.Store(false)
 			return
 		case <-b.staleInterval.C:
 			model_debugf("BounceMap: staleInterval fired")
@@ -329,6 +332,7 @@ func (b *BounceMap) worker() {
 			b.staleWaker.Broadcast()
 		}
 	}
+
 }
 
 // for SIGINT or similar
@@ -346,6 +350,10 @@ func (b *BounceMap) WriteoutAndShutdown() {
 }
 
 func (b *BounceMap) Start() {
+	if b.started.Load() {
+		return
+	}
+	b.started.Store(true)
 	go b.worker()
 }
 
