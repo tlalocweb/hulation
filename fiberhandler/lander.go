@@ -240,7 +240,7 @@ func DoLanding(c *fiber.Ctx) (err error) {
 		return
 	})
 	url := c.OriginalURL()
-	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf)
+	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf, nil)
 	if err2 != nil {
 		log.Errorf("error getting or setting visitor for lander: %s", err2.Error())
 	}
@@ -305,7 +305,7 @@ func DoLandingHit(c *fiber.Ctx) (err error) {
 	ua := c.Get("User-Agent")
 	ip := c.IP()
 
-	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf)
+	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf, nil)
 	if err2 != nil {
 		log.Errorf("error getting or setting visitor for lander: %s", err2.Error())
 	}

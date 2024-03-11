@@ -37,7 +37,12 @@ func (e *ResponseError) JsonBody() string {
 	}
 }
 
-func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server) (visitor *model.Visitor, newvisitor bool, err error) {
+type VisitorCookiesBaton struct {
+	Sscookiem *model.VisitorCookie
+	Cookiem   *model.VisitorCookie
+}
+
+func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookiesBaton) (visitor *model.Visitor, newvisitor bool, err error) {
 
 	// check for httponly cookie
 	sscookie := c.Cookies(hostconf.CookieOpts.CookiePrefix + "_helloss")
@@ -119,6 +124,10 @@ func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server) (visitor *model.Visi
 		//		cookiem.Commit(model.GetDB())
 	}
 
+	if baton != nil {
+		baton.Cookiem = cookiem
+	}
+
 	if len(sscookie) < 1 {
 		sscookiem, err = visitor.NewVisitorSSCookie()
 		if err != nil {
@@ -145,6 +154,9 @@ func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server) (visitor *model.Visi
 		sscookie = sscookiem.Cookie
 		log.Debugf("SSCookieFromSSCookieVal (new?): %s", sscookie)
 		//		sscookiem.Commit(model.GetDB())
+	}
+	if baton != nil {
+		baton.Sscookiem = sscookiem
 	}
 	samesite := hostconf.CookieOpts.SameSite
 	if len(samesite) < 1 {
