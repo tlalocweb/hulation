@@ -10,6 +10,7 @@ import (
 	"github.com/cbroglie/mustache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/santhosh-tekuri/jsonschema"
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
@@ -29,8 +30,23 @@ type FormPostResponse struct {
 	TicketID string `json:"ticketid"`
 }
 
+//var formHookRunner *utils.DeferredRunner
+
+var precompileNewSubmitHooks = &utils.RunOnceSingleton{Run: func(p interface{}) (err error) {
+	// formHookRunner = utils.NewDeferredRunner("formHookRunner")
+	// formHookRunner.Start()
+	// add in any global things which should be available during any time we call this hook
+	// If we don't change the names of the globals later, the script should always
+	// be precompiled and ready to run.
+	hostconf := p.(*config.Server)
+	if hostconf.Hooks != nil {
+		hostconf.Hooks.PrecompileHooksOnNewFormSubmission(map[string]any{"visitorid": "", "url": "", "formname": "", "fields": ""})
+	}
+	return
+}}
+
 func FormSubmit(c *fiber.Ctx) (err error) {
-	hostconf, _, httperr, err := GetHostConfig(c)
+	hostconf, host, httperr, err := GetHostConfig(c)
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
 	}
@@ -38,8 +54,9 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 	if id != hostconf.ID {
 		return c.Status(400).SendString("host id mismmatch")
 	}
+	// run the precompile hooks once (only once) for each host
+	precompileNewSubmitHooks.Verify(host, hostconf, "Failed to precompile new form submission hooks")
 	onetimeid := c.Query("r")
-
 	formid := c.Params("formid")
 	if len(formid) == 0 {
 		return c.Status(404).SendString("404 Not Found - No formid")
@@ -175,8 +192,9 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 			}
 			// errors ignored - we did record the submission anyway
 		}
-
 	}
+	// run the form submission hooks
+	hostconf.Hooks.SubmitToHooksOnNewFormSubmission(map[string]any{"visitorid": visitor.ID, "url": formdata.URL, "fields": formdata.Fields, "formname": formmodel.Name}, nil, nil)
 
 	postrespout, err := json.Marshal(postresp)
 	if err != nil {

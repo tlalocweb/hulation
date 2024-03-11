@@ -11,6 +11,7 @@ import (
 
 	"github.com/IzumaNetworks/conftagz"
 	"github.com/gofiber/fiber/v2"
+	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 	"gopkg.in/yaml.v2"
@@ -45,6 +46,15 @@ type CookieOpts struct {
 	NoSecure bool `yaml:"no_secure,omitempty" env:"COOKIE_NO_SECURE"`
 }
 
+type DefinedLander struct {
+	// the name of the Lander
+	Name        string `yaml:"name,omitempty" test:"~.+"`
+	Description string `yaml:"description,omitempty"`
+	UrlId       string `yaml:"url_id,omitempty" test:"~[^\\/]+"`
+	Redirect    string `yaml:"redirect,omitempty" test:"~.+"`
+	NoServe     bool   `yaml:"no_serve,omitempty"`
+}
+
 type StaticFolder struct {
 	Root      string `yaml:"root,omitempty" test:"~.+"`
 	URLPrefix string `yaml:"url_prefix,omitempty" test:"~\\/.+"`
@@ -61,6 +71,140 @@ const (
 	HOST_USE_HOSTNAME       = "use:hostname"     // tells hulation to accept/use the hostname of the server as the Host header for this server (should not be used in production)
 	ALIAS_USE_INTERFACE_IPS = "use:interfaceips" // tells hulation to accept the network interfaces IPs of the server as the Host header (should not be used in production)
 )
+
+type HookCode struct {
+	// the Risor script to run
+	Name string `yaml:"name" test:"~.+"`
+	// can either be the script or a filename
+	Risor     *string `yaml:"risor,omitempty"`
+	RisorCode *string `yaml:"risor_code,omitempty"`
+	// risorHook *hooks.RisorHook
+}
+
+// func (hc *HookCode) GetRisorHook() *hooks.RisorHook {
+// 	return hc.risorHook
+// }
+
+type VisitorHooks struct {
+	Globals         map[string]interface{} `yaml:"globals,omitempty"`
+	globalsTemplate *hooks.TemplateGlobalsForHooks
+	// One or more Risor scripts to run on a new form submission
+	OnNewFormSubmission []*HookCode `yaml:"on_new_form_submission,omitempty"`
+	//	onNewFormSubmissionHookChain []*
+	// One or more Risor scripts to run on a new visitor landing on a Lander
+	OnLanderVisit []*HookCode `yaml:"on_lander_visit,omitempty"`
+	//	onNewLanderVisitHookChain []*hooks.HookChain
+
+	OnNewVisitor []*HookCode `yaml:"on_new_visitor,omitempty"`
+	// onNewVisitorRisorHooks []*hooks.HookChain
+}
+
+func (vh *VisitorHooks) GetGlobalTemplate(mixthis ...map[string]any) map[string]any {
+	if vh.globalsTemplate == nil {
+		vh.globalsTemplate = hooks.NewTemplateGlobalsForHooks()
+	}
+	// add in any global things which should be available in ever script
+	return vh.globalsTemplate.MixInGlobals(mixthis...)
+}
+
+func (vh *VisitorHooks) SubmitToHooksOnNewFormSubmission(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
+	for _, hc := range vh.OnNewFormSubmission {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	}
+}
+func (vh *VisitorHooks) PrecompileHooksOnNewFormSubmission(globals map[string]interface{}) (err error) {
+
+	for _, hc := range vh.OnNewFormSubmission {
+		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+	}
+	return
+}
+
+func (vh *VisitorHooks) SubmitToHooksOnNewLanderVisit(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
+	for _, hc := range vh.OnLanderVisit {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	}
+}
+func (vh *VisitorHooks) PrecompileHooksOnNewLanderVisit(globals map[string]interface{}) (err error) {
+	for _, hc := range vh.OnLanderVisit {
+		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+	}
+	return
+}
+
+func (vh *VisitorHooks) SubmitToHooksOnNewVisitor(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
+	for _, hc := range vh.OnNewVisitor {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	}
+}
+
+func (vh *VisitorHooks) PrecompileHooksOnNewVisitor(globals map[string]interface{}) (err error) {
+	for _, hc := range vh.OnNewVisitor {
+		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+	}
+	return
+}
+
+func (h *HookCode) FinalizeConf(host string, field string, m map[string]string) (err error) {
+	if h.Risor != nil {
+		if h.RisorCode != nil {
+			return fmt.Errorf("server[%s].hooks.%s: cannot use both risor and risor_code", host, field)
+		}
+		var newhookstr string
+		newhookstr, err = SubstConfVars(*h.Risor, m)
+		if err != nil {
+			log.Errorf("error substituting vars in server[%s].hooks.%s.risor config var: %s", host, field, err.Error())
+		} else {
+			*h.Risor = newhookstr
+		}
+		// load from file
+		if _, err = os.Stat(*h.Risor); err == nil {
+			var newhookstr []byte
+			newhookstr, err = os.ReadFile(*h.Risor)
+			if err != nil {
+				log.Errorf("error reading file for server[%s].hooks.%s.risor: %s", host, field, err.Error())
+				err = fmt.Errorf("server[%s].hooks.%s.risor: %s", host, field, err.Error())
+				return
+			} else {
+				var newstr string
+				newstr, err = SubstConfVars(string(newhookstr), m)
+				if err != nil {
+					log.Errorf("error substituting vars in server[%s].hooks.%s.risor config var: %s", host, field, err.Error())
+					err = fmt.Errorf("substituting vars in server[%s].hooks.%s.risor: %s", host, field, err.Error())
+					return
+				}
+				h.RisorCode = new(string)
+				*h.RisorCode = newstr
+			}
+		} else {
+			log.Errorf("server[%s].hooks.%s.risor: file not found: %s", host, field, *h.Risor)
+			err = fmt.Errorf("server[%s].hooks.%s.risor: file not found: %s", host, field, *h.Risor)
+			return
+		}
+	}
+	if h.RisorCode != nil {
+		var newhookstr string
+		newhookstr, err = SubstConfVars(*h.RisorCode, m)
+		if err != nil {
+			log.Errorf("error substituting vars in server[%s].hooks.%s.risor config var: %s", host, field, err.Error())
+		} else {
+			*h.RisorCode = newhookstr
+		}
+	}
+	return
+}
+
+// func (vh *VisitorHooks) GetOnNewFormSubmissionRisorHooks() []*hooks.HookChain {
+// 	return vh.onNewFormSubmissionHookChain
+// }
+
+// func (vh *VisitorHooks) GetOnNewLanderVisitRisorHooks() []*hooks.HookChain {
+// 	return vh.onNewLanderVisitHookChain
+// }
+
+// func (vh *VisitorHooks) GetOnNewVisitorRisorHooks() []*hooks.HookChain {
+// 	return vh.onNewVisitorRisorHooks
+// }
 
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
@@ -109,8 +253,10 @@ type Server struct {
 	RootCacheDuration string `yaml:"root_cache_duration,omitempty"` // test:"$(validtimeduration)"`
 	RootMaxAge        uint   `yaml:"root_max_age,omitempty"`
 
-	NonRootStaticFolders []*StaticFolder `yaml:"static_folders,omitempty"`
+	NonRootStaticFolders []*StaticFolder  `yaml:"static_folders,omitempty"`
+	Landers              []*DefinedLander `yaml:"landers,omitempty"`
 	// computed string
+	Hooks            *VisitorHooks `yaml:"hooks,omitempty"`
 	externalUrl      string
 	externalHostPort string
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
@@ -404,6 +550,7 @@ func LoadConfig(filename string) (*Config, error) {
 	cfg.byListener[cfg.listenOn].serverByHost["hula"] = cfg.byListener[cfg.listenOn].servers[0]
 
 	cfg.byServer = make(map[string]*Server)
+
 	for _, s := range cfg.Servers {
 		if s.Port < 1 {
 			s.Port = cfg.Port
@@ -483,6 +630,33 @@ func LoadConfig(filename string) (*Config, error) {
 			f.Root, err = SubstConfVars(f.Root, map[string]string{"confdir": confDir})
 			if err != nil {
 				log.Errorf("error substituting vars in server[%s].static_folders[%s].root config var: %s", s.Host, f.URLPrefix, err.Error())
+			}
+		}
+		if s.Hooks == nil {
+			s.Hooks = &VisitorHooks{}
+		}
+		if len(s.Hooks.OnNewFormSubmission) > 0 {
+			for _, h := range s.Hooks.OnNewFormSubmission {
+				err = h.FinalizeConf(s.Host, "on_new_form_submission", map[string]string{"confdir": confDir, "staticdir": s.Root})
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if len(s.Hooks.OnLanderVisit) > 0 {
+			for _, h := range s.Hooks.OnLanderVisit {
+				err = h.FinalizeConf(s.Host, "on_new_lander_visit", map[string]string{"confdir": confDir, "staticdir": s.Root})
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if len(s.Hooks.OnNewVisitor) > 0 {
+			for _, h := range s.Hooks.OnNewVisitor {
+				err = h.FinalizeConf(s.Host, "on_new_visitor", map[string]string{"confdir": confDir, "staticdir": s.Root})
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

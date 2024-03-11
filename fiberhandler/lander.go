@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
@@ -39,6 +40,20 @@ type LanderPostResp struct {
 
 var landerOptimizeRunner *utils.RunOnceMaxInterval
 var landerRunnerCommit *utils.DeferredRunner
+
+var precompileLanderVisitHooks = &utils.RunOnceSingleton{Run: func(p interface{}) (err error) {
+	// formHookRunner = utils.NewDeferredRunner("formHookRunner")
+	// formHookRunner.Start()
+	// add in any global things which should be available during any time we call this hook
+	// If we don't change the names of the globals later, the script should always
+	// be precompiled and ready to run.
+	hostconf := p.(*config.Server)
+	if hostconf.Hooks != nil {
+		hostconf.Hooks.PrecompileHooksOnNewLanderVisit(map[string]any{"visitorid": "", "url": "", "landerid": "", "newvisitor": false,
+			"landerdescription": "", "landercount": 0, "landerdbname": ""})
+	}
+	return
+}}
 
 func LanderCreate(c *fiber.Ctx) (err error) {
 
@@ -194,6 +209,17 @@ func DoLanding(c *fiber.Ctx) (err error) {
 		log.Errorf("error getting lander: %s", err.Error())
 		return c.Status(500).SendString("error getting lander: " + err.Error())
 	}
+	hostconf, host, _, err := GetHostConfig(c)
+	if hostconf != nil {
+		precompileLanderVisitHooks.Verify(host, hostconf, "precompileLanderVisitHooks error")
+	} else {
+		if err != nil {
+			log.Errorf("lander: Error getting GetHostConfig: %s", err.Error())
+		} else {
+			log.Errorf("lander: Error getting GetHostConfig: hostconf is nil")
+		}
+	}
+
 	if lander == nil {
 		return c.Status(404).SendString("404 Not Found - No lander by id " + c.Params("landerid"))
 	}
@@ -213,9 +239,24 @@ func DoLanding(c *fiber.Ctx) (err error) {
 		})
 		return
 	})
+	url := c.OriginalURL()
+	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf)
+	if err2 != nil {
+		log.Errorf("error getting or setting visitor for lander: %s", err2.Error())
+	}
+	visitorid := ""
+	if visitor != nil {
+		visitorid = visitor.ID
+	}
+	if hostconf != nil {
+		hostconf.Hooks.SubmitToHooksOnNewLanderVisit(map[string]any{"visitorid": visitorid, "url": strings.Clone(url), "landerid": strings.Clone(landerid), "newvisitor": newvisitor,
+			"landerdescription": lander.Description, "landercount": lander.Hits, "landerdbname": lander.Name}, nil, nil)
+	}
 	if inst == nil {
 		return c.Status(500).SendString("500 - error getting lander instance " + c.Params("landerid"))
 	}
+
+	c.Set(fiber.HeaderCacheControl, "no-cache, must-revalidate, s-maxage=0, max-age=120, private")
 	ok, redirect := inst.DoRedirect()
 	if ok {
 		return c.Redirect(redirect)
@@ -263,6 +304,20 @@ func DoLandingHit(c *fiber.Ctx) (err error) {
 
 	ua := c.Get("User-Agent")
 	ip := c.IP()
+
+	visitor, newvisitor, err2 := GetOrSetVisitor(c, hostconf)
+	if err2 != nil {
+		log.Errorf("error getting or setting visitor for lander: %s", err2.Error())
+	}
+	visitorid := ""
+	if visitor != nil {
+		visitorid = visitor.ID
+	}
+
+	if hostconf != nil {
+		hostconf.Hooks.SubmitToHooksOnNewLanderVisit(map[string]any{"visitorid": visitorid, "url": fmt.Sprintf("Referer:%s", c.Get("Referer")), "landerid": strings.Clone(landerid), "newvisitor": newvisitor,
+			"landerdescription": lander.Description, "landercount": lander.Hits, "landerdbname": lander.Name}, nil, nil)
+	}
 
 	// push to the commit thread
 	landerRunnerCommit.Run(func() (err error) {

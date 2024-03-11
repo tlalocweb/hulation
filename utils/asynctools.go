@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alphadose/haxmap"
 	"github.com/tlalocweb/hulation/log"
 )
 
@@ -98,6 +99,12 @@ const (
 	shutdownDeferredRunnerAtZero = 0
 )
 
+// type runslot struct {
+// 	f    RunOnceFunc
+// 	cancelFunc context.CancelFunc
+// 	onCancel func()
+// }
+
 type DeferredRunner struct {
 	name        string
 	queue       chan RunOnceFunc
@@ -122,9 +129,7 @@ func NewDeferredRunner(name string) (r *DeferredRunner) {
 }
 
 // Always returns immediately.
-// It attempts to run the function in a new go routine, but if it is already running, it skips it
-// or if it has been run within the interval, it skips it. If it skips running it, it will run the
-// function once (and only once) after the interval has passed.
+// It queues the function to be run in a seperate go routine.
 func (r *DeferredRunner) Run(f func() error) (err error) {
 	r.queue <- f
 	return
@@ -182,4 +187,28 @@ func (r *DeferredRunner) ShutdownNow(onexit func()) {
 func (r *DeferredRunner) Shutdown(onexit func()) {
 	r.onExit = onexit
 	r.shutdown <- shutdownDeferredRunnerAtZero
+}
+
+// RunOnceSingleton is a singleton that runs a function once and only once for any "unique" identifier
+// passed to it.
+// A way to do something that might be in a func init() but after more startup
+// has occurred.
+type RunOnceSingleton struct {
+	Run        func(p any) error
+	uniqueRuns *haxmap.Map[string, struct{}]
+}
+
+func (r *RunOnceSingleton) Verify(unique string, param any, errmsg string) (err error) {
+	if r.uniqueRuns == nil {
+		r.uniqueRuns = haxmap.New[string, struct{}]()
+	}
+	_, ok := r.uniqueRuns.Get(unique)
+	if !ok && r.Run != nil {
+		err = r.Run(param)
+		if err != nil {
+			log.Errorf("RunOnceSingleton: %s: %s", errmsg, err.Error())
+		}
+		r.uniqueRuns.Set(unique, struct{}{})
+	}
+	return
 }

@@ -1,6 +1,6 @@
 module github.com/tlalocweb/hulation
 
-go 1.21
+go 1.22
 
 toolchain go1.22.0
 
@@ -82,6 +82,7 @@ require (
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20200313005456-10cdbea86bc0 // indirect
+	github.com/risor-io/risor v1.4.0 // indirect
 	github.com/rivo/tview v0.0.0-20240204151237-861aa94d61c8 // indirect
 	github.com/rivo/uniseg v0.4.7-0.20240127222946-601bbb3750c2 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect

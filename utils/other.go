@@ -200,6 +200,12 @@ func CamelCase(s string) string {
 	return s
 }
 
+func GenSha256Hash(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 func JsonifyStr(i string) string {
 	b, err := json.Marshal(i)
 	if err != nil {

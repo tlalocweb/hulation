@@ -12,6 +12,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	handler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/router"
 )
 
@@ -196,6 +197,12 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 
 // Runs the main server
 func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html template engine
+
+	err := model.PreloadDefinedLanders(model.GetDB())
+	if err != nil {
+		fmt.Printf("Error preloading landers: %s", err.Error())
+		return 1
+	}
 
 	waitForServers := &sync.WaitGroup{}
 	errchan := make(chan *listenerErr, 10)

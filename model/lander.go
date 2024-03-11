@@ -155,7 +155,29 @@ func (l *Lander) Commit(requesturlpostfix string, db *gorm.DB) (i *LanderInstanc
 		return
 	}
 	// update cache
-	landerInstances.SetAlways(l.ID, i)
+	landerInstances.SetAlways(l.UrlPostfix, i)
+	return
+}
+
+func (l *Lander) Update(db *gorm.DB) (i *LanderInstance, err error) {
+	// err = l.Validate(requesturlpostfix, db)
+	// if err != nil {
+	// 	err = fmt.Errorf("validation error: %v", err)
+	// 	return
+	// }
+	err = db.Connection(func(tx *gorm.DB) (err error) {
+		err = tx.Exec("ALTER TABLE landers UPDATE name = ?, description = ?, server = ?, url_postfix = ?, redirect = ? WHERE id = ?", l.Name, l.Description, l.Server, l.UrlPostfix, l.Redirect, l.ID).Error
+		return
+	})
+	if err != nil {
+		return
+	}
+	i, err = createLanderInstance(l)
+	if err != nil {
+		err = fmt.Errorf("error creating lander instance: %v", err)
+		return
+	}
+	landerInstances.SetAlways(l.UrlPostfix, i)
 	return
 }
 
@@ -167,27 +189,6 @@ func (l *Lander) AddHit(db *gorm.DB) (err error) {
 	}
 	return nil
 }
-
-// func (l *Lander) Update(requesturlpostfix string, db *gorm.DB) (err error) {
-// 	err = l.Validate(requesturlpostfix, db)
-// 	if err != nil {
-// 		err = fmt.Errorf("validation error: %v", err)
-// 		return
-// 	}
-// 	err = db.Save(l).Error
-// 	if err != nil {
-// 		return err
-// 	}
-// 	// update cache
-// 	var i *LanderInstance
-// 	i, err = createLanderInstance(l)
-// 	if err != nil {
-// 		err = fmt.Errorf("error creating lander instance: %v", err)
-// 		return
-// 	}
-// 	landerInstances.SetAlways(l.ID, i)
-// 	return nil
-// }
 
 // var landerCache *utils.InMemCache
 var landerInstances *utils.InMemCache // landerid:*landerInstance
@@ -318,20 +319,13 @@ func GetLanderById(db *gorm.DB, id string) (l *Lander, i *LanderInstance, err er
 	return
 }
 
-func GetLanderByUrlPostfix(db *gorm.DB, id string) (l *Lander, i *LanderInstance, err error) {
+func GetLanderByName(db *gorm.DB, id string) (l *Lander, i *LanderInstance, err error) {
 	l = &Lander{}
-	if v, ok := landerInstances.Get(id); ok {
-		i, ok = v.(*LanderInstance)
-		if ok {
-			l = i.lander
-			return
-		}
-	}
-	err = db.Model(l).Where("url_postfix = ?", id).First(l).Error
+	err = db.Model(l).Where("name = ?", id).First(l).Error
 	if err != nil {
-		landerInstances.Del(id)
+		// landerInstances.Del(id)
 		if err == gorm.ErrRecordNotFound {
-			log.Debugf("no lander by url_postfix %s", id)
+			log.Debugf("no lander by name %s", id)
 			err = nil
 			return
 		}
@@ -341,7 +335,113 @@ func GetLanderByUrlPostfix(db *gorm.DB, id string) (l *Lander, i *LanderInstance
 			log.Debugf("error creating lander instance: %s", err.Error())
 			return
 		}
-		landerInstances.SetAlways(id, i)
+		// landerInstances.SetAlways(id, i)
+	}
+
+	return
+
+}
+
+func getPredifinedNameFromName(name string, host string) string {
+	return fmt.Sprintf("predefined-config:%s-%s", host, name)
+}
+
+// PrelaodDefinedLanders will preload the landers defined in the hula config file
+// into the database and the http handlers
+// It only throws an error if it can't create a lander at all - not if it has
+// an issue with the db
+func PreloadDefinedLanders(db *gorm.DB) (err error) {
+	//lander *config.DefinedLander, server *config.Server
+	for _, server := range app.GetConfig().Servers {
+		for _, lander := range server.Landers {
+			defname := getPredifinedNameFromName(lander.Name, server.Host)
+			var l *Lander
+			var i *LanderInstance
+			l, i, err = GetLanderByName(db, defname)
+			if err != nil {
+				log.Errorf("PreloadDefinedLanders: error getting lander by name: %s", err.Error())
+			}
+			if l != nil && i != nil {
+				// update (may or may not have changed)
+				l.Name = defname
+				l.Server = server.Host
+				l.UrlPostfix = lander.UrlId
+				l.NoServe = lander.NoServe
+				// is the lander.Redirect config setting a full URL or just a path?
+				u, err2 := url.Parse(lander.Redirect)
+				if err2 != nil {
+					log.Errorf("PreloadDefinedLanders: error parsing redirect url: %s - Using the setting anyway.", err.Error())
+					l.Redirect = lander.Redirect
+				} else {
+					if u.Host == "" {
+						l.Redirect = fmt.Sprintf("%s%s", server.GetExternalUrl(), lander.Redirect)
+					} else {
+						if lander.Redirect[0] == '/' {
+							l.Redirect = lander.Redirect
+						} else {
+							err = fmt.Errorf("PreloadDefinedLanders: lander %s (%s) for server %s must be a full URL or an absolute path", lander.Name, defname, server.Host)
+							return
+						}
+					}
+				}
+				log.Debugf("PreloadDefinedLanders: updating lander %s for host %s", l.Name, server.Host)
+				i, err = l.Update(db)
+				if err != nil {
+					log.Errorf("PreloadDefinedLanders: error updating lander: %s", err.Error())
+					err = nil
+					return
+				}
+				return
+			}
+
+			l = NewLander()
+			l.Name = defname
+			l.Server = server.Host
+			l.UrlPostfix = lander.UrlId
+			l.Redirect = fmt.Sprintf("%s%s", server.GetExternalUrl(), lander.Redirect)
+			l.NoServe = lander.NoServe
+			// l := &Lander{
+			// 	Name:       lander.Name,
+			// 	Server:     server.Host,
+			// 	UrlPostfix: lander.UrlPostfix,
+			// 	Redirect:   lander.Redirect,
+			// }
+			log.Debugf("PreloadDefinedLanders: creating lander %s (%s) for host %s", l.Name, defname, server.Host)
+			_, err = l.Commit(lander.UrlId, db)
+
+			if err != nil {
+				log.Errorf("PreloadDefinedLanders: error committing lander instance: %s", err.Error())
+				return
+			}
+		}
+	}
+	return
+}
+
+func GetLanderByUrlPostfix(db *gorm.DB, urlpost string) (l *Lander, i *LanderInstance, err error) {
+	l = &Lander{}
+	if v, ok := landerInstances.Get(urlpost); ok {
+		i, ok = v.(*LanderInstance)
+		if ok {
+			l = i.lander
+			return
+		}
+	}
+	err = db.Model(l).Where("url_postfix = ?", urlpost).First(l).Error
+	if err != nil {
+		landerInstances.Del(urlpost)
+		if err == gorm.ErrRecordNotFound {
+			log.Debugf("no lander by url_postfix %s", urlpost)
+			err = nil
+			return
+		}
+	} else {
+		i, err = createLanderInstance(l)
+		if err != nil {
+			log.Debugf("error creating lander instance: %s", err.Error())
+			return
+		}
+		landerInstances.SetAlways(urlpost, i)
 	}
 
 	return

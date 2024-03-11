@@ -6,6 +6,7 @@ import (
 	"github.com/cbroglie/mustache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
@@ -23,6 +24,7 @@ const (
 	BMIndexCookieM   = iota // *model.VisitorCookie
 	BMIndexSSCookieM = iota // *model.VisitorCookie
 	BMIndexVisitorM  = iota // *model.Visitor
+	BMHostConf       = iota // *config.Server
 	// user
 	BMIndexData1 = iota
 	BMIndexData2 = iota
@@ -55,6 +57,17 @@ func InitVistorHandlers() {
 	visitorBounceMap.Start()
 }
 
+var precompileNewVisitorHooks = &utils.RunOnceSingleton{Run: func(p interface{}) (err error) {
+	// add in any global things which should be available during any time we call this hook
+	// If we don't change the names of the globals later, the script should always
+	// be precompiled and ready to run.
+	hostconf := p.(*config.Server)
+	if hostconf.Hooks != nil {
+		hostconf.Hooks.PrecompileHooksOnNewVisitor(map[string]any{"visitorid": "", "url": ""})
+	}
+	return
+}}
+
 // these routes handle the actual tracking of visitors to the site.
 // There are two ways to do this:
 // - a script is locaded from the browser - that JS script makes an API call to /v/hello
@@ -74,7 +87,9 @@ func InitVistorHandlers() {
 
 // Hello is the basic API call made by the client anytime a visitor to website hits a page
 func Hello(c *fiber.Ctx) error {
-	_, _, httperr, err := GetHostConfig(c)
+	hconf, host, httperr, err := GetHostConfig(c)
+
+	precompileNewVisitorHooks.Verify(host, hconf, "error precompiling new visitor hooks (hello)")
 
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
@@ -148,6 +163,11 @@ func Hello(c *fiber.Ctx) error {
 					log.Errorf("error committing event: %s", err.Error())
 				}
 				b.Flags |= VisitBounceFlagSawURL
+				// execute hooks
+				hconf := b.Data[BMHostConf].(*config.Server)
+				if hconf != nil {
+					hconf.Hooks.SubmitToHooksOnNewVisitor(map[string]any{"visitorid": b.Visitor.ID, "url": url}, nil, nil)
+				}
 			} else {
 				log.Debugf("already saw URL for this bounce (hello)")
 			}
@@ -157,7 +177,7 @@ func Hello(c *fiber.Ctx) error {
 		}
 
 		return err
-	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
+	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP()), BMHostConf: hconf})
 
 	return c.SendString(`{"status":"ok","vc":"` + sscookie + `"}`)
 }
@@ -185,14 +205,16 @@ func HelloIframe(c *fiber.Ctx) error {
 
 	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
 
-	hostconf, _, httperr, err := GetHostConfig(c)
+	hostconf, host, httperr, err := GetHostConfig(c)
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
 	}
+
 	id := c.Query("h")
 	if id != hostconf.ID {
 		return c.Status(400).SendString("host id mismmatch")
 	}
+	precompileNewVisitorHooks.Verify(host, hostconf, "error precompiling new visitor hooks (helloiframe)")
 
 	url := c.Query("u")
 	if len(url) > 0 {
@@ -374,6 +396,12 @@ func HelloIframe(c *fiber.Ctx) error {
 				log.Errorf("error committing event: %s", err.Error())
 			}
 			b.Flags |= VisitBounceFlagSawURL
+
+			hconf := b.Data[BMHostConf].(*config.Server)
+			if hconf != nil {
+				hconf.Hooks.SubmitToHooksOnNewVisitor(map[string]any{"visitorid": visitor.ID, "url": url}, nil, nil)
+			}
+
 		}
 
 		return err
@@ -383,7 +411,7 @@ func HelloIframe(c *fiber.Ctx) error {
 		// and then the string is no longer valid
 		// It seems the GC can't keep up with our callback pointers
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(url), BMIndexCookieM: cookiem, BMIndexSSCookieM: sscookiem,
-		BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP())})
+		BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP()), BMHostConf: hostconf})
 
 	body, err = iframeHelloTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
 		"b": bounceS, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
