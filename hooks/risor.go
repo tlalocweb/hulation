@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,15 +87,21 @@ func (exec *RisorExecutor) Shutdown() {
 // it does not look at the type - since doing so we would require reflection.
 func stringifyKeys(m map[string]any) (ret string, err error) {
 	// make map to json string
-	var str string
+	//	var str string
 	if m == nil {
 		return
 	}
+	var keys []string
 	for k := range m {
-		str += fmt.Sprintf("%s:", k)
+		keys = append(keys, k)
 	}
-	log.Tracef("stringifyKeys: %s", str)
-	ret = utils.GenSha256Hash(str)
+	// you have to put them in a slice
+	// and sort. B/c Go's range of keys in a map
+	// does not guarantee order and will return different order per call.
+	sort.Strings(keys)
+	ret = strings.Join(keys, ":")
+	log.Tracef("stringifyKeys: %s", ret)
+	//	ret = utils.GenSha256Hash(str)
 	return
 }
 
@@ -105,7 +112,7 @@ func getRisorScriptHash(script string, globals map[string]any) (ret string) {
 		globalshash = utils.FastRandString(8)
 	}
 	//	ret = fmt.Sprintf("%s:%s", utils.GenSha256Hash(script), globalshash)
-	utils.GenSha256Hash(strings.Join([]string{globalshash}, script))
+	ret = utils.GenSha256Hash(strings.Join([]string{globalshash, script}, " "))
 	log.Tracef("risor script hash: %s", ret)
 	return
 }
@@ -157,6 +164,7 @@ func (exec *RisorExecutor) SubmitForExec(hook *RisorHook, globals map[string]any
 	baton := newRunBaton(hook)
 	var gotError atomic.Bool
 	exec.runners[exec.rr].Run(func() (err error) {
+		log.Tracef("risor.Run() %p", hook)
 		if hook.compiled == nil {
 			log.Debugf("hook not compiled.. attempting compile")
 			_, err = exec.Compile(hook)

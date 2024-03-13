@@ -12,21 +12,24 @@ package hooks
 // 	}
 // }
 
-func CompileVisitorHook(globals map[string]any, name string, code string) (err error) {
+func CompileVisitorHook(globals map[string]any, name string, code string) (templatehook *RisorHook, err error) {
 	exec := GetRisorExecutor()
-	rethook := &RisorHook{
+	templatehook = &RisorHook{
 		Name:    name,
 		Script:  code,
 		Globals: globals,
 	}
-	_, err = exec.Compile(rethook)
+	var compiled *CompiledCode
+	compiled, err = exec.Compile(templatehook)
+	templatehook.compiled = compiled
 	return
 }
-func ExecuteVisitorHook(globals map[string]any, name string, code string, onOk OnCompleteHookFunc, onErr OnErrHookFunc) {
+func ExecuteVisitorHook(globals map[string]any, templ *RisorHook, onOk OnCompleteHookFunc, onErr OnErrHookFunc) {
 	exec := GetRisorExecutor()
 	rethook := &RisorHook{
-		Name:       name,
-		Script:     code,
+		Name:       templ.Name,
+		Script:     templ.Script,
+		compiled:   templ.compiled,
 		Globals:    globals,
 		OnErr:      onErr,
 		OnComplete: onOk,

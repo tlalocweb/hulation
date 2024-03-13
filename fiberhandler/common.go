@@ -42,6 +42,15 @@ type VisitorCookiesBaton struct {
 	Cookiem   *model.VisitorCookie
 }
 
+func SetCSP(c *fiber.Ctx, hostconf *config.Server) {
+	cspmap := hostconf.GetCSPMap()
+	policy := ""
+	for k, v := range cspmap {
+		policy = fmt.Sprintf("%s; %s %s", policy, k, v)
+	}
+	c.Set("Content-Security-Policy", policy)
+}
+
 func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookiesBaton) (visitor *model.Visitor, newvisitor bool, err error) {
 
 	// check for httponly cookie
@@ -168,13 +177,19 @@ func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookie
 			samesite = "Lax"
 		}
 	}
-
+	domain := hostconf.Domain
+	if len(hostconf.Domain) > 0 {
+		if hostconf.CookieOpts != nil && hostconf.CookieOpts.NoUseDomain {
+			domain = ""
+		}
+	}
 	c.Cookie(&fiber.Cookie{
 		Name:     hostconf.CookieOpts.CookiePrefix + "_hello",
 		Value:    cookie,
 		Secure:   !hostconf.CookieOpts.NoSecure,
 		HTTPOnly: false,
 		SameSite: samesite,
+		Domain:   domain,
 		MaxAge:   60 * 60 * 24 * hostconf.HelloCookieMaxAge, // 30 days
 	})
 	c.Cookie(&fiber.Cookie{
@@ -182,6 +197,7 @@ func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookie
 		Value:    sscookie,
 		Secure:   !hostconf.CookieOpts.NoSecure,
 		HTTPOnly: true,
+		Domain:   domain,
 		SameSite: samesite,
 	})
 

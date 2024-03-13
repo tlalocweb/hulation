@@ -98,7 +98,7 @@ func Hello(c *fiber.Ctx) error {
 	//	contenttype := c.Get("Content-Type", "application/json")
 	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
-
+	SetCSP(c, hconf)
 	var hello HelloMsg
 
 	err = c.BodyParser(&hello)
@@ -209,7 +209,7 @@ func HelloIframe(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
 	}
-
+	SetCSP(c, hostconf)
 	id := c.Query("h")
 	if id != hostconf.ID {
 		return c.Status(400).SendString("host id mismmatch")
@@ -474,6 +474,7 @@ func HelloNoScript(c *fiber.Ctx) error {
 		return c.Status(400).SendString("host id mismmatch")
 	}
 
+	SetCSP(c, hostconf)
 	bouncid := c.Query("b")
 
 	url := c.Get("Referer")

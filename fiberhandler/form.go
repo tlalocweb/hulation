@@ -40,7 +40,7 @@ var precompileNewSubmitHooks = &utils.RunOnceSingleton{Run: func(p interface{}) 
 	// be precompiled and ready to run.
 	hostconf := p.(*config.Server)
 	if hostconf.Hooks != nil {
-		hostconf.Hooks.PrecompileHooksOnNewFormSubmission(map[string]any{"visitorid": "", "url": "", "formname": "", "fields": ""})
+		hostconf.Hooks.PrecompileHooksOnNewFormSubmission(map[string]any{"visitorid": "", "url": "", "formname": "", "fields": "", "newvisitor": false})
 	}
 	return
 }}
@@ -75,7 +75,7 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 	// we will at least get the cookie we just created in the previous request (since we are passing it ourselves)
 	// otherwise we will get the cookie in the headers as per normal.
 	var visitor *model.Visitor
-
+	var newvisitor bool
 	// figure out visitor
 	if formdata.SSCookie != "" {
 		// we have a visitor sscookie via rhe request
@@ -91,6 +91,7 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 		}
 	}
 	if visitor == nil {
+		newvisitor = true
 		// attempt to get visitor by cookie in headers
 		// check for httponly cookie
 		sscookie := c.Cookies(hostconf.CookieOpts.CookiePrefix + "_helloss")
@@ -194,7 +195,7 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 		}
 	}
 	// run the form submission hooks
-	hostconf.Hooks.SubmitToHooksOnNewFormSubmission(map[string]any{"visitorid": visitor.ID, "url": formdata.URL, "fields": formdata.Fields, "formname": formmodel.Name}, nil, nil)
+	hostconf.Hooks.SubmitToHooksOnNewFormSubmission(map[string]any{"visitorid": visitor.ID, "url": formdata.URL, "fields": formdata.Fields, "formname": formmodel.Name, "newvisitor": newvisitor}, nil, nil)
 
 	postrespout, err := json.Marshal(postresp)
 	if err != nil {

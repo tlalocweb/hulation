@@ -15,6 +15,7 @@ import (
 
 func main() {
 	app.ParseFlags()
+
 	fmt.Printf("Starting Hulation\n")
 	// should print if debug is enabled
 	log.Debugf("Debug enabled")

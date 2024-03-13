@@ -18,7 +18,7 @@ func setupGlobalConfVars() {
 	hulapath, _ := os.Executable()
 	huladir := filepath.Dir(hulapath)
 
-	globalConfVars["hulaversion"] = "0.1.0"
+	globalConfVars["hulaversion"] = Version
 	globalConfVars["huladir"] = huladir
 	// set all env vars in the map
 	for _, e := range os.Environ() {

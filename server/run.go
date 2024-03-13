@@ -112,6 +112,14 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 		l.FiberApp.Use("/", cors.New(corsconfig))
 	}
 
+	l.FiberApp.Use(func(c *fiber.Ctx) error {
+		hostconf, _, _, _ := handler.GetHostConfig(c)
+		if hostconf != nil {
+			handler.SetCSP(c, hostconf)
+		}
+		return c.Next()
+	})
+
 	if !app.GetAppRuntimeOpts().NoLogVisits {
 		l.FiberApp.Use(fiberzerolog.New(fiberzerolog.Config{
 			Logger: log.GetLogger(),
@@ -164,6 +172,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 		}
 	}
 
+	handler.InitVistorHandlers()
 	// check for TLS
 
 	if l.SSL != nil && l.SSL.GetTLSCert() != nil {
@@ -181,7 +190,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	}
 	// non ssl start:
 	log.Infof("Starting server on port %s", l.GetListenOn())
-	handler.InitVistorHandlers()
+
 	// blocks .. forever - some signals should unblock
 	err = l.FiberApp.Listen(l.GetListenOn())
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -23,6 +24,13 @@ const (
 	// DEFAULT_STORE_PATH = "izvisitors.db"
 )
 
+// Courtesy of 'mkcert' comments:
+// Version can be set at link time to override debug.BuildInfo.Main.Version,
+// which is "(devel)" when building from within the module. See
+// golang.org/issue/29814 and golang.org/issue/29228.
+// Link time: go build -ldflags "-X config.Version=$(git describe --tags)"
+var Version string
+
 type DBConfig struct {
 	Username string `yaml:"user,omitempty" env:"DB_USERNAME" test:"~.+" default:"hula"`
 	Password string `yaml:"pass,omitempty" env:"DB_PASSWORD"`
@@ -34,16 +42,29 @@ type DBConfig struct {
 type CookieOpts struct {
 	// there are various implications of prefixing cookies with a beginning _ underscore character
 	// research for a later time
-	CookiePrefix string `yaml:"cookie_prefix,omitempty" env:"SERVER_COOKIE_PREFIX" test:"~.+" default:"hula"`
+	CookiePrefix string `yaml:"cookie_prefix,omitempty" test:"~.+" default:"hula"`
 	// the default is to set the cookie to expire in 1 year
 	// this is also the default for Google Analytics
-	ExpireDays int `yaml:"expire_days,omitempty" env:"COOKIE_EXPIRE_DAYS" test:">0" default:"365"`
+	ExpireDays int `yaml:"expire_days,omitempty" test:">0" default:"365"`
 	// If set, will specifically set the SameSite attribute of the cookie
 	// the default (blank) is to let hulation autodetect. In this case it will use Strict if the hulation is serving
 	// the site itself
-	SameSite string `yaml:"same_site,omitempty" env:"COOKIE_SAME_SITE" test:"~^(Strict|Lax|None)?$" default:""`
+	SameSite string `yaml:"same_site,omitempty" test:"~^(Strict|Lax|None)?$" default:""`
 	// if true, do not set the Secure flag on the cookie
-	NoSecure bool `yaml:"no_secure,omitempty" env:"COOKIE_NO_SECURE"`
+	NoSecure bool `yaml:"no_secure,omitempty"`
+	// if true, then hula will _not_ set the 'domain=' attribute of the cookie
+	// By default, hula will set the 'domain=example.com' attribute on the cookie
+	// to the domain of this server
+	// Setting domain of the cookie is needed if other servers / subdomains will be using the hula cookies
+	// and scripts in this domain.
+	//
+	// Example: if server abc.example.com is this hula install, and server xyz.example.com
+	// is using the hula.js script, then the hula cookie will not be accessuble by xyz.example.com's scripts
+	// unless the domain attribute is set to example.com.
+	//
+	// In most situations you should use the default - which allows any host in the same domain
+	// as the domain of this server to access the hula cookies
+	NoUseDomain bool `yaml:"no_use_domain,omitempty"`
 }
 
 type DefinedLander struct {
@@ -78,7 +99,8 @@ type HookCode struct {
 	// can either be the script or a filename
 	Risor     *string `yaml:"risor,omitempty"`
 	RisorCode *string `yaml:"risor_code,omitempty"`
-	// risorHook *hooks.RisorHook
+	// the template for all hook executions (precompiled)
+	risorHookTempl *hooks.RisorHook
 }
 
 // func (hc *HookCode) GetRisorHook() *hooks.RisorHook {
@@ -89,13 +111,16 @@ type VisitorHooks struct {
 	Globals         map[string]interface{} `yaml:"globals,omitempty"`
 	globalsTemplate *hooks.TemplateGlobalsForHooks
 	// One or more Risor scripts to run on a new form submission
-	OnNewFormSubmission []*HookCode `yaml:"on_new_form_submission,omitempty"`
+	OnNewFormSubmission              []*HookCode `yaml:"on_new_form_submission,omitempty"`
+	onNewFormSubmissionHookTemplates []*hooks.RisorHook
 	//	onNewFormSubmissionHookChain []*
 	// One or more Risor scripts to run on a new visitor landing on a Lander
-	OnLanderVisit []*HookCode `yaml:"on_lander_visit,omitempty"`
+	OnLanderVisit              []*HookCode `yaml:"on_lander_visit,omitempty"`
+	onLanderVisitHookTemplates []*hooks.RisorHook
 	//	onNewLanderVisitHookChain []*hooks.HookChain
 
-	OnNewVisitor []*HookCode `yaml:"on_new_visitor,omitempty"`
+	OnNewVisitor              []*HookCode `yaml:"on_new_visitor,omitempty"`
+	onNewVisitorHookTemplates []*hooks.RisorHook
 	// onNewVisitorRisorHooks []*hooks.HookChain
 }
 
@@ -108,39 +133,53 @@ func (vh *VisitorHooks) GetGlobalTemplate(mixthis ...map[string]any) map[string]
 }
 
 func (vh *VisitorHooks) SubmitToHooksOnNewFormSubmission(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
-	for _, hc := range vh.OnNewFormSubmission {
-		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	for _, hc := range vh.onNewFormSubmissionHookTemplates {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc, onOk, onErr)
 	}
 }
 func (vh *VisitorHooks) PrecompileHooksOnNewFormSubmission(globals map[string]interface{}) (err error) {
-
+	vh.onNewFormSubmissionHookTemplates = make([]*hooks.RisorHook, 0)
 	for _, hc := range vh.OnNewFormSubmission {
-		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		h, err := hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		if err != nil {
+			return err
+		}
+		vh.onNewFormSubmissionHookTemplates = append(vh.onNewFormSubmissionHookTemplates, h)
 	}
 	return
 }
 
 func (vh *VisitorHooks) SubmitToHooksOnNewLanderVisit(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
-	for _, hc := range vh.OnLanderVisit {
-		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	for _, hc := range vh.onLanderVisitHookTemplates {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc, onOk, onErr)
 	}
 }
 func (vh *VisitorHooks) PrecompileHooksOnNewLanderVisit(globals map[string]interface{}) (err error) {
+	vh.onLanderVisitHookTemplates = make([]*hooks.RisorHook, 0)
 	for _, hc := range vh.OnLanderVisit {
-		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		h, err := hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		if err != nil {
+			return err
+		}
+		vh.onLanderVisitHookTemplates = append(vh.onLanderVisitHookTemplates, h)
 	}
 	return
 }
 
 func (vh *VisitorHooks) SubmitToHooksOnNewVisitor(globals map[string]interface{}, onOk hooks.OnCompleteHookFunc, onErr hooks.OnErrHookFunc) {
-	for _, hc := range vh.OnNewVisitor {
-		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode, onOk, onErr)
+	for _, hc := range vh.onNewVisitorHookTemplates {
+		hooks.ExecuteVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc, onOk, onErr)
 	}
 }
 
 func (vh *VisitorHooks) PrecompileHooksOnNewVisitor(globals map[string]interface{}) (err error) {
+	vh.onNewVisitorHookTemplates = make([]*hooks.RisorHook, 0)
 	for _, hc := range vh.OnNewVisitor {
-		hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		h, err := hooks.CompileVisitorHook(vh.GetGlobalTemplate(vh.Globals, globals), hc.Name, *hc.RisorCode)
+		if err != nil {
+			return err
+		}
+		vh.onNewVisitorHookTemplates = append(vh.onNewVisitorHookTemplates, h)
 	}
 	return
 }
@@ -194,6 +233,65 @@ func (h *HookCode) FinalizeConf(host string, field string, m map[string]string) 
 	return
 }
 
+const ()
+
+var default_CSP_fetch_directives = map[string]string{
+	"default-src": "'self'",
+	"script-src":  "'self'",
+	"style-src":   "'self'",
+	"img-src":     "'self'",
+	"connect-src": "'self'",
+	"font-src":    "'self'",
+	"object-src":  "'self'",
+	"media-src":   "'self'",
+	"frame-src":   "'self'",
+}
+
+type CSP struct {
+	FetchDirectives map[string]string `yaml:"fetch,omitempty"`
+	// if set to true, will not add the default CSP directives
+	NoDefaults          bool              `yaml:"no_defaults,omitempty"`
+	Other               map[string]string `yaml:"other,omitempty"`
+	computed_directives map[string]string
+}
+
+func (s *Server) GetCSPMap() map[string]string {
+	csp := &s.CSP
+	if csp.computed_directives == nil {
+		csp.computed_directives = make(map[string]string)
+		if !csp.NoDefaults {
+			for k, v := range default_CSP_fetch_directives {
+				csp.computed_directives[k] = v
+			}
+		}
+		if csp.FetchDirectives != nil {
+			for k, v := range csp.FetchDirectives {
+				if csp.computed_directives[k] != "" {
+					csp.computed_directives[k] = csp.computed_directives[k] + " " + v
+				} else {
+					csp.computed_directives[k] = v
+				}
+			}
+		}
+		if !csp.NoDefaults {
+			if s.Domain != "" {
+				hostcsp := fmt.Sprintf("%s *.%s", s.Domain, s.Domain)
+				csp.computed_directives["default-src"] = csp.computed_directives["default-src"] + " " + hostcsp
+				csp.computed_directives["script-src"] = csp.computed_directives["script-src"] + " " + hostcsp
+				csp.computed_directives["frame-src"] = csp.computed_directives["frame-src"] + " " + hostcsp
+			} else {
+				log.Warnf("CSP headers will for host %s will not include domain-specific directives because no domain is set or computed", s.Host)
+			}
+		}
+		if csp.Other != nil {
+			for k, v := range csp.Other {
+				csp.computed_directives[k] = v
+			}
+		}
+	}
+	return csp.computed_directives
+}
+
 // func (vh *VisitorHooks) GetOnNewFormSubmissionRisorHooks() []*hooks.HookChain {
 // 	return vh.onNewFormSubmissionHookChain
 // }
@@ -226,6 +324,7 @@ type Server struct {
 	HelloCookieMaxAge int         `yaml:"hello_cookie_max_age,omitempty" test:">0" default:"30"`
 	CORS              *CORSConfig `yaml:"cors,omitempty"`
 	SSL               *SSLConfig  `yaml:"ssl,omitempty"`
+	CSP               CSP         `yaml:"csp,omitempty"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
@@ -349,11 +448,19 @@ func (cfg *SSLConfig) LoadSSLConfig() (err error) {
 	if len(cfg.Cert) > 0 {
 		if _, err := os.Stat(cfg.Cert); err == nil {
 			cfg.certPath = cfg.Cert
+		} else {
+			if len(cfg.Cert) < 200 {
+				log.Warnf("SSL: Cert is either invalid data or file not present at path: %s", path.Clean(cfg.Cert))
+			}
 		}
 	}
 	if len(cfg.Key) > 0 {
 		if _, err := os.Stat(cfg.Key); err == nil {
 			cfg.keyPath = cfg.Key
+		} else {
+			if len(cfg.Key) < 200 {
+				log.Warnf("SSL: Key is either invalid data or file not present at path: %s", path.Clean(cfg.Key))
+			}
 		}
 	}
 	// now read each file and place in struct
@@ -488,7 +595,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	path, _ := filepath.Abs(filename)
-	confDir := filepath.Dir(path)
+	confDir = filepath.Dir(path)
 
 	err = yaml.UnmarshalStrict(buf, &cfg)
 	if err != nil {

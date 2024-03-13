@@ -3,6 +3,8 @@ package app
 import (
 	"flag"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -35,12 +37,19 @@ func GetAppRuntimeOpts() *AppRuntimeOpts {
 
 func ParseFlags() {
 	loglevel := flag.String("loglevel", "info", "sets log level to info, warn, error, fatal, panic, debug, trace, none")
+	version := flag.Bool("version", false, "prints version")
 	logopts := flag.String("logopts", "", "sets log options")
 	debuglevel := flag.Int("debug", 0, "sets log level to debug")
 	configfile := flag.String("config", "config.yaml", "config file to use")
 	//	jsonlogs := flag.Bool("J", false, "use JSON logs")
 
 	flag.Parse()
+
+	if *version {
+		DumpVersion()
+		os.Exit(0)
+	}
+
 	if logopts != nil {
 		splitLogOpts := strings.Split(*logopts, ",")
 		for _, opt := range splitLogOpts {
@@ -114,6 +123,17 @@ func ParseFlags() {
 	}
 	log.SetLevel(logLevel)
 
+}
+func DumpVersion() {
+	if config.Version != "" {
+		fmt.Println(config.Version)
+		return
+	}
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		fmt.Println(buildInfo.Main.Version)
+		return
+	}
+	fmt.Println("(unknown)")
 }
 
 func LoadConfig() (err error) {

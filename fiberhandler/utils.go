@@ -19,6 +19,15 @@ import (
 // is returned (but not set on the fiber context)
 // The only error returned currently is 404
 func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperror int, err error) {
+	exist := c.Locals("hostconf")
+	if exist != nil {
+		hostconf = exist.(*config.Server)
+		exist2 := c.Locals("host")
+		if exist2 != nil {
+			host = exist2.(string)
+			return
+		}
+	}
 	host = c.Get("Host")
 	hostonly := utils.GetHostOnly(host)
 	hostconf = app.GetConfig().GetServer(hostonly)
@@ -31,6 +40,9 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 		httperror = 404
 		err = fmt.Errorf("unknown host: %s", host)
 	}
+	// cache for later use
+	c.Locals("hostconf", hostconf)
+	c.Locals("host", host)
 	return
 }
 
