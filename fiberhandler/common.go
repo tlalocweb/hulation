@@ -52,7 +52,10 @@ func SetCSP(c *fiber.Ctx, hostconf *config.Server) {
 }
 
 func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookiesBaton) (visitor *model.Visitor, newvisitor bool, err error) {
-
+	if hostconf == nil {
+		err = &ResponseError{StatusCode: 500, RootCause: fmt.Errorf("hostconf is nil")}
+		return
+	}
 	// check for httponly cookie
 	sscookie := c.Cookies(hostconf.CookieOpts.CookiePrefix + "_helloss")
 	if len(sscookie) > 0 {

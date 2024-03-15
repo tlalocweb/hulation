@@ -350,7 +350,7 @@ type Server struct {
 	RootIndex     string `yaml:"root_index,omitempty"`
 	// uses string representation of time.Duration
 	RootCacheDuration string `yaml:"root_cache_duration,omitempty"` // test:"$(validtimeduration)"`
-	RootMaxAge        uint   `yaml:"root_max_age,omitempty"`
+	RootMaxAge        uint   `yaml:"root_max_age,omitempty" default:"3600"`
 
 	NonRootStaticFolders []*StaticFolder  `yaml:"static_folders,omitempty"`
 	Landers              []*DefinedLander `yaml:"landers,omitempty"`
@@ -383,7 +383,7 @@ type Listener struct {
 	serverByHost map[string]*Server // same as above but by host string for fast lookup
 	// the combine CORS config for all servers on this listener
 	CORS *CORSConfig
-	SSL  *SSLConfig
+	SSL  []*SSLConfig
 	// the fiber app for this listener - if applicable
 	FiberApp *fiber.App
 	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
@@ -395,6 +395,8 @@ func (l *Listener) IsHulaCore() bool {
 	return l.hulacore
 }
 
+// returns listeOn which is a string such as:
+// the address to listen on - such ":8080" or "127.0.0.1:8080
 func (l *Listener) GetListenOn() string {
 	return l.listenOn
 }
@@ -507,11 +509,16 @@ type Config struct {
 	Proxies       []*Proxy    `yaml:"proxies,omitempty"`
 	JWTKey        string      `yaml:"jwt_key,omitempty"`
 	JWTExpiration string      `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
-	// the hostname of the hulation server itself - format: host or host:port
-	// this is used for APIs specifc to hula, visitor tracking, etc.
-	// Hulation will still serve the its visitor APIs to any host which uses a Host header that matches its host ID
+	// The hostname of the hulation server itself - format: host or host:port
+	// This is used for APIs specifc to hula, visitor tracking, etc.
+	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
 	// See servers section.
 	HulaHost string `yaml:"hula_host,omitempty" env:"HULA_HOST" test:"~.+" default:"localhost"`
+	// Optional - other names the Host header can be to match this server
+	HulaAliases []string `yaml:"hula_aliases,omitempty"`
+	// Specifically configure the domain for Hula vs. it being derived automatically from hula_host.
+	// Normally this is not set in the config
+	HulaDomain string `yaml:"hula_domain,omitempty"`
 	// By defalt Hulation will isten on 0.0.0.0:Port - the listen IP or network interface can be set here
 	// Set the port using the Port config var
 	ListenOn string `yaml:"listen_on,omitempty"`
@@ -531,6 +538,7 @@ type Config struct {
 	// List of IP addresses to accept connections from
 	// AcceptIPs []string `yaml:"accept_ips"`
 	byServer   map[string]*Server
+	byAllAlias map[string]*Server
 	byListener map[string]*Listener
 	// script folder - default fine if hulation exec is in the top folder of repo
 	ScriptFolder             string `yaml:"script_folder,omitempty" env:"SCRIPT_FOLDER" test:"~.+" default:"{{huladir}}/scripts"`
@@ -582,6 +590,12 @@ func (cfg *Config) GetServer(host string) *Server {
 		return nil
 	}
 	return cfg.byServer[host]
+}
+func (cfg *Config) GetServerByAnyAlias(host string) *Server {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.byAllAlias[host]
 }
 
 func LoadConfig(filename string) (*Config, error) {
@@ -646,17 +660,42 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		cfg.listenOn = fmt.Sprintf("%s:%d", cfg.ListenOn, cfg.Port)
 	}
+	hula_server := &Server{
+		hulacore: true,
+		Host:     cfg.HulaHost,
+	}
 	cfg.byListener[cfg.listenOn] = &Listener{
 		listenOn:     cfg.listenOn,
-		servers:      []*Server{&Server{hulacore: true}},
+		servers:      []*Server{hula_server},
 		serverByHost: make(map[string]*Server),
 		hulacore:     true,
 	}
 	cfg.byListener[cfg.listenOn].CORS = cfg.CORS
-	cfg.byListener[cfg.listenOn].SSL = cfg.SSL
+	if cfg.SSL != nil {
+		cfg.byListener[cfg.listenOn].SSL = append(cfg.byListener[cfg.listenOn].SSL, cfg.SSL)
+	}
 	cfg.byListener[cfg.listenOn].serverByHost["hula"] = cfg.byListener[cfg.listenOn].servers[0]
 
 	cfg.byServer = make(map[string]*Server)
+	cfg.byAllAlias = make(map[string]*Server)
+	cfg.byAllAlias[cfg.HulaHost] = hula_server
+	cfg.byServer[cfg.HulaHost] = hula_server
+
+	for _, s := range cfg.HulaAliases {
+		cfg.byAllAlias[s] = hula_server
+	}
+
+	if len(cfg.HulaDomain) < 1 {
+		res := getDomainRE.FindAllStringSubmatch(cfg.HulaHost, -1)
+		if len(res) > 0 && len(res[0]) > 1 {
+			hula_server.Domain = res[0][1]
+		} else {
+			hula_server.Domain = hula_server.Host
+		}
+	} else {
+		hula_server.Domain = cfg.HulaDomain
+	}
+	log.Debugf("server[%s].domain (hula) = %s", hula_server.Host, hula_server.Domain)
 
 	for _, s := range cfg.Servers {
 		if s.Port < 1 {
@@ -690,7 +729,15 @@ func LoadConfig(filename string) (*Config, error) {
 			log.Warnf("CORS config for listener %s will be overwritten - muliple CORS config for same listeber FIXME", s.listenOn)
 		}
 		listenerforserver.CORS = cfg.CORS
-
+		if s.SSL != nil {
+			err = s.SSL.LoadSSLConfig()
+			if err != nil {
+				return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
+			}
+			listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+		} else if len(listenerforserver.SSL) > 0 {
+			log.Warnf("SSL config for server %s is missing but TLS will be used by other servers on same port.", s.Host)
+		}
 		// if host has a special directive, work it out first:
 		// TODO
 
@@ -712,6 +759,21 @@ func LoadConfig(filename string) (*Config, error) {
 		s.externalUrl = fmt.Sprintf("%s://%s%s", s.HttpScheme, s.Host, portstring)
 		s.externalHostPort = fmt.Sprintf("%s:%d", s.Host, cfg.Port)
 		cfg.byServer[s.Host] = s
+		cfg.byAllAlias[s.Host] = s
+		for _, a := range s.Aliases {
+			_, ok := cfg.byServer[a]
+			if ok {
+				log.Errorf(`alias "%s" for server config %s already referenced`, a, s.Host)
+				return nil, fmt.Errorf(`alias "%s" for server config %s already referenced`, a, s.Host)
+			}
+			if validIpAddressRE.MatchString(a) || validHostnameRE.MatchString(a) {
+				log.Debugf(`server[%s] alias %s`, s.Host, a)
+				cfg.byServer[a] = s
+			} else {
+				log.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
+				return nil, fmt.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
+			}
+		}
 		// log.Debugf("server[%s].externalUrl = %s", s.Host, s.externalUrl)
 		// log.Debugf("cfg.byListener[%s].servers = %+v", s.listenOn, listenerforserver.servers)
 		// log.Debugf("cfg.byListener[%s].serverByHost[%s] = %+v", s.listenOn, s.Host, listenerforserver.serverByHost)

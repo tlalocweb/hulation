@@ -1,7 +1,9 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -66,6 +68,34 @@ type listenerErr struct {
 	listener *config.Listener
 	done     bool
 	err      error
+}
+
+// a blocking call which is a custom subsistute for fiber.ListenTLSWithCertificate()
+func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
+	tlsHandler := &fiber.TLSHandler{}
+	config := &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		Certificates:   []tls.Certificate{},
+		GetCertificate: tlsHandler.GetClientInfo,
+	}
+
+	// add all certs
+	for _, cert := range l.SSL {
+		config.Certificates = append(config.Certificates, *cert.GetTLSCert())
+	}
+
+	log.Debugf("Starting TLS server on port %s - has %d certificates", l.GetListenOn(), len(config.Certificates))
+
+	ln, err := net.Listen("tcp", l.GetListenOn())
+	if err != nil {
+		return fmt.Errorf("failed to listen (net.Listen): %w", err)
+	}
+	ln = tls.NewListener(ln, config)
+	if err != nil {
+		return fmt.Errorf("failed to listen (tls): %w", err)
+	}
+	err = fiberapp.Listener(ln)
+	return err
 }
 
 // Starts up a fiber server on a specific port / address and then adds all the routes in for that
@@ -143,6 +173,15 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 				Index:         server.RootIndex,
 				MaxAge:        int(server.RootMaxAge),
 				CacheDuration: duration,
+				Next: func(c *fiber.Ctx) bool {
+					hostconf, _, _, _ := handler.GetHostConfig(c)
+					if hostconf != nil {
+						if hostconf.Host == server.Host {
+							return false
+						}
+					}
+					return true
+				},
 			})
 			log.Infof("Server %s: Serving static files from %s", server.Host, server.Root)
 		}
@@ -175,12 +214,23 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	handler.InitVistorHandlers()
 	// check for TLS
 
-	if l.SSL != nil && l.SSL.GetTLSCert() != nil {
+	if len(l.SSL) > 0 {
 		log.Infof("Starting TLS server on port %s", l.GetListenOn())
-		err = l.FiberApp.ListenTLSWithCertificate(l.GetListenOn(), *l.SSL.GetTLSCert())
+
+		// err = l.FiberApp.ListenTLSWithCertificate(l.GetListenOn(), *l.SSL.GetTLSCert())
+		// if err != nil {
+		// 	log.Fatalf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
+		// 	err = fmt.Errorf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
+		// 	errchan <- &listenerErr{
+		// 		listener: l,
+		// 		err:      err,
+		// 	}
+		// }
+		// return
+		err = FiberListenWithListener(l, l.FiberApp)
 		if err != nil {
-			log.Fatalf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
-			err = fmt.Errorf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
+			log.Fatalf("Error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
+			err = fmt.Errorf("error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
 			errchan <- &listenerErr{
 				listener: l,
 				err:      err,
@@ -195,7 +245,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	err = l.FiberApp.Listen(l.GetListenOn())
 	if err != nil {
 		log.Fatalf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
-		err = fmt.Errorf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
+		err = fmt.Errorf("error listening on port %s: %s", l.GetListenOn(), err.Error())
 		errchan <- &listenerErr{
 			listener: l,
 			err:      err,

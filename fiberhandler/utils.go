@@ -30,7 +30,7 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 	}
 	host = c.Get("Host")
 	hostonly := utils.GetHostOnly(host)
-	hostconf = app.GetConfig().GetServer(hostonly)
+	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
 	if hostconf != nil {
 		if hostconf.IgnorePortInHeader {
 			host = hostonly
@@ -45,7 +45,6 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 	c.Locals("host", host)
 	return
 }
-
 func AreWeServingThePage(c *fiber.Ctx, hostconf *config.Server) bool {
 	referrer := c.Get("Referer")
 	if referrer == "" {

@@ -88,10 +88,23 @@ func SetupRoutesFiber(l *config.Listener) {
 		},
 	}
 
+	// l.FiberApp.Use(func(c *fiber.Ctx) error {
+	// 	hostconf, _, _, _ := fhandler.GetHostConfig(c)
+	// 	if hostconf != nil {
+
+	// 	}
+	// 	//		c.Locals("hostconf", l)
+	// 	return c.Next()
+	// })
+
+	// TODO - use middleware to look at host header
+	// and then determine if routes apply
+
 	var api fiber.Router
 	// NOTE: login is not protected by OPA
 	if l.IsHulaCore() {
 		l.FiberApp.Post("/api/auth/login", fhandler.Login)               // logger.New(),
+		l.FiberApp.Get("/hulastatus", fhandler.Status)                   // logger.New(),
 		api = l.FiberApp.Group("/api", middleware.NewOpaMiddleware(cfg)) // logger.New(),
 		api.Get("/status", fhandler.Status)
 		// Auth
