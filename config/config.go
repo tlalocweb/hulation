@@ -426,12 +426,16 @@ type CORSConfig struct {
 
 type SSLConfig struct {
 	// can be either the cert / key itself infline or a path to the cert / key
-	Cert string `yaml:"cert,omitempty" env:"SSL_CERT"`
-	Key  string `yaml:"key,omitempty" env:"SSL_KEY"`
+	Cert string `yaml:"cert,omitempty"`
+	Key  string `yaml:"key,omitempty"`
 	// if the above is a path, it moved here
 	certPath string
 	keyPath  string
 	tlsCert  *tls.Certificate
+}
+
+func (cfg *SSLConfig) NoConfig() bool {
+	return len(cfg.Cert) < 1 && len(cfg.Key) < 1
 }
 
 func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
@@ -729,7 +733,7 @@ func LoadConfig(filename string) (*Config, error) {
 			log.Warnf("CORS config for listener %s will be overwritten - muliple CORS config for same listeber FIXME", s.listenOn)
 		}
 		listenerforserver.CORS = cfg.CORS
-		if s.SSL != nil {
+		if s.SSL != nil && !s.SSL.NoConfig() {
 			err = s.SSL.LoadSSLConfig()
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
@@ -847,7 +851,7 @@ func LoadConfig(filename string) (*Config, error) {
 	if cfg.SSL != nil {
 		// skip if these are both entirely empty - it means the user
 		// did not want SSL, otherwise let the error handling work
-		if len(cfg.SSL.Cert) > 0 || len(cfg.SSL.Key) > 1 {
+		if !cfg.SSL.NoConfig() {
 			err = cfg.SSL.LoadSSLConfig()
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
