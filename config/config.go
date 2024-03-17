@@ -37,6 +37,10 @@ type DBConfig struct {
 	Host     string `yaml:"host,omitempty" env:"DB_HOST" test:"~.+" default:"localhost"`
 	DBName   string `yaml:"dbname,omitempty" env:"DB_NAME" test:"~.+" default:"hula"`
 	Port     int    `yaml:"port,omitempty" env:"DB_PORT" test:"<65536,>0" default:"9000"`
+	// how many times to retry a connection to the DB on startup
+	Retries int `yaml:"retries,omitempty" test:">=0" default:"5"`
+	// the amount of seconds to wait between retries
+	DelayRetry int64 `yaml:"delay_retry,omitempty" test:">=0" default:"5"`
 }
 
 type CookieOpts struct {
@@ -675,7 +679,7 @@ func LoadConfig(filename string) (*Config, error) {
 		hulacore:     true,
 	}
 	cfg.byListener[cfg.listenOn].CORS = cfg.CORS
-	if cfg.SSL != nil {
+	if cfg.SSL != nil && !cfg.SSL.NoConfig() {
 		cfg.byListener[cfg.listenOn].SSL = append(cfg.byListener[cfg.listenOn].SSL, cfg.SSL)
 	}
 	cfg.byListener[cfg.listenOn].serverByHost["hula"] = cfg.byListener[cfg.listenOn].servers[0]

@@ -81,7 +81,11 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 
 	// add all certs
 	for _, cert := range l.SSL {
-		config.Certificates = append(config.Certificates, *cert.GetTLSCert())
+		if cert != nil && !cert.NoConfig() {
+			config.Certificates = append(config.Certificates, *cert.GetTLSCert())
+		} else {
+			log.Errorf("nil or bad certificate for listener %s", l.GetListenOn())
+		}
 	}
 
 	log.Debugf("Starting TLS server on port %s - has %d certificates", l.GetListenOn(), len(config.Certificates))

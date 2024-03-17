@@ -45,7 +45,7 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 	// fmt.Printf("Connecting to %s\n", dsn)
 	//	var dsn = "clickhouse://default:@127.0.0.1:9000/db?dial_timeout=200ms&max_execution_time=60"
 
-	log.Debugf("connecting with clickhouse-go library... (db %s user %s)\n", dbname, hulationconf.DBConfig.Username)
+	log.Debugf("connecting with clickhouse-go library... (db '%s' user '%s')", dbname, hulationconf.DBConfig.Username)
 
 	opts := &chapi.Options{
 		Addr: []string{fmt.Sprintf("%s:%d", hulationconf.DBConfig.Host, hulationconf.DBConfig.Port)},
@@ -71,25 +71,38 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 		}
 	}
 
-	conn = chapi.OpenDB(opts)
+	tries := 0
+	var err2 error
+	for tries < hulationconf.DBConfig.Retries {
+		err2 = nil
+		conn = chapi.OpenDB(opts)
 
-	conn.SetMaxIdleConns(5)
-	conn.SetMaxOpenConns(10)
-	conn.SetConnMaxLifetime(time.Hour)
-	ctx = chapi.Context(context.Background(), chapi.WithSettings(chapi.Settings{
-		"max_block_size": 10,
-	}), chapi.WithProgress(func(p *chapi.Progress) {
-		log.Debugf("progress: %+v\n", p)
-	}))
-	if err = conn.PingContext(ctx); err != nil {
-		if exception, ok := err.(*chapi.Exception); ok {
-			//fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-			err = fmt.Errorf("catch exception [%d] %s --> %s", exception.Code, exception.Message, exception.StackTrace)
+		conn.SetMaxIdleConns(5)
+		conn.SetMaxOpenConns(10)
+		conn.SetConnMaxLifetime(time.Hour)
+		ctx = chapi.Context(context.Background(), chapi.WithSettings(chapi.Settings{
+			"max_block_size": 10,
+		}), chapi.WithProgress(func(p *chapi.Progress) {
+			log.Debugf("progress: %+v\n", p)
+		}))
+		if err2 = conn.PingContext(ctx); err != nil {
+			if exception, ok := err.(*chapi.Exception); ok {
+				//fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+				err2 = fmt.Errorf("catch exception [%d] %s --> %s", exception.Code, exception.Message, exception.StackTrace)
+			} else {
+				log.Errorf("db error: %s\n", err.Error())
+			}
+			log.Errorf("DB Ping failed: %s", err2.Error())
 		} else {
-			log.Errorf("db error: %s\n", err.Error())
+			log.Infof("DB Ping OK (%s:%d)", hulationconf.DBConfig.Host, hulationconf.DBConfig.Port)
+			break
 		}
-	} else {
-		log.Infof("DB Ping OK")
+		tries++
+		log.Warnf("DB Ping failed. Retrying in %d second... (%d/%d)", hulationconf.DBConfig.DelayRetry, tries, hulationconf.DBConfig.Retries)
+		time.Sleep(time.Duration(hulationconf.DBConfig.DelayRetry) * time.Second)
+	}
+	if err2 != nil {
+		err = fmt.Errorf("error on connect: %s", err2.Error())
 	}
 	return
 }

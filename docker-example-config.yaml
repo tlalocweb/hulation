@@ -26,8 +26,7 @@ cors:
   unsafe_any_origin: true
   allow_credentials: true
 dbconfig:
-#  host: 172.18.0.2
-  host: localhost
+  host: hula-clickhouse
   port: 9000
   user: hula
   pass: hula 
