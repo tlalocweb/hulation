@@ -85,16 +85,18 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 		}), chapi.WithProgress(func(p *chapi.Progress) {
 			log.Debugf("progress: %+v\n", p)
 		}))
-		if err2 = conn.PingContext(ctx); err != nil {
+		if err2 = conn.PingContext(ctx); err2 != nil {
 			if exception, ok := err.(*chapi.Exception); ok {
 				//fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
 				err2 = fmt.Errorf("catch exception [%d] %s --> %s", exception.Code, exception.Message, exception.StackTrace)
 			} else {
-				log.Errorf("db error: %s\n", err.Error())
+				log.Errorf("db error: %s\n", err2.Error())
 			}
 			log.Errorf("DB Ping failed: %s", err2.Error())
 		} else {
 			log.Infof("DB Ping OK (%s:%d)", hulationconf.DBConfig.Host, hulationconf.DBConfig.Port)
+			err2 = nil
+			err = nil
 			break
 		}
 		tries++
