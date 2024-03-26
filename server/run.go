@@ -143,7 +143,8 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 		// 	corsconfig.AllowCredentials = *conf.CORS.AllowCredentials
 		// }
 
-		l.FiberApp.Use("/", cors.New(corsconfig))
+		l.FiberApp.Use(cors.New(corsconfig))
+		log.Debugf("CORS middleware enabled for listener %s", l.GetListenOn())
 	}
 
 	l.FiberApp.Use(func(c *fiber.Ctx) error {

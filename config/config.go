@@ -283,6 +283,7 @@ func (s *Server) GetCSPMap() map[string]string {
 				csp.computed_directives["default-src"] = csp.computed_directives["default-src"] + " " + hostcsp
 				csp.computed_directives["script-src"] = csp.computed_directives["script-src"] + " " + hostcsp
 				csp.computed_directives["frame-src"] = csp.computed_directives["frame-src"] + " " + hostcsp
+				csp.computed_directives["connect-src"] = csp.computed_directives["connect-src"] + " " + hostcsp
 			} else {
 				log.Warnf("CSP headers will for host %s will not include domain-specific directives because no domain is set or computed", s.Host)
 			}
@@ -508,15 +509,22 @@ type Admin struct {
 }
 
 type Config struct {
-	Admin         *Admin      `yaml:"admin,omitempty"`
-	Port          int         `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
-	DBConfig      *DBConfig   `yaml:"dbconfig,omitempty"`
-	Servers       []*Server   `yaml:"servers,omitempty"`
-	CORS          *CORSConfig `yaml:"cors,omitempty"`
-	SSL           *SSLConfig  `yaml:"ssl,omitempty"`
-	Proxies       []*Proxy    `yaml:"proxies,omitempty"`
-	JWTKey        string      `yaml:"jwt_key,omitempty"`
-	JWTExpiration string      `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
+	Admin *Admin `yaml:"admin,omitempty"`
+	Port  int    `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
+	// If true, then hula will publish the port it is running on in the hula.js script
+	// in the CORS and CSP headers. Normally a port is not included in these
+	// since externally it is using 80 or 443 for http or https respectively
+	PublishPort bool `yaml:"publish_port,omitempty"`
+	// If set, and if publish_port is true, then hula will use this port in the hula.js script
+	// in the CORS and CSP headers.
+	ExternalPublishPort int        `yaml:"external_publish_port,omitempty"`
+	DBConfig            *DBConfig  `yaml:"dbconfig,omitempty"`
+	Servers             []*Server  `yaml:"servers,omitempty"`
+	CORS                CORSConfig `yaml:"cors,omitempty"`
+	SSL                 *SSLConfig `yaml:"ssl,omitempty"`
+	Proxies             []*Proxy   `yaml:"proxies,omitempty"`
+	JWTKey              string     `yaml:"jwt_key,omitempty"`
+	JWTExpiration       string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
 	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
@@ -678,9 +686,12 @@ func LoadConfig(filename string) (*Config, error) {
 		serverByHost: make(map[string]*Server),
 		hulacore:     true,
 	}
-	cfg.byListener[cfg.listenOn].CORS = cfg.CORS
+	cfg.byListener[cfg.listenOn].CORS = &cfg.CORS
 	if cfg.SSL != nil && !cfg.SSL.NoConfig() {
 		cfg.byListener[cfg.listenOn].SSL = append(cfg.byListener[cfg.listenOn].SSL, cfg.SSL)
+		hula_server.HttpScheme = "https"
+	} else {
+		hula_server.HttpScheme = "http"
 	}
 	cfg.byListener[cfg.listenOn].serverByHost["hula"] = cfg.byListener[cfg.listenOn].servers[0]
 
@@ -704,6 +715,17 @@ func LoadConfig(filename string) (*Config, error) {
 		hula_server.Domain = cfg.HulaDomain
 	}
 	log.Debugf("server[%s].domain (hula) = %s", hula_server.Host, hula_server.Domain)
+	var hula_portstring string
+	if cfg.PublishPort {
+		if cfg.Port != 443 && cfg.Port != 80 {
+			hula_portstring = fmt.Sprintf(":%d", cfg.Port)
+		}
+		if cfg.ExternalPublishPort > 0 {
+			hula_portstring = fmt.Sprintf(":%d", cfg.ExternalPublishPort)
+		}
+	}
+	hula_server.externalUrl = fmt.Sprintf("%s://%s%s", hula_server.HttpScheme, hula_server.Host, hula_portstring)
+	hula_server.externalHostPort = fmt.Sprintf("%s:%d", hula_server.Host, hula_server.Port)
 
 	for _, s := range cfg.Servers {
 		if s.Port < 1 {
@@ -736,7 +758,7 @@ func LoadConfig(filename string) (*Config, error) {
 		if listenerforserver.CORS != nil {
 			log.Warnf("CORS config for listener %s will be overwritten - muliple CORS config for same listeber FIXME", s.listenOn)
 		}
-		listenerforserver.CORS = cfg.CORS
+		listenerforserver.CORS = &cfg.CORS
 		if s.SSL != nil && !s.SSL.NoConfig() {
 			err = s.SSL.LoadSSLConfig()
 			if err != nil {
@@ -838,18 +860,17 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}
 
-	if cfg.CORS != nil {
-		if !cfg.CORS.NoAddInHula {
-			alloworigins := cfg.CORS.AllowOrigins
-			for _, s := range cfg.Servers {
-				if len(alloworigins) > 0 {
-					alloworigins += ", "
-				}
-				alloworigins += s.externalUrl
+	if !cfg.CORS.NoAddInHula {
+		alloworigins := cfg.CORS.AllowOrigins
+		for _, s := range cfg.Servers {
+			if len(alloworigins) > 0 {
+				alloworigins += ", "
 			}
-			cfg.CORS.AllowOrigins = alloworigins
-			log.Debugf("CORS.AllowOrigins = %s", alloworigins)
+			alloworigins += s.externalUrl
 		}
+		alloworigins += ", " + hula_server.externalUrl
+		cfg.CORS.AllowOrigins = alloworigins
+		log.Debugf("CORS.AllowOrigins = %s", alloworigins)
 	}
 
 	if cfg.SSL != nil {
