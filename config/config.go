@@ -333,10 +333,10 @@ type Server struct {
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
 	// UNIMPLEMENTED for now
-	PathPrefix      string      `yaml:"path_prefix,omitempty" env:"SERVER_PATH_PREFIX"`
-	APIPath         string      `yaml:"api_path,omitempty" env:"SERVER_API_PATH" test:"~\\/.+" default:"/api"`
-	TurnstileSecret string      `yaml:"turnstile_secret,omitempty" env:"TURNSTILE_SECRET"`
-	CookieOpts      *CookieOpts `yaml:"cookie_opts,omitempty"`
+	PathPrefix      string     `yaml:"path_prefix,omitempty" env:"SERVER_PATH_PREFIX"`
+	APIPath         string     `yaml:"api_path,omitempty" env:"SERVER_API_PATH" test:"~\\/.+" default:"/api"`
+	TurnstileSecret string     `yaml:"turnstile_secret,omitempty" env:"TURNSTILE_SECRET"`
+	CookieOpts      CookieOpts `yaml:"cookie_opts"`
 	// not common - will ignore port in Host header when validating - useful for local testing
 	IgnorePortInHeader bool `yaml:"ignore_port_in_host"`
 	// When dynamically creating the hula.js script - publish the port hula is running on

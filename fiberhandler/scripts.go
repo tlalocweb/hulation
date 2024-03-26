@@ -88,10 +88,11 @@ func FormsScriptFile(c *fiber.Ctx) (err error) {
 		return c.Status(500).SendString("error no script file template")
 	}
 
-	hostconf, _, _, err := GetHostConfig(c)
+	hostconf, _, httperr, err := GetHostConfig(c)
 	// httperr
 	if err != nil {
-		//		return c.Status(httperr).SendString(err.Error())
+		log.Errorf("error getting host config: %s", err.Error())
+		return c.Status(httperr).SendString(err.Error())
 	}
 
 	// bounce := c.Query("b")
@@ -102,9 +103,12 @@ func FormsScriptFile(c *fiber.Ctx) (err error) {
 	// 	return c.Status(404).SendString("404 Not Found - No bounce query param")
 	// }
 	var buf bytes.Buffer
-	err = formsJS.FRender(&buf, map[string]string{"apipath": hostconf.APIPath, "hostid": hostconf.ID,
+	err = formsJS.FRender(&buf, map[string]string{"apipath": hostconf.APIPath,
+		"hostid": hostconf.ID,
 		//"b": bounce,
-		"cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
+		"cookieprefix": hostconf.CookieOpts.CookiePrefix,
+		"hulahost":     hostconf.Host,
+		"hulaurl":      hostconf.GetExternalUrl()})
 	if err != nil {
 		return c.Status(500).SendString("error rendering forms script template: " + err.Error())
 	}

@@ -182,7 +182,7 @@ func GetOrSetVisitor(c *fiber.Ctx, hostconf *config.Server, baton *VisitorCookie
 	}
 	domain := hostconf.Domain
 	if len(hostconf.Domain) > 0 {
-		if hostconf.CookieOpts != nil && hostconf.CookieOpts.NoUseDomain {
+		if hostconf.CookieOpts.NoUseDomain {
 			domain = ""
 		}
 	}

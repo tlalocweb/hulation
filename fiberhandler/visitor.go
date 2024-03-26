@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/cbroglie/mustache"
@@ -212,7 +213,28 @@ func HelloIframe(c *fiber.Ctx) error {
 	SetCSP(c, hostconf)
 	id := c.Query("h")
 	if id != hostconf.ID {
-		return c.Status(400).SendString("host id mismmatch")
+		//		return c.Status(400).SendString("host id mismmatch")
+		// ok, fine - then check the check the 'u' query param
+		urlU := c.Query("u")
+		if len(urlU) < 1 {
+			return c.Status(400).SendString("host id mismmatch")
+		}
+		parsed, err := url.Parse(urlU)
+		log.Debugf("parsed host: <%s> vs hostconf: <%s>", parsed.Host, hostconf.Host)
+
+		if err != nil {
+			return c.Status(400).SendString("could not parse u param: " + err.Error())
+		}
+		hostconf = app.GetConfig().GetServerByAnyAlias(parsed.Host)
+		if hostconf == nil {
+			return c.Status(400).SendString("unknown host (2)")
+		}
+		if id != hostconf.ID {
+			return c.Status(400).SendString("host id mismmatch (2)")
+		}
+		// if parsed.Host != hostconf.Host {
+		// 	return c.Status(400).SendString("host id mismmatch (2)")
+		// }
 	}
 	precompileNewVisitorHooks.Verify(host, hostconf, "error precompiling new visitor hooks (helloiframe)")
 
@@ -471,7 +493,24 @@ func HelloNoScript(c *fiber.Ctx) error {
 
 	id := c.Query("h")
 	if id != hostconf.ID {
-		return c.Status(400).SendString("host id mismmatch")
+		//		return c.Status(400).SendString("host id mismmatch")
+		// ok, fine - then check the check the 'u' query param
+		urlU := c.Query("u")
+		if len(urlU) < 1 {
+			return c.Status(400).SendString("host id mismmatch")
+		}
+		parsed, err := url.Parse(urlU)
+		//		log.Debugf("parsed host: <%s> vs hostconf: <%s>", parsed.Host, hostconf.Host)
+		if err != nil {
+			return c.Status(400).SendString("could not parse u param: " + err.Error())
+		}
+		hostconf = app.GetConfig().GetServerByAnyAlias(parsed.Host)
+		if hostconf == nil {
+			return c.Status(400).SendString("unknown host (2)")
+		}
+		if id != hostconf.ID {
+			return c.Status(400).SendString("host id mismmatch (2)")
+		}
 	}
 
 	SetCSP(c, hostconf)

@@ -26,8 +26,12 @@ WORKDIR /src
 #WORKDIR /src/mkcert
 #RUN go build -ldflags "-X main.Version=$(git describe --tags)" && xx-verify mkcert
 FROM --platform=$BUILDPLATFORM alpine:3.19
-RUN mkdir -p /etc/hula /var/hula /hula
+RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts
 ADD hulation/docker-example-config.yaml /etc/hula/config.yaml
 COPY --from=build /src/hulation/hula /hula/hula
+COPY --from=build /src/hulation/scripts /hula/scripts
+# could place a copy in /var/hula/scripts in case someone wants to edit them, etc.
+# config would need to updated
+# COPY --from=build /src/hulation/hula/scripts /var/hula/scripts
 #COPY --from=build /src/mkcert/mkcert /usr/bin
 ENTRYPOINT [ "/hula/hula", "-config", "/etc/hula/config.yaml" ]
