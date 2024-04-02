@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tlalocweb/hulation/handler"
+	handler "github.com/tlalocweb/hulation/fiberhandler"
 )
 
 func (c *Client) LanderCreate(modelreq string) (ret *handler.LanderPostResp, err error) {

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tlalocweb/hulation/handler"
+	handler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/utils"
 )
 
