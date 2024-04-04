@@ -216,13 +216,16 @@ func createLanderInstance(l *Lander) (i *LanderInstance, err error) {
 	if err == nil { //|| err2 == nil {
 		// look through all servers and see if we are serving a static path which can match this
 		for _, s := range app.GetConfig().Servers {
-			log.Debugf("checking server %s: %s vs %s", s.Host, s.GetExternalUrl(), uredirect.Host)
+			if uredirect.Path == "/" {
+				uredirect.Path = "/" + s.RootIndex
+			}
+			log.Debugf("checking server %s: %s vs %s for path '%s'", s.Host, s.GetExternalUrl(), uredirect.Host, uredirect.Path)
 			check := s.GetExternalHostPort() == uredirect.Host
 			if l.IgnorePort {
 				check = s.Host == utils.GetJustHost(uredirect.Host)
 			}
 			if check {
-				log.Debugf("Lander %s redirect matches server %s", l.Name, s.Host)
+				log.Debugf("Lander %s redirect matches server %s - path %s", l.Name, s.Host, uredirect.Path)
 				if len(s.Root) > 0 {
 					// check if a file exists
 					fp = path.Join(s.Root, path.Base(uredirect.Path))
@@ -367,6 +370,7 @@ func PreloadDefinedLanders(db *gorm.DB) (err error) {
 				l.Server = server.Host
 				l.UrlPostfix = lander.UrlId
 				l.NoServe = lander.NoServe
+				l.IgnorePort = !lander.NoticePort
 				// is the lander.Redirect config setting a full URL or just a path?
 				u, err2 := url.Parse(lander.Redirect)
 				if err2 != nil {

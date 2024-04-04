@@ -223,6 +223,20 @@ func FileExists(path string) bool {
 	return err == nil
 }
 
+func FolderExists(path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !fi.IsDir() {
+		return false, fmt.Errorf("path %s is not a directory", path)
+	}
+	return true, nil
+}
+
 func GetJustHost(host string) string {
 	parts := strings.Split(host, ":")
 	return parts[0]

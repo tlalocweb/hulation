@@ -1,4 +1,4 @@
-package handler
+package fiberhandler
 
 import (
 	"bytes"
@@ -137,14 +137,23 @@ func FormSubmit(c *fiber.Ctx) (err error) {
 	}
 	// check the captcha
 	// ok - get the form model
-	formmodel, err := model.GetFormModelById(model.GetDB(), formid)
-	if err != nil {
-		return c.Status(500).SendString("error getting form model: " + err.Error())
-	}
+	formmodel := model.GetCachedFormModelByIdOrName(formid)
 	if formmodel == nil {
-		return c.Status(404).SendString("404 Not Found - No form model by id " + formid)
+		formmodel, err = model.GetFormModelById(model.GetDB(), formid)
+		if err != nil {
+			return c.Status(500).SendString("error getting form model: " + err.Error())
+		}
+		if formmodel == nil {
+			// try by name then
+			formmodel, err = model.GetFormModelByName(model.GetDB(), formid)
+			if err != nil {
+				return c.Status(500).SendString("error getting form model (by name): " + err.Error())
+			}
+			if formmodel == nil {
+				return c.Status(404).SendString("404 Not Found - No form model by name or id " + formid)
+			}
+		}
 	}
-
 	// See if the form requires captcha - if it does, determine the type and
 	// then validate the captcha
 	err = formmodel.ValidateCaptcha(hostconf.CaptchaSecret, formdata.Captcha)

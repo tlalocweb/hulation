@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IzumaNetworks/conftagz"
@@ -78,6 +79,27 @@ type DefinedLander struct {
 	UrlId       string `yaml:"url_id,omitempty" test:"~[^\\/]+"`
 	Redirect    string `yaml:"redirect,omitempty" test:"~.+"`
 	NoServe     bool   `yaml:"no_serve,omitempty"`
+	// often hula may be run on a port which defers from the external port used by visitor. I.e. running on 8080 but externally on 443
+	// in this case, NoticePort if true, will consider two different ports as different servers. If not set, hula will ignore the port
+	// during a lander redirect or direct page serve.
+	NoticePort bool `yaml:"notice_port,omitempty"`
+}
+
+type DefinedForm struct {
+	// the name of the Form
+	Name string `yaml:"name" test:"~.+"`
+	// an optional description of the form
+	Description string `yaml:"description"`
+	// A feedback template message. This will be sent in the reply
+	// to the caller when the form is successfully submitted
+	Feedback string `yaml:"feedback"`
+	// uses one of the supported captcha types
+	// See: TURNSTILE_CAPTCHA, GOOGLE_RECAPTCHA, GOOGLE_RECAPTCHA3
+	Captcha string `json:"captcha" yaml:"captcha"`
+	// the schema of the form
+	// jsonschema of the fields required in this FormModel
+	// see: https://github.com/santhosh-tekuri/jsonschema
+	Schema string `yaml:"schema,omitempty" test:"~.+"`
 }
 
 type StaticFolder struct {
@@ -352,13 +374,17 @@ type Server struct {
 	RootCompress  bool   `yaml:"root_compress,omitempty"`
 	RootByteRange bool   `yaml:"root_byte_range,omitempty"`
 	RootBrowse    bool   `yaml:"root_browse,omitempty"`
-	RootIndex     string `yaml:"root_index,omitempty"`
+	RootIndex     string `yaml:"root_index" default:"index.html"`
 	// uses string representation of time.Duration
 	RootCacheDuration string `yaml:"root_cache_duration,omitempty"` // test:"$(validtimeduration)"`
 	RootMaxAge        uint   `yaml:"root_max_age,omitempty" default:"3600"`
 
 	NonRootStaticFolders []*StaticFolder  `yaml:"static_folders,omitempty"`
 	Landers              []*DefinedLander `yaml:"landers,omitempty"`
+	Forms                []*DefinedForm   `yaml:"forms,omitempty"`
+	// default is {{confdir}}/{{host}}/forms
+	// where 'host' is the Host field of the server this config is about
+	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
 	Hooks            *VisitorHooks `yaml:"hooks,omitempty"`
 	externalUrl      string
@@ -510,7 +536,7 @@ type Admin struct {
 
 type Config struct {
 	Admin *Admin `yaml:"admin,omitempty"`
-	Port  int    `yaml:"port,omitempty" env:"APP_PORT" test:">1024,<65536" default:"8080"`
+	Port  int    `yaml:"port,omitempty" env:"APP_PORT" test:">0,<65536" default:"8080"`
 	// If true, then hula will publish the port it is running on in the hula.js script
 	// in the CORS and CSP headers. Normally a port is not included in these
 	// since externally it is using 80 or 443 for http or https respectively
@@ -624,8 +650,8 @@ func LoadConfig(filename string) (*Config, error) {
 		return &cfg, fmt.Errorf("read file: %s", err.Error())
 	}
 
-	path, _ := filepath.Abs(filename)
-	confDir = filepath.Dir(path)
+	fpath, _ := filepath.Abs(filename)
+	confDir = filepath.Dir(fpath)
 
 	err = yaml.UnmarshalStrict(buf, &cfg)
 	if err != nil {
@@ -728,6 +754,53 @@ func LoadConfig(filename string) (*Config, error) {
 	hula_server.externalHostPort = fmt.Sprintf("%s:%d", hula_server.Host, hula_server.Port)
 
 	for _, s := range cfg.Servers {
+		// look for server directories for config files
+		var formdir = filepath.Join(confDir, s.Host, "forms")
+		if len(s.FormSchemaFolder) > 0 {
+			formdir = s.FormSchemaFolder
+			formdir, err = SubstConfVars(formdir, map[string]string{"confdir": confDir, "host": s.Host})
+			if err != nil {
+				log.Errorf("error substituting vars in server[%s].form_schema_folder config var: %s", s.Host, err.Error())
+			}
+		}
+		// check if a folder exists...
+		yes, err := utils.FolderExists(formdir)
+		if yes {
+			log.Debugf("server[%s] forms folder: %s", s.Host, formdir)
+			// read forms and append them to s.Forms
+			files, err := os.ReadDir(formdir)
+			if err != nil {
+				log.Errorf("error reading forms folder for server %s: %s", s.Host, err.Error())
+			}
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				if strings.HasSuffix(f.Name(), ".yaml") {
+					var form DefinedForm
+					// decode yaml of file f.Name()
+
+					// Read the file
+					fullpath := path.Join(formdir, f.Name())
+					data, err := os.ReadFile(fullpath)
+					if err != nil {
+						log.Errorf("error reading %s: %v", fullpath, err)
+					}
+
+					// Unmarshal the YAML data into the form
+					err = yaml.Unmarshal(data, &form)
+					if err != nil {
+						log.Errorf("error (form file %s): %v", fullpath, err)
+					} else {
+						log.Debugf("Found form file %s - appending to forms for server %s", f.Name(), s.Host)
+						s.Forms = append(s.Forms, &form)
+					}
+				}
+			}
+		} else if err != nil {
+			log.Errorf("error checking for forms folder for server %s: %s", s.Host, err.Error())
+		}
+
 		if s.Port < 1 {
 			s.Port = cfg.Port
 		}

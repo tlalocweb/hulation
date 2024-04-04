@@ -1,4 +1,4 @@
-package handler
+package fiberhandler
 
 // utility functions for the handler package
 
@@ -20,6 +20,7 @@ import (
 // The only error returned currently is 404
 func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperror int, err error) {
 	exist := c.Locals("hostconf")
+	fiberhandler_debugf("GetHostConfig: hostconf exist: %v", exist)
 	if exist != nil {
 		hostconf = exist.(*config.Server)
 		exist2 := c.Locals("host")
@@ -29,6 +30,7 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 		}
 	}
 	host = c.Get("Host")
+	fiberhandler_debugf("GetHostConfig: host: %s", host)
 	hostonly := utils.GetHostOnly(host)
 	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
 	if hostconf != nil {
@@ -39,6 +41,7 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 		log.Errorf("Unknown host: %s", host)
 		httperror = 404
 		err = fmt.Errorf("unknown host: %s", host)
+		return
 	}
 	// cache for later use
 	c.Locals("hostconf", hostconf)

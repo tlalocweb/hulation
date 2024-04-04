@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 	"gorm.io/gorm"
@@ -43,18 +44,18 @@ const (
 type FormModel struct {
 	HModel
 	// the name of the form - used to help identify it but not required
-	Name string
+	Name string `json:"name" yaml:"name"`
 	// jsonschema of the fields required in this FormModel
 	// see: https://github.com/santhosh-tekuri/jsonschema
-	Schema string `json:"schema"`
+	Schema string `json:"schema" yaml:"schema"`
 	// an optional description of the form
-	Description string `json:"description"`
+	Description string `json:"description" yaml:"description"`
 	// A feedback template message. This will be sent in the reply
 	// to the caller when the form is successfully submitted
-	Feedback string `json:"feedback"`
+	Feedback string `json:"feedback" yaml:"feedback"`
 	// uses one of the supported captcha types
 	// See: TURNSTILE_CAPTCHA, GOOGLE_RECAPTCHA, GOOGLE_RECAPTCHA3
-	Captcha    string `json:"captcha"`
+	Captcha    string `json:"captcha" yaml:"captcha"`
 	needCommit bool
 	isDeleted  bool
 }
@@ -136,13 +137,20 @@ func (d *DeferredSubmission) Commit(db *gorm.DB) error {
 	return nil
 }
 
+// compiled schemas
 var formSchemaCache *utils.InMemCache
+
+// models by ID
 var formModelIDCache *utils.InMemCache
+
+// models by Name
+var formModelNameCache *utils.InMemCache
 
 func init() {
 	// stores precompiled jsonschema for forms
-	formSchemaCache = utils.NewInMemCache().WithExpiration(5 * time.Hour).Start()
+	formSchemaCache = utils.NewInMemCache().WithExpiration(72 * time.Hour).Start()
 	formModelIDCache = utils.NewInMemCache().WithExpiration(72 * time.Hour).Start()
+	formModelNameCache = utils.NewInMemCache().WithExpiration(72 * time.Hour).Start()
 }
 
 func CheckIsNameUsedFormModel(db *gorm.DB, name string) (ret bool, err error) {
@@ -263,6 +271,64 @@ func (f *FormModel) ValidateExistingModel(db *gorm.DB) (err error) {
 	return
 }
 
+// func (f *FormModel) Update(db *gorm.DB) (err error) {
+// 	err = db.Connection(func(tx *gorm.DB) (err error) {
+// 		err = tx.Exec("ALTER TABLE form_models UPDATE name = ?, description = ?, server = ?, url_postfix = ?, redirect = ? WHERE id = ?", f.Name, l.Description, l.Server, l.UrlPostfix, l.Redirect, l.ID).Error
+// 		return
+// 	})
+// 	if err != nil {
+// 		return
+// 	}
+// 	return
+// }
+
+// PrelaodDefinedLanders will preload the landers defined in the hula config file
+// into the database and the http handlers
+// It only throws an error if it can't create a lander at all - not if it has
+// an issue with the db
+func PreloadDefinedForms(db *gorm.DB) (err error) {
+	//lander *config.DefinedLander, server *config.Server
+	for _, server := range app.GetConfig().Servers {
+		for _, form := range server.Forms {
+			var m *FormModel
+			defname := getPredifinedNameFromName(form.Name, server.Host)
+			m, err = GetFormModelByName(db, defname)
+			if err != nil {
+				log.Errorf("PreloadDefinedForms: error getting form by name: %s", err.Error())
+			}
+			if m != nil {
+				// update (may or may not have changed)
+				m.Name = form.Name
+				m.Schema = form.Schema
+				m.Description = form.Description
+				m.Captcha = form.Captcha
+				m.Feedback = form.Feedback
+				err = m.Commit(db)
+				if err != nil {
+					log.Errorf("PreloadDefinedForms: error updating lander: %s", err.Error())
+					err = nil
+					return
+				}
+				log.Debugf("PreloadDefinedForms: updated form model: id: %s name: %s", defname, m.Name)
+				return
+			}
+
+			m, err = CreateNewFormModel(defname, form.Name, form.Description, form.Schema, form.Captcha, form.Feedback)
+			if err != nil {
+				log.Errorf("PreloadDefinedForms: error creating form model: %s", err.Error())
+				return
+			}
+			err = m.Commit(db)
+			if err != nil {
+				log.Errorf("PreloadDefinedForms: error committing form model: %s", err.Error())
+				return
+			}
+			log.Debugf("PreloadDefinedForms: created form model: id: %s name: %s", defname, m.Name)
+		}
+	}
+	return
+}
+
 type TurnstileResponse struct {
 	Success bool     `json:"success"`
 	Errors  []string `json:"error-codes"`
@@ -324,17 +390,59 @@ func (f *FormModel) Commit(db *gorm.DB) (err error) {
 	return
 }
 
-func GetFormModelById(db *gorm.DB, id string) (ret *FormModel, err error) {
-	ret = &FormModel{}
-	err = db.Model(ret).Where("id = ?", id).First(ret).Error
+func GetFormModelByName(db *gorm.DB, name string) (m *FormModel, err error) {
+	retraw, ok := formModelNameCache.Get(name)
+	if ok {
+		m = retraw.(*FormModel)
+		return
+	}
+	m = &FormModel{}
+	err = db.Model(m).Where("name = ?", name).First(m).Error
 	if err != nil {
-		formModelIDCache.Del(id)
+		// landerInstances.Del(id)
 		if err == gorm.ErrRecordNotFound {
+			log.Debugf("no form by name %s", name)
 			err = nil
+			m = nil
 			return
 		}
 	} else {
-		formModelIDCache.SetAlways(ret.Name, ret.ID)
+		formModelNameCache.SetAlways(m.Name, m)
+		formModelIDCache.SetAlways(m.ID, m)
+	}
+	return
+}
+
+func GetCachedFormModelByIdOrName(id string) (ret *FormModel) {
+	retraw, ok := formModelIDCache.Get(id)
+	if ok {
+		ret = retraw.(*FormModel)
+		return
+	}
+	retraw, ok = formModelNameCache.Get(id)
+	if ok {
+		ret = retraw.(*FormModel)
+		return
+	}
+	return
+}
+func GetFormModelById(db *gorm.DB, id string) (ret *FormModel, err error) {
+	retraw, ok := formModelIDCache.Get(id)
+	if ok {
+		ret = retraw.(*FormModel)
+		return
+	}
+	ret = &FormModel{}
+	err = db.Model(ret).Where("id = ?", id).First(ret).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			err = nil
+			ret = nil
+			return
+		}
+	} else {
+		formModelIDCache.SetAlways(ret.ID, ret)
+		formModelNameCache.SetAlways(ret.Name, ret)
 	}
 
 	return
@@ -362,7 +470,7 @@ func (m *FormModel) NewFormSubmissionWithEvent(visitor *Visitor, formdata string
 		model_debugf("Compiling schema for form model: %s", id)
 		sch, err = jsonschema.CompileString(fmt.Sprintf("form_model_%s.json", id), m.Schema)
 		if err != nil {
-			model_debugf("Error compiling schema: %v", err)
+			log.Errorf("Error compiling schema for form %s: %v", m.Name, err)
 			return
 		}
 		// store in cache

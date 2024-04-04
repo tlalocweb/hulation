@@ -268,6 +268,12 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		return 1
 	}
 
+	err = model.PreloadDefinedForms(model.GetDB())
+	if err != nil {
+		fmt.Printf("Error preloading forms: %s", err.Error())
+		return 1
+	}
+
 	waitForServers := &sync.WaitGroup{}
 	errchan := make(chan *listenerErr, 10)
 	runcnt := 0
