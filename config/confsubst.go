@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cbroglie/mustache"
+	"github.com/tlalocweb/hulation/log"
 )
 
 var globalConfVars map[string]string
@@ -51,4 +52,12 @@ func SubstConfVars(conf string, locals map[string]string) (ret string, err error
 	}
 
 	return
+}
+
+func SubstConfVarsLogErrorf(conf string, locals map[string]string, msg string) string {
+	ret, err := SubstConfVars(conf, locals)
+	if err != nil {
+		log.Errorf("Error substituting conf vars - %s: %v", msg, err)
+	}
+	return ret
 }

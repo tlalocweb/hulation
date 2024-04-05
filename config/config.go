@@ -658,6 +658,16 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
 
+	if cfg.DBConfig == nil {
+		log.Errorf("no db config found in config file. this is mandatory.")
+		return nil, fmt.Errorf("no db config found in config file")
+	}
+
+	cfg.DBConfig.DBName = SubstConfVarsLogErrorf(cfg.DBConfig.DBName, map[string]string{"confdir": confDir}, "dbconfig.dbname")
+	cfg.DBConfig.Username = SubstConfVarsLogErrorf(cfg.DBConfig.Username, map[string]string{"confdir": confDir}, "dbconfig.user")
+	cfg.DBConfig.Password = SubstConfVarsLogErrorf(cfg.DBConfig.Password, map[string]string{"confdir": confDir}, "dbconfig.pass")
+	cfg.DBConfig.Host = SubstConfVarsLogErrorf(cfg.DBConfig.Host, map[string]string{"confdir": confDir}, "dbconfig.host")
+
 	log.Debugf("config: db %+v", *cfg.DBConfig)
 
 	conftagz.RegisterTestFunc("validtimeduration", ValidTimeDuration)
@@ -677,12 +687,11 @@ func LoadConfig(filename string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error generating JWTKey: %s", err.Error())
 		}
+	} else {
+		cfg.JWTKey = SubstConfVarsLogErrorf(cfg.JWTKey, map[string]string{"confdir": confDir}, "jwt_key")
 	}
 
-	cfg.ScriptFolder, err = SubstConfVars(cfg.ScriptFolder, map[string]string{"confdir": confDir})
-	if err != nil {
-		log.Errorf("error substituting vars in script_folder config var: %s", err.Error())
-	}
+	cfg.ScriptFolder = SubstConfVarsLogErrorf(cfg.ScriptFolder, map[string]string{"confdir": confDir}, "script_folder")
 
 	// add in the hula API server to the 'listenOn" server list first
 	if len(cfg.ListenOn) < 1 {
@@ -704,7 +713,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	hula_server := &Server{
 		hulacore: true,
-		Host:     cfg.HulaHost,
+		Host:     SubstConfVarsLogErrorf(cfg.HulaHost, map[string]string{"confdir": confDir}, "hula_host"),
 	}
 	cfg.byListener[cfg.listenOn] = &Listener{
 		listenOn:     cfg.listenOn,
@@ -738,6 +747,7 @@ func LoadConfig(filename string) (*Config, error) {
 			hula_server.Domain = hula_server.Host
 		}
 	} else {
+		cfg.HulaDomain = SubstConfVarsLogErrorf(cfg.HulaDomain, map[string]string{"confdir": confDir}, "hula_domain")
 		hula_server.Domain = cfg.HulaDomain
 	}
 	log.Debugf("server[%s].domain (hula) = %s", hula_server.Host, hula_server.Domain)
@@ -754,6 +764,10 @@ func LoadConfig(filename string) (*Config, error) {
 	hula_server.externalHostPort = fmt.Sprintf("%s:%d", hula_server.Host, hula_server.Port)
 
 	for _, s := range cfg.Servers {
+		if len(s.Host) < 1 {
+			return nil, fmt.Errorf("server missing host")
+		}
+		s.Host = SubstConfVarsLogErrorf(s.Host, map[string]string{"confdir": confDir}, fmt.Sprintf("server.host[%s]", s.Host))
 		// look for server directories for config files
 		var formdir = filepath.Join(confDir, s.Host, "forms")
 		if len(s.FormSchemaFolder) > 0 {
@@ -863,7 +877,9 @@ func LoadConfig(filename string) (*Config, error) {
 		s.externalHostPort = fmt.Sprintf("%s:%d", s.Host, cfg.Port)
 		cfg.byServer[s.Host] = s
 		cfg.byAllAlias[s.Host] = s
-		for _, a := range s.Aliases {
+		for n, a := range s.Aliases {
+			a = SubstConfVarsLogErrorf(a, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].alias[%s]", s.Host, a))
+			s.Aliases[n] = a
 			_, ok := cfg.byServer[a]
 			if ok {
 				log.Errorf(`alias "%s" for server config %s already referenced`, a, s.Host)
@@ -894,15 +910,9 @@ func LoadConfig(filename string) (*Config, error) {
 				log.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
 			}
 		}
-		s.Root, err = SubstConfVars(s.Root, map[string]string{"confdir": confDir})
-		if err != nil {
-			log.Errorf("error substituting vars in server[%s].root config var: %s", s.Host, err.Error())
-		}
+		s.Root = SubstConfVarsLogErrorf(s.Root, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].root", s.Host))
 		for _, f := range s.NonRootStaticFolders {
-			f.Root, err = SubstConfVars(f.Root, map[string]string{"confdir": confDir})
-			if err != nil {
-				log.Errorf("error substituting vars in server[%s].static_folders[%s].root config var: %s", s.Host, f.URLPrefix, err.Error())
-			}
+			f.Root = SubstConfVarsLogErrorf(f.Root, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].static_folders[%s].root", s.Host, f.URLPrefix))
 		}
 		if s.Hooks == nil {
 			s.Hooks = &VisitorHooks{}

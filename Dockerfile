@@ -21,6 +21,7 @@ ARG hulaversion=notset
 ENV hulaversion=$hulaversion
 RUN xx-go --wrap
 RUN go build -ldflags "-X config.Version=$(hulaversion)" -o hula . && xx-verify hula
+#RUN go build -tags model_debug -ldflags "-X config.Version=$(hulaversion)" -o hula . && xx-verify hula
 WORKDIR /src
 #RUN git clone https://github.com/FiloSottile/mkcert.git
 #WORKDIR /src/mkcert
