@@ -136,6 +136,10 @@ func DumpVersion() {
 	fmt.Println("(unknown)")
 }
 
+func GetConfigPath() string {
+	return appConfigFile
+}
+
 func LoadConfig() (err error) {
 	appConfig, err = config.LoadConfig(appConfigFile)
 	return err

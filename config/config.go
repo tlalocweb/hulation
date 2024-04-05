@@ -31,6 +31,7 @@ const (
 // golang.org/issue/29814 and golang.org/issue/29228.
 // Link time: go build -ldflags "-X config.Version=$(git describe --tags)"
 var Version string
+var BuildDate string
 
 type DBConfig struct {
 	Username string `yaml:"user,omitempty" env:"DB_USERNAME" test:"~.+" default:"hula"`
@@ -361,7 +362,7 @@ type Server struct {
 	TurnstileSecret string     `yaml:"turnstile_secret,omitempty" env:"TURNSTILE_SECRET"`
 	CookieOpts      CookieOpts `yaml:"cookie_opts"`
 	// not common - will ignore port in Host header when validating - useful for local testing
-	IgnorePortInHeader bool `yaml:"ignore_port_in_host"`
+	//	IgnorePortInHeader bool `yaml:"ignore_port_in_host"`
 	// When dynamically creating the hula.js script - publish the port hula is running on
 	// (this would only be done if not running hulation behind a transparent proxy - not common)
 	PublishPort bool `yaml:"publish_port"`
@@ -394,6 +395,13 @@ type Server struct {
 	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
 	// actual server port/router to put the APIs on
 	hulacore bool
+	// if this is true, the utils.GetHostConfig and similar lookups for this server based on the host header, will look both at the DNS name _and_
+	// the port number. By default, the port number is ignored in the lookup
+	respectPortInLookup bool
+}
+
+func (s *Server) RespectPortInLookup() bool {
+	return s.respectPortInLookup
 }
 
 func (s *Server) GetExternalUrl() string {

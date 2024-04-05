@@ -34,7 +34,7 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 	hostonly := utils.GetHostOnly(host)
 	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
 	if hostconf != nil {
-		if hostconf.IgnorePortInHeader {
+		if !hostconf.RespectPortInLookup() {
 			host = hostonly
 		}
 	} else {
@@ -63,7 +63,7 @@ func AreWeServingThePage(c *fiber.Ctx, hostconf *config.Server) bool {
 		log.Errorf("error parsing host: %s", err.Error())
 		return false
 	}
-	if hostconf.IgnorePortInHeader {
+	if !hostconf.RespectPortInLookup() {
 		if rUrl.Hostname() != utils.GetHostOnly(rHost) {
 			return false
 		}

@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/server"
@@ -16,7 +18,8 @@ import (
 func main() {
 	app.ParseFlags()
 
-	fmt.Printf("Starting Hulation\n")
+	fmt.Printf("Starting Hulation (%s) config: %s\n", config.Version, path.Clean(app.GetConfigPath()))
+	fmt.Printf("  Build date: %s\n", config.BuildDate)
 	// should print if debug is enabled
 	log.Debugf("Debug enabled")
 	log.Tracef("Trace enabled")
