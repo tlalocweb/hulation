@@ -219,33 +219,53 @@ func createLanderInstance(l *Lander) (i *LanderInstance, err error) {
 			if uredirect.Path == "/" {
 				uredirect.Path = "/" + s.RootIndex
 			}
-			log.Debugf("checking server %s: %s vs %s for path '%s'", s.Host, s.GetExternalUrl(), uredirect.Host, uredirect.Path)
+			log.Debugf("checking server %s: '%s' vs '%s' for path '%s'", s.Host, s.GetExternalUrl(), uredirect.Host, uredirect.Path)
 			check := s.GetExternalHostPort() == uredirect.Host
 			if l.IgnorePort {
+				log.Debugf("ignoring port in redirect target")
 				check = s.Host == utils.GetJustHost(uredirect.Host)
 			}
 			if check {
 				log.Debugf("Lander %s redirect matches server %s - path %s", l.Name, s.Host, uredirect.Path)
 				if len(s.Root) > 0 {
 					// check if a file exists
-					fp = path.Join(s.Root, path.Base(uredirect.Path))
+					fp = path.Join(s.Root, path.Dir(uredirect.Path), path.Base(uredirect.Path))
 					if utils.FileExists(fp) {
 						i.staticPath = uredirect.Path
 						i.fsRoot = s.Root
 						break
-					}
-				}
-				for _, f := range s.NonRootStaticFolders {
-					if len(f.Root) > 0 {
-						fp = path.Join(f.Root, path.Base(uredirect.Path))
+					} else {
+						// ok check w/ RootIndex then
+						uredirect.Path = path.Join(uredirect.Path, s.RootIndex)
+						fp = path.Join(s.Root, path.Dir(uredirect.Path), path.Base(uredirect.Path))
 						if utils.FileExists(fp) {
 							i.staticPath = uredirect.Path
-							i.fsRoot = f.Root
+							i.fsRoot = s.Root
 							break
 						}
 					}
 				}
+				for _, f := range s.NonRootStaticFolders {
+					if len(f.Root) > 0 {
+						fp = path.Join(f.Root, path.Dir(uredirect.Path), path.Base(uredirect.Path))
+						if utils.FileExists(fp) {
+							i.staticPath = uredirect.Path
+							i.fsRoot = f.Root
+							break
+						} else {
+							uredirect.Path = path.Join(uredirect.Path, s.RootIndex)
+							fp = path.Join(f.Root, path.Dir(uredirect.Path), path.Base(uredirect.Path))
+							if utils.FileExists(fp) {
+								i.staticPath = uredirect.Path
+								i.fsRoot = f.Root
+								break
+							}
+						}
+					}
+				}
 				log.Errorf("Lander %s redirect matches server %s but file %s does not exist", l.Name, s.Host, fp)
+			} else {
+				log.Debugf("Lander %s redirect does not match server '%s' vs '%s'", l.Name, s.Host, utils.GetJustHost(uredirect.Host))
 			}
 		}
 	} else {
@@ -356,6 +376,7 @@ func getPredifinedNameFromName(name string, host string) string {
 func PreloadDefinedLanders(db *gorm.DB) (err error) {
 	//lander *config.DefinedLander, server *config.Server
 	for _, server := range app.GetConfig().Servers {
+	inner_loop_landers:
 		for _, lander := range server.Landers {
 			defname := getPredifinedNameFromName(lander.Name, server.Host)
 			var l *Lander
@@ -384,38 +405,36 @@ func PreloadDefinedLanders(db *gorm.DB) (err error) {
 							l.Redirect = lander.Redirect
 						} else {
 							err = fmt.Errorf("PreloadDefinedLanders: lander %s (%s) for server %s must be a full URL or an absolute path", lander.Name, defname, server.Host)
-							return
+							continue inner_loop_landers
 						}
 					}
 				}
 				log.Debugf("PreloadDefinedLanders: updating lander %s for host %s", l.Name, server.Host)
-				i, err = l.Update(db)
+				_, err = l.Update(db)
 				if err != nil {
 					log.Errorf("PreloadDefinedLanders: error updating lander: %s", err.Error())
 					err = nil
-					return
 				}
-				return
-			}
+			} else {
+				l = NewLander()
+				l.Name = defname
+				l.Server = server.Host
+				l.UrlPostfix = lander.UrlId
+				l.IgnorePort = !lander.NoticePort
+				l.Redirect = fmt.Sprintf("%s%s", server.GetExternalUrl(), lander.Redirect)
+				l.NoServe = lander.NoServe
+				// l := &Lander{
+				// 	Name:       lander.Name,
+				// 	Server:     server.Host,
+				// 	UrlPostfix: lander.UrlPostfix,
+				// 	Redirect:   lander.Redirect,
+				// }
+				log.Debugf("PreloadDefinedLanders: creating lander %s (%s) for host %s", l.Name, defname, server.Host)
+				_, err = l.Commit(lander.UrlId, db)
 
-			l = NewLander()
-			l.Name = defname
-			l.Server = server.Host
-			l.UrlPostfix = lander.UrlId
-			l.Redirect = fmt.Sprintf("%s%s", server.GetExternalUrl(), lander.Redirect)
-			l.NoServe = lander.NoServe
-			// l := &Lander{
-			// 	Name:       lander.Name,
-			// 	Server:     server.Host,
-			// 	UrlPostfix: lander.UrlPostfix,
-			// 	Redirect:   lander.Redirect,
-			// }
-			log.Debugf("PreloadDefinedLanders: creating lander %s (%s) for host %s", l.Name, defname, server.Host)
-			_, err = l.Commit(lander.UrlId, db)
-
-			if err != nil {
-				log.Errorf("PreloadDefinedLanders: error committing lander instance: %s", err.Error())
-				return
+				if err != nil {
+					log.Errorf("PreloadDefinedLanders: error committing lander instance: %s", err.Error())
+				}
 			}
 		}
 	}

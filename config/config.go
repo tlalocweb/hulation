@@ -82,7 +82,7 @@ type DefinedLander struct {
 	// often hula may be run on a port which defers from the external port used by visitor. I.e. running on 8080 but externally on 443
 	// in this case, NoticePort if true, will consider two different ports as different servers. If not set, hula will ignore the port
 	// during a lander redirect or direct page serve.
-	NoticePort bool `yaml:"notice_port,omitempty"`
+	NoticePort bool `yaml:"notice_port"`
 }
 
 type DefinedForm struct {
