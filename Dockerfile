@@ -23,7 +23,7 @@ ARG hulabuilddate=notset
 ENV hulabuilddate=${hulabuilddate}
 RUN xx-go --wrap
 RUN go build -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaversion} -X github.com/tlalocweb/hulation/config.BuildDate=${hulabuilddate}" -o hula . && xx-verify hula
-#RUN go build -tags model_debug -ldflags "-X config.Version=$(hulaversion)" -o hula . && xx-verify hula
+#RUN go build -tags fiberhandlerdebug   -tags model_debug -ldflags "-X config.Version=$(hulaversion)" -o hula . && xx-verify hula
 WORKDIR /src
 #RUN git clone https://github.com/FiloSottile/mkcert.git
 #WORKDIR /src/mkcert

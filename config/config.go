@@ -719,9 +719,10 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		cfg.listenOn = fmt.Sprintf("%s:%d", cfg.ListenOn, cfg.Port)
 	}
+	cfg.HulaHost = SubstConfVarsLogErrorf(cfg.HulaHost, map[string]string{"confdir": confDir}, "hula_host")
 	hula_server := &Server{
 		hulacore: true,
-		Host:     SubstConfVarsLogErrorf(cfg.HulaHost, map[string]string{"confdir": confDir}, "hula_host"),
+		Host:     cfg.HulaHost,
 	}
 	cfg.byListener[cfg.listenOn] = &Listener{
 		listenOn:     cfg.listenOn,
