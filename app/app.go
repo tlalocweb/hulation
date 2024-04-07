@@ -140,6 +140,14 @@ func GetConfigPath() string {
 	return appConfigFile
 }
 
+func GetHulaOriginHost() string {
+	return appConfig.HulaHost
+}
+
+func GetHulaOriginBaseUrl() string {
+	return appConfig.GetHulaServer().GetExternalUrl()
+}
+
 func LoadConfig() (err error) {
 	appConfig, err = config.LoadConfig(appConfigFile)
 	return err

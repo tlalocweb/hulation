@@ -87,12 +87,12 @@
         return Math.random().toString(20).substring(2, 12)
     }
 
-    const findOriginRE = /^https?\:\/\/[^:]+(?:\:[0-9]+)?/gmi;
+    const findOriginRE = /^https?\:\/\/[^:\/]+(?:\:[0-9]+)?/gmi;
     var iframeorigin = ""
     // template engine could fill in or not
     const hulaorigin = "{{hulaorigin}}"
 
-    if (hulaorigin == "{{hulaorigin}}" || hulaorigin == "") {
+    if (hulaorigin == "") {
         // if we did not get the script from the hula server via template, we need to find the origin
         // by looking at the src attribute of the hula iframe
 
@@ -107,7 +107,7 @@
     } else {
         iframeorigin = hulaorigin
     }
-
+    console.log("hulaorigin: " + iframeorigin)
     // another optional template variable
     const hulaframeid_def = "{{hulaframeid}}"
     var hulaframeid = ""

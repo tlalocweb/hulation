@@ -2,6 +2,7 @@
     var topwindow = window;
     var rootwindow = window;
     if (window.location != window.parent.location) {
+        console.log("hello.js: in iframe")
         rootwindow = window.parent;
     }
     console.log('Hello from hello.js: {{b}},  {{apipath}}');

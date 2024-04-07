@@ -108,6 +108,7 @@ func FormsScriptFile(c *fiber.Ctx) (err error) {
 		//"b": bounce,
 		"cookieprefix": hostconf.CookieOpts.CookiePrefix,
 		"hulahost":     hostconf.Host,
+		"hulaorigin":   app.GetHulaOriginBaseUrl(),
 		"hulaurl":      hostconf.GetExternalUrl()})
 	if err != nil {
 		return c.Status(500).SendString("error rendering forms script template: " + err.Error())

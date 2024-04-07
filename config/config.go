@@ -412,6 +412,10 @@ func (s *Server) GetExternalHostPort() string {
 	return s.externalHostPort
 }
 
+func (cfg *Config) GetHulaServer() (s *Server) {
+	return cfg.hulaServer
+}
+
 // A Listener is a the entity that listens for incoming requests and processes them
 // We don't configure Listeners - they are configured the config manager here, based on the
 // Server configs. There is only one Listener per port. THat Listener will work for one or more servers.
@@ -600,6 +604,8 @@ type Config struct {
 	VisitorPrefix string `yaml:"visitor_prefix,omitempty" test:"~\\/.+" default:"/v"`
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
 	listenOn string
+	// Server struct for Hula server itself
+	hulaServer *Server
 }
 
 type Proxy struct {
@@ -771,7 +777,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	hula_server.externalUrl = fmt.Sprintf("%s://%s%s", hula_server.HttpScheme, hula_server.Host, hula_portstring)
 	hula_server.externalHostPort = fmt.Sprintf("%s:%d", hula_server.Host, hula_server.Port)
-
+	cfg.hulaServer = hula_server
 	for _, s := range cfg.Servers {
 		if len(s.Host) < 1 {
 			return nil, fmt.Errorf("server missing host")
