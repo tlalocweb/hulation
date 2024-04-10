@@ -555,14 +555,18 @@ type Config struct {
 	PublishPort bool `yaml:"publish_port,omitempty"`
 	// If set, and if publish_port is true, then hula will use this port in the hula.js script
 	// in the CORS and CSP headers.
-	ExternalPublishPort int        `yaml:"external_publish_port,omitempty"`
-	DBConfig            *DBConfig  `yaml:"dbconfig,omitempty"`
-	Servers             []*Server  `yaml:"servers,omitempty"`
-	CORS                CORSConfig `yaml:"cors,omitempty"`
-	SSL                 *SSLConfig `yaml:"ssl,omitempty"`
-	Proxies             []*Proxy   `yaml:"proxies,omitempty"`
-	JWTKey              string     `yaml:"jwt_key,omitempty"`
-	JWTExpiration       string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
+	ExternalPublishPort int `yaml:"external_publish_port,omitempty"`
+	// You would set this to 'https' if you are running Hula behind a reserve proxy
+	// where behind the proxy it is not using https, but the reverse proxy is handling https
+	// in this case all external URLs Hula publishes for hula services / APIs should be https
+	ExternalScheme string     `yaml:"external_http_scheme,omitempty" env:"HULA_EXTERNAL_HTTP_SCHEME"`
+	DBConfig       *DBConfig  `yaml:"dbconfig,omitempty"`
+	Servers        []*Server  `yaml:"servers,omitempty"`
+	CORS           CORSConfig `yaml:"cors,omitempty"`
+	SSL            *SSLConfig `yaml:"ssl,omitempty"`
+	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
+	JWTKey         string     `yaml:"jwt_key,omitempty"`
+	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
 	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
@@ -775,7 +779,11 @@ func LoadConfig(filename string) (*Config, error) {
 			hula_portstring = fmt.Sprintf(":%d", cfg.ExternalPublishPort)
 		}
 	}
-	hula_server.externalUrl = fmt.Sprintf("%s://%s%s", hula_server.HttpScheme, hula_server.Host, hula_portstring)
+	scheme := hula_server.HttpScheme
+	if len(cfg.ExternalScheme) > 0 {
+		scheme = cfg.ExternalScheme
+	}
+	hula_server.externalUrl = fmt.Sprintf("%s://%s%s", scheme, hula_server.Host, hula_portstring)
 	hula_server.externalHostPort = fmt.Sprintf("%s:%d", hula_server.Host, hula_server.Port)
 	cfg.hulaServer = hula_server
 	for _, s := range cfg.Servers {

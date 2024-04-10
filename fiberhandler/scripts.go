@@ -54,7 +54,7 @@ func HelloScriptFile(c *fiber.Ctx) (err error) {
 	}
 	var buf bytes.Buffer
 	err = helloJS.FRender(&buf, map[string]string{"apipath": hostconf.APIPath, "hostid": hostconf.ID,
-		"b": bounce, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
+		"b": bounce, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl(), "hulaapiurl": app.GetHulaOriginBaseUrl()})
 	if err != nil {
 		return c.Status(500).SendString("error rendering hello script template: " + err.Error())
 	}
@@ -108,8 +108,9 @@ func FormsScriptFile(c *fiber.Ctx) (err error) {
 		//"b": bounce,
 		"cookieprefix": hostconf.CookieOpts.CookiePrefix,
 		"hulahost":     hostconf.Host,
-		"hulaorigin":   app.GetHulaOriginBaseUrl(),
-		"hulaurl":      hostconf.GetExternalUrl()})
+		// FIXME - this is not working how we want. for now the JS code just determined hula's URL by looking at the iframe src attr
+		//		"hulaorigin":   app.GetHulaOriginBaseUrl(),
+		"hulaurl": hostconf.GetExternalUrl()})
 	if err != nil {
 		return c.Status(500).SendString("error rendering forms script template: " + err.Error())
 	}

@@ -118,34 +118,54 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	})
 
 	var corsconfig cors.Config
-	if l.CORS != nil {
-		if l.CORS.UnsafeAnyOrigin {
-			log.Warnf("CORS UnsafeAnyOrigin is enabled")
-			corsconfig.AllowOriginsFunc = func(origin string) bool {
-				log.Warnf("Saw origin: %s", origin)
-				return true
-			}
-		} else if len(l.CORS.AllowOrigins) > 0 {
-			log.Debugf("CORS AllowOrigins: %s", l.CORS.AllowOrigins)
-			corsconfig.AllowOrigins = l.CORS.AllowOrigins
-		}
-		if len(l.CORS.AllowMethods) > 0 {
-			corsconfig.AllowMethods = l.CORS.AllowMethods
-		}
-		if len(l.CORS.AllowHeaders) > 0 {
-			corsconfig.AllowHeaders = l.CORS.AllowHeaders
-		}
-		if l.CORS.AllowCredentials {
-			log.Debugf("CORS AllowCredentials: %t", l.CORS.AllowCredentials)
-			corsconfig.AllowCredentials = true
-		}
-		// if conf.CORS.AllowCredentials != nil {
-		// 	corsconfig.AllowCredentials = *conf.CORS.AllowCredentials
-		// }
-
-		l.FiberApp.Use(cors.New(corsconfig))
-		log.Debugf("CORS middleware enabled for listener %s", l.GetListenOn())
+	// if there is no CORS settings, then we need the default to allow
+	// access to the hula server from each webserver - so that visitors tracking, etc. will work
+	if l.CORS == nil {
+		l.CORS = &config.CORSConfig{}
+		l.CORS.AllowCredentials = true
 	}
+	// if l.CORS != nil {
+	if l.CORS.UnsafeAnyOrigin {
+		log.Warnf("CORS UnsafeAnyOrigin is enabled")
+		corsconfig.AllowOriginsFunc = func(origin string) bool {
+			log.Warnf("Saw origin: %s", origin)
+			return true
+		}
+	} else if len(l.CORS.AllowOrigins) > 0 {
+		corsconfig.AllowOrigins = l.CORS.AllowOrigins
+		if !l.CORS.NoAddInHula {
+			corsconfig.AllowOrigins = fmt.Sprintf("%s,%s", corsconfig.AllowOrigins, app.GetHulaOriginBaseUrl())
+		}
+
+	} else {
+		if !l.CORS.NoAddInHula {
+			alloworigin := app.GetHulaOriginBaseUrl()
+			log.Debugf("CORS AllowOrigins using default (hula only): %s", alloworigin)
+			corsconfig.AllowOrigins = alloworigin
+		}
+	}
+	if len(l.CORS.AllowMethods) > 0 {
+		corsconfig.AllowMethods = l.CORS.AllowMethods
+	} else {
+		corsconfig.AllowMethods = "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS"
+	}
+	if len(l.CORS.AllowHeaders) > 0 {
+		corsconfig.AllowHeaders = l.CORS.AllowHeaders
+	}
+	if !l.CORS.NoAddInHula || l.CORS.AllowCredentials {
+		corsconfig.AllowCredentials = true
+
+	}
+	// if conf.CORS.AllowCredentials != nil {
+	// 	corsconfig.AllowCredentials = *conf.CORS.AllowCredentials
+	// }
+	log.Debugf("CORS AllowOrigins: %s", corsconfig.AllowOrigins)
+	log.Debugf("CORS AllowCredentials: %t", corsconfig.AllowCredentials)
+	log.Debugf("CORS AllowMethods: %s", corsconfig.AllowMethods)
+
+	l.FiberApp.Use(cors.New(corsconfig))
+	log.Debugf("CORS middleware enabled for listener %s", l.GetListenOn())
+	// }
 
 	l.FiberApp.Use(func(c *fiber.Ctx) error {
 		hostconf, _, _, _ := handler.GetHostConfig(c)
