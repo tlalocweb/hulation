@@ -335,7 +335,9 @@ type TurnstileResponse struct {
 }
 
 func (f *FormModel) ValidateCaptcha(captchasecret string, captchadat string) (err error) {
-
+	if len(captchasecret) < 1 || len(captchadat) < 1 {
+		log.Warnf("ValidateCaptcha: missing secret or data: %s %s", captchasecret, captchadat)
+	}
 	switch f.Captcha {
 	case TURNSTILE_CAPTCHA:
 		// check if the visitor has a valid token
@@ -345,26 +347,31 @@ func (f *FormModel) ValidateCaptcha(captchasecret string, captchadat string) (er
 		var resp *http.Response
 		req, err = http.NewRequest("POST", url, bytes.NewBuffer([]byte(body)))
 		if err != nil {
+			log.Errorf("error validating captcha (turnstile) response (req): %v", err)
 			return fmt.Errorf("error validating captcha response (req): %v", err)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		client := &http.Client{Timeout: time.Second * 10}
-		log.Debugf("Validating captcha response: POST to %s body %s", url, body)
+		log.Debugf("Validating captcha response (turnstile): POST to %s body %s", url, body)
 		resp, err = client.Do(req)
 		if err != nil {
+			log.Errorf("error validating captcha (turnstile) response (resp): %v", err)
 			return fmt.Errorf("error validating captcha response (resp): %v", err)
 		}
 		defer resp.Body.Close()
 		respbody, err := io.ReadAll(resp.Body)
 		if err != nil {
+			log.Errorf("error validating captcha (turnstile) response (body): %v", err)
 			return fmt.Errorf("error validating captcha response (body): %v", err)
 		}
 		if resp.StatusCode != 200 {
+			log.Errorf("error validating captcha response: %d  Response body: %s", resp.StatusCode, string(respbody))
 			return fmt.Errorf("error validating captcha response: %d  Response body: %s", resp.StatusCode, string(respbody))
 		}
 		var authresp TurnstileResponse
 		err = json.Unmarshal(respbody, &authresp)
 		if err != nil {
+			log.Errorf("error unmarshalling captcha (turnstile) response: %v", err)
 			return fmt.Errorf("error unmarshalling captcha response: %v", err)
 		}
 		if !authresp.Success {

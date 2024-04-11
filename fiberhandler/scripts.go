@@ -2,10 +2,12 @@ package fiberhandler
 
 import (
 	"bytes"
+	"net/url"
 
 	"github.com/cbroglie/mustache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
 )
@@ -15,6 +17,7 @@ var helloJS *mustache.Template
 var formsJS *mustache.Template
 
 func HelloScriptFile(c *fiber.Ctx) (err error) {
+	fiberhandler_debugf("handler: HelloScriptFile")
 	//host := c.Get("Host")
 	c.Set(fiber.HeaderCacheControl, "no-cache, must-revalidate")
 
@@ -39,10 +42,32 @@ func HelloScriptFile(c *fiber.Ctx) (err error) {
 		return c.Status(500).SendString("error no script file template")
 	}
 
-	hostconf, _, httperr, err := GetHostConfig(c)
+	var hostconf *config.Server
+	var httperr int
+
+	// We want hostconf do be the host we are servicing, not the Hula API host
+	// If the 'o' (for origin) param is set then this is the hostname
+	// otherwise if 'u' is set, then we should use it's hostname to get hostconf
+	thisurl := c.Query("u")
+	if len(thisurl) > 0 {
+		thisurl, err = url.PathUnescape(thisurl)
+		if err != nil {
+			log.Errorf("error unescaping URL (script hello): %s", err.Error())
+		}
+		log.Debugf("saw url (script hello): %s", thisurl)
+		hostconf, _, httperr, err = GetHostConfigFromUrl(thisurl)
+	} else {
+		hostconf, _, httperr, err = GetHostConfig(c)
+	}
+	// oparam := c.Query("o")
+	// if len(oparam) < 1 {
+	// }
+	// GetHostConfig will look at 'o' and then usehost before using the 'Host' header
 
 	if err != nil {
 		return c.Status(httperr).SendString(err.Error())
+	} else {
+		log.Debugf("hostconf (hello script): %s", hostconf.Host)
 	}
 
 	bounce := c.Query("b")
@@ -53,8 +78,8 @@ func HelloScriptFile(c *fiber.Ctx) (err error) {
 		return c.Status(404).SendString("404 Not Found - No bounce query param")
 	}
 	var buf bytes.Buffer
-	err = helloJS.FRender(&buf, map[string]string{"apipath": hostconf.APIPath, "hostid": hostconf.ID,
-		"b": bounce, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl(), "hulaapiurl": app.GetHulaOriginBaseUrl()})
+	err = helloJS.FRender(&buf, map[string]string{"apipath": hostconf.APIPath, "hostid": hostconf.ID, "visitorprefix": app.GetConfig().VisitorPrefix,
+		"b": bounce, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "visithost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl(), "hulaapiurl": app.GetHulaOriginBaseUrl(), "thisurl": thisurl})
 	if err != nil {
 		return c.Status(500).SendString("error rendering hello script template: " + err.Error())
 	}

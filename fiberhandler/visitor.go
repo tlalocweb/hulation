@@ -88,18 +88,11 @@ var precompileNewVisitorHooks = &utils.RunOnceSingleton{Run: func(p interface{})
 
 // Hello is the basic API call made by the client anytime a visitor to website hits a page
 func Hello(c *fiber.Ctx) error {
-	hconf, host, httperr, err := GetHostConfig(c)
 
-	precompileNewVisitorHooks.Verify(host, hconf, "error precompiling new visitor hooks (hello)")
-
-	if err != nil {
-		return c.Status(httperr).SendString(err.Error())
-	}
-
-	//	contenttype := c.Get("Content-Type", "application/json")
-	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
-	SetCSP(c, hconf)
+	// if hello API call has a valid bounce value, we dont need any of the rest of the
+	// host determination stuff
+	// FIX...
+	var err error
 	var hello HelloMsg
 
 	err = c.BodyParser(&hello)
@@ -123,6 +116,19 @@ func Hello(c *fiber.Ctx) error {
 		log.Errorf("no bounce val (hello)")
 		return c.Status(404).SendString("404 Not Found - No bounce query param")
 	}
+
+	hconf, host, httperr, err := GetHostConfig(c)
+
+	precompileNewVisitorHooks.Verify(host, hconf, "error precompiling new visitor hooks (hello)")
+
+	if err != nil {
+		return c.Status(httperr).SendString(err.Error())
+	}
+
+	//	contenttype := c.Get("Content-Type", "application/json")
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
+	SetCSP(c, hconf)
 
 	// figure out visitor
 	var sscookiem *model.VisitorCookie
@@ -186,7 +192,7 @@ func Hello(c *fiber.Ctx) error {
 const iframehello = `<!doctype html>
 <html lang=en>
 <head><meta charset=utf-8><title>ha</title>
-<script type="text/javascript" src="{{hulaurl}}/scripts/{{helloscript}}?b={{b}}"></script>
+<script type="text/javascript" src="{{hulaurl}}/scripts/{{helloscript}}?b={{b}}&u={{thisurl}}"></script>
 </head>
 <body></body>
 </html>`
@@ -206,42 +212,54 @@ func HelloIframe(c *fiber.Ctx) error {
 
 	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
 
-	hostconf, host, httperr, err := GetHostConfig(c)
-	if err != nil {
-		return c.Status(httperr).SendString(err.Error())
+	// hostconf, host, httperr, err := GetHostConfig(c)
+	// if err != nil {
+	// 	return c.Status(httperr).SendString(err.Error())
+	// }
+	var thisurl string
+	thisurlescaped := c.Query("u")
+	if len(thisurlescaped) > 0 {
+		thisurl, err = url.PathUnescape(thisurlescaped)
+		if err != nil {
+			log.Errorf("error unescaping URL (HelloIframe): %s", err.Error())
+		}
+		log.Debugf("saw url (helloiframe - handler): %s", thisurl)
 	}
+
+	hostconf, host, _, err := GetHostConfigFromUrl(thisurl)
+	if err != nil {
+		log.Errorf("error getting host config from URL: %s", err.Error())
+		//		return c.Status(httperr).SendString(err.Error())
+	}
+
 	SetCSP(c, hostconf)
 	id := c.Query("h")
 	if id != hostconf.ID {
-		//		return c.Status(400).SendString("host id mismmatch")
+		log.Errorf("host id mismmatch: %s != %s", id, hostconf.ID)
+		return c.Status(400).SendString("host id mismmatch")
 		// ok, fine - then check the check the 'u' query param
-		urlU := c.Query("u")
-		if len(urlU) < 1 {
-			return c.Status(400).SendString("host id mismmatch")
-		}
-		parsed, err := url.Parse(urlU)
-		log.Debugf("parsed host: <%s> vs hostconf: <%s>", parsed.Host, hostconf.Host)
+		// urlU := c.Query("u")
+		// if len(urlU) < 1 {
+		// 	return c.Status(400).SendString("bad param 'u'")
+		// }
+		// parsed, err := url.Parse(urlU)
+		// log.Debugf("parsed host: <%s> vs hostconf: <%s>", parsed.Host, hostconf.Host)
 
-		if err != nil {
-			return c.Status(400).SendString("could not parse u param: " + err.Error())
-		}
-		hostconf = app.GetConfig().GetServerByAnyAlias(parsed.Host)
-		if hostconf == nil {
-			return c.Status(400).SendString("unknown host (2)")
-		}
-		if id != hostconf.ID {
-			return c.Status(400).SendString("host id mismmatch (2)")
-		}
+		// if err != nil {
+		// 	return c.Status(400).SendString("could not parse u param: " + err.Error())
+		// }
+		// hostconf = app.GetConfig().GetServerByAnyAlias(parsed.Host)
+		// if hostconf == nil {
+		// 	return c.Status(400).SendString("unknown host (2)")
+		// }
+		// if id != hostconf.ID {
+		// 	return c.Status(400).SendString("host id mismmatch (2)")
+		// }
 		// if parsed.Host != hostconf.Host {
 		// 	return c.Status(400).SendString("host id mismmatch (2)")
 		// }
 	}
 	precompileNewVisitorHooks.Verify(host, hostconf, "error precompiling new visitor hooks (helloiframe)")
-
-	url := c.Query("u")
-	if len(url) > 0 {
-		log.Debugf("saw url (helloiframe - handler): %s", url)
-	}
 
 	var cookiebaton VisitorCookiesBaton
 
@@ -257,134 +275,6 @@ func HelloIframe(c *fiber.Ctx) error {
 			return c.Status(500).SendString("error getting or setting visitor: " + err.Error())
 		}
 	}
-
-	// // check for httponly cookie
-	// sscookie := c.Cookies(hostconf.CookieOpts.CookiePrefix + "_helloss")
-	// if len(sscookie) > 0 {
-	// 	log.Debugf("saw sscookie (helloiframe): %s", sscookie)
-	// 	// cookie exists - find visitor
-	// 	visitor, err = model.GetVisitorBySSCookie(model.GetDB(), sscookie)
-	// 	if err != nil {
-	// 		// ignore not found error
-	// 		return c.Status(500).SendString("error getting visitor by sscookie: " + err.Error())
-	// 	} else {
-	// 		if visitor != nil {
-	// 			log.Debugf("visitor seen by sscookie: %s", visitor.ID)
-	// 		} else {
-	// 			log.Debugf("no known visitor by sscookie")
-	// 		}
-	// 	}
-	// }
-	// // check for normal cookie
-	// // if we find both, the normal cookie takes priority over sscookie
-	// // when we look up the Visitor
-	// cookie := c.Cookies(hostconf.CookieOpts.CookiePrefix + "_hello")
-	// if visitor == nil && len(cookie) > 0 {
-	// 	log.Debugf("saw cookie (helloiframe): %s", cookie)
-	// 	// cookie exists - find visitor
-	// 	visitor, err = model.GetVisitorByCookie(model.GetDB(), cookie)
-	// 	if err != nil {
-	// 		// ignore not found error
-	// 		return c.Status(500).SendString("error getting visitor by cookie: " + err.Error())
-	// 	} else {
-	// 		if visitor != nil {
-	// 			log.Debugf("visitor seen by cookie (helloiframe): %s", visitor.ID)
-	// 		} else {
-	// 			log.Debugf("no known visitor by cookie")
-	// 		}
-	// 	}
-	// }
-
-	// if visitor == nil {
-	// 	visitor = model.NewVisitor()
-	// }
-
-	// var sscookiem *model.VisitorCookie
-	// var cookiem *model.VisitorCookie
-
-	// if len(cookie) < 1 {
-	// 	cookiem, err = visitor.NewVisitorCookie()
-	// 	if err != nil {
-	// 		log.Errorf("error creating cookie: %s", err.Error())
-	// 		//			return c.Status(500).SendString("error creating cookie: " + err.Error())
-	// 	}
-	// 	cookie = cookiem.Cookie
-	// 	log.Debugf("new cookie (helloiframe): %s", cookie)
-	// 	// err = model.AddCookieToVisitor(model.GetDB(), visitor, cookiem)
-	// 	// if err != nil {
-	// 	// 	return c.Status(500).SendString("error adding cookie to visitor: " + err.Error())
-	// 	// }
-	// } else {
-	// 	log.Debugf("CookieFromCookieVal: %s", cookie)
-	// 	// this should be moved to the bounce map:
-	// 	cookiem, err = model.CookieFromCookieVal(model.GetDB(), cookie, visitor)
-	// 	if err != nil {
-	// 		log.Errorf("error getting cookie from cookie val: %s", err.Error())
-	// 		// create new cookie then
-	// 		cookiem, err = visitor.NewVisitorCookie()
-	// 		if err != nil {
-	// 			log.Errorf("error creating cookie: %s", err.Error())
-	// 			//			return c.Status(500).SendString("error creating cookie: " + err.Error())
-	// 		}
-	// 		log.Debugf("new cookie (helloiframe): %s", cookie)
-	// 	}
-	// 	// reset cookie string to new value in case a new cookie was made
-	// 	cookie = cookiem.Cookie
-	// 	log.Debugf("CookieFromCookieVal (new?): %s", cookie)
-	// 	//		cookiem.Commit(model.GetDB())
-	// }
-
-	// if len(sscookie) < 1 {
-	// 	sscookiem, err = visitor.NewVisitorSSCookie()
-	// 	if err != nil {
-	// 		return c.Status(500).SendString("error creating sscookie: " + err.Error())
-	// 	}
-	// 	sscookie = sscookiem.Cookie
-	// 	log.Debugf("new sscookie (helloiframe): %s", sscookie)
-	// } else {
-	// 	log.Debugf("SSCookieFromSSCookieVal: %s", sscookie)
-	// 	sscookiem, err = model.SSCookieFromSSCookieVal(model.GetDB(), sscookie, visitor)
-	// 	if err != nil {
-	// 		log.Errorf("error getting sscookie from sscookie val: %s", err.Error())
-	// 		// create new cookie then
-	// 		sscookiem, err = visitor.NewVisitorSSCookie()
-	// 		if err != nil {
-	// 			log.Errorf("error creating sscookie: %s", err.Error())
-	// 			//			return c.Status(500).SendString("error creating cookie: " + err.Error())
-	// 		}
-	// 		log.Debugf("new cookie (helloiframe): %s", cookie)
-	// 	}
-	// 	// reset cookie string to new value in case a new cookie was made
-	// 	sscookie = sscookiem.Cookie
-	// 	log.Debugf("SSCookieFromSSCookieVal (new?): %s", sscookie)
-	// 	//		sscookiem.Commit(model.GetDB())
-	// }
-	// samesite := hostconf.CookieOpts.SameSite
-	// if len(samesite) < 1 {
-	// 	if AreWeServingThePage(c, hostconf) {
-	// 		// if we are actually serving the content, then we can set the cookie to strict
-	// 		// which should allow the cookie to remain longer
-	// 		samesite = "Strict"
-	// 	} else {
-	// 		samesite = "Lax"
-	// 	}
-	// }
-
-	// c.Cookie(&fiber.Cookie{
-	// 	Name:     hostconf.CookieOpts.CookiePrefix + "_hello",
-	// 	Value:    cookie,
-	// 	Secure:   !hostconf.CookieOpts.NoSecure,
-	// 	HTTPOnly: false,
-	// 	SameSite: samesite,
-	// 	MaxAge:   60 * 60 * 24 * hostconf.HelloCookieMaxAge, // 30 days
-	// })
-	// c.Cookie(&fiber.Cookie{
-	// 	Name:     hostconf.CookieOpts.CookiePrefix + "_helloss",
-	// 	Value:    sscookie,
-	// 	Secure:   !hostconf.CookieOpts.NoSecure,
-	// 	HTTPOnly: true,
-	// 	SameSite: samesite,
-	// })
 
 	var body string
 	// NOTE: In these callbacks your CAN NOT reference anything from the original fiber context / request
@@ -434,9 +324,14 @@ func HelloIframe(c *fiber.Ctx) error {
 
 			hconf := b.Data[BMHostConf].(*config.Server)
 			if hconf != nil {
-				hconf.Hooks.SubmitToHooksOnNewVisitor(map[string]any{"visitorid": visitor.ID, "url": url}, nil, nil)
+				if hconf.Hooks == nil {
+					log.Debugf("no hooks for host: %s", hconf.Host)
+				} else {
+					hconf.Hooks.SubmitToHooksOnNewVisitor(map[string]any{"visitorid": visitor.ID, "url": url}, nil, nil)
+				}
+			} else {
+				log.Errorf("hconf was nil in bounce map")
 			}
-
 		}
 
 		return err
@@ -445,11 +340,16 @@ func HelloIframe(c *fiber.Ctx) error {
 		// it is possible ofr the memory the pointer in the struct points to get garbage collected
 		// and then the string is no longer valid
 		// It seems the GC can't keep up with our callback pointers
-	}, map[uint32]interface{}{BMIndexURL: strings.Clone(url), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
+	}, map[uint32]interface{}{BMIndexURL: strings.Clone(thisurl), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
 		BMIndexUA: strings.Clone(c.Get("User-Agent")), BMIndexIP: strings.Clone(c.IP()), BMHostConf: hostconf})
 
+	hulaurl, err := utils.GetBaseUrl(c.OriginalURL())
+	if err != nil {
+		log.Errorf("error parsing original URL: %s - using hostconf url", err.Error())
+		hulaurl = hostconf.GetExternalUrl()
+	}
 	body, err = iframeHelloTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
-		"b": bounceS, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})
+		"b": bounceS, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "visithost": hostconf.Host, "hulaurl": hulaurl, "thisurl": thisurl})
 	if err != nil {
 		return c.Status(500).SendString("error rendering iframe template: " + err.Error())
 	}

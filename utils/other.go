@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,9 +62,30 @@ func CleanShutdown(exitval int) {
 	os.Exit(exitval)
 }
 
-func GetHostOnly(host string) string {
+func GetHostOnlyFromHostPort(host string) string {
 	parts := strings.Split(host, ":")
 	return parts[0]
+}
+
+func GetBaseUrl(urlstr string) (ret string, err error) {
+	u, err := url.Parse(urlstr)
+	if err != nil {
+		return "", err
+	}
+	u.Path = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	ret = u.String()
+	return
+}
+
+func GetHostFromUrl(urlstr string) (ret string, err error) {
+	u, err := url.Parse(urlstr)
+	if err != nil {
+		return "", err
+	}
+	ret = u.Host
+	return
 }
 
 var replaceExecPathRE = regexp.MustCompile(`(?m){{\s*huladir\s*}}`)

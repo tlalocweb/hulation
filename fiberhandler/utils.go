@@ -20,25 +20,50 @@ import (
 // The only error returned currently is 404
 func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperror int, err error) {
 	exist := c.Locals("hostconf")
-	fiberhandler_debugf("GetHostConfig: hostconf exist: %v", exist)
 	if exist != nil {
+		fiberhandler_debugf("GetHostConfig: hostconf exist")
 		hostconf = exist.(*config.Server)
 		exist2 := c.Locals("host")
 		if exist2 != nil {
 			host = exist2.(string)
 			return
+		} else {
+			fiberhandler_attn_debugf("GetHostConfig: hostconf exist but no host")
 		}
 	}
-	host = c.Get("Host")
-	fiberhandler_debugf("GetHostConfig: host: %s", host)
-	hostonly := utils.GetHostOnly(host)
-	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
+	// does the origin (o) query param exist?
+	oquery := c.Query("o")
+	var hostonly string
+	if len(oquery) > 0 {
+		fiberhandler_debugf("GetHostConfig: see 'o' query: %s", oquery)
+		// should be the opposite of JS encodeURIComponent()
+		oquery, err = url.PathUnescape(oquery)
+		if err != nil {
+			log.Errorf("error unescaping o query: %s", err.Error())
+		}
+		hostonly = utils.GetHostOnlyFromHostPort(oquery)
+		hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
+	}
+	// does the usehost local exist?
+	usehost := c.Locals("usehost")
+	if usehost != nil {
+		hostonly = usehost.(string)
+		fiberhandler_debugf("GetHostConfig: usehost: %s", hostonly)
+		hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
+	}
+	if hostconf == nil {
+		host = c.Get("Host")
+		fiberhandler_debugf("GetHostConfig: host: %s", host)
+		hostonly = utils.GetHostOnlyFromHostPort(host)
+		hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
+	}
 	if hostconf != nil {
+		fiberhandler_debugf("GetHostConfig: found host: %s", hostconf.Host)
 		if !hostconf.RespectPortInLookup() {
 			host = hostonly
 		}
 	} else {
-		log.Errorf("Unknown host: %s", host)
+		log.Errorf("GetHostConfig: Unknown host: %s", host)
 		httperror = 404
 		err = fmt.Errorf("unknown host: %s", host)
 		return
@@ -46,6 +71,22 @@ func GetHostConfig(c *fiber.Ctx) (hostconf *config.Server, host string, httperro
 	// cache for later use
 	c.Locals("hostconf", hostconf)
 	c.Locals("host", host)
+	return
+}
+func GetHostConfigFromUrl(url string) (hostconf *config.Server, host string, httperror int, err error) {
+	var hostonly string
+	hostonly, err = utils.GetHostFromUrl(url)
+	if err != nil {
+		httperror = 500
+		return
+	}
+	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
+	if hostconf != nil {
+		host = hostonly
+	} else {
+		httperror = 404
+		err = fmt.Errorf("unknown host: %s", hostonly)
+	}
 	return
 }
 func AreWeServingThePage(c *fiber.Ctx, hostconf *config.Server) bool {
@@ -64,7 +105,7 @@ func AreWeServingThePage(c *fiber.Ctx, hostconf *config.Server) bool {
 		return false
 	}
 	if !hostconf.RespectPortInLookup() {
-		if rUrl.Hostname() != utils.GetHostOnly(rHost) {
+		if rUrl.Hostname() != utils.GetHostOnlyFromHostPort(rHost) {
 			return false
 		}
 	} else {

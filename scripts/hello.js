@@ -13,6 +13,39 @@
 
     var vc = null
 
+    var GetAPIUrl = function(apipath) {
+        let postfix = "?h={{hostid}}&b={{b}}&r=" + randid();
+        if (window.location.origin == "{{hulaurl}}") {
+            // if the script is being served from the same host name as the API being called, then
+            // we dont need to include the 'o' param, b/c the 'Host' header will be enough
+            return window.location.origin + "{{visitorprefix}}" + apipath + postfix;
+        } else {
+            var visithost = "{{visithost}}";
+            // BREAKS. because rootwindow may be from a different origin host name - so it will not work as its a cross-origin frame
+            //            return window.location.origin + "{{visitorprefix}}" + apipath + postfix + "&o=" + encodeURIComponent(rootwindow.location.host);
+            if (visithost.length > 0) {
+                return window.location.origin + "{{visitorprefix}}" + apipath + postfix + "&o=" + encodeURIComponent(visithost);
+            } else {
+                return window.location.origin + "{{visitorprefix}}" + apipath + postfix;
+            }
+        }
+
+        // let m;
+        // const regexorigin = /(https?\:\/\/[^/]+).*/gm;
+        // m = regexorigin.exec(rootwindow.location);
+        // if (m !== null) {
+        //     if (m.length > 1) {
+        //         console.log('Base url: ${m[1]}')
+        //         return m[1] + "/v";
+        //     }
+        //     // // The result can be accessed through the `m`-variable.
+        //     // m.forEach((match, groupIndex) => {
+        //     //     console.log(`Found match, group ${groupIndex}: ${match}`);
+        //     // });
+        // }
+        // console.log("using default base url");
+        // return "{{hulaurl}}/v"
+    }
 
     var HulaSubmitForm = function(formid, url, captcha, data, onsuccess, onerror) {
 
@@ -27,7 +60,7 @@
 
         // NOTE: bounce map - will not work as bounce already used - why not put the sscookie in the payload also?
 
-        xhr.open("POST", "{{hulaurl}}/v/sub/"+formid+"?h={{hostid}}&r="+randid(), true);
+        xhr.open("POST", GetAPIUrl('/sub/'+formid), true);
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
         xhr.send(JSON.stringify(
             { 
@@ -87,14 +120,16 @@
     var url = (window.location != window.parent.location)
     ? document.referrer
     : document.location.href;
-    url = encodeURIComponent(url);
     console.log("url: " + url);
-
+    if (url != "{{thisurl}}") {
+        console.error("url mismatch: " + url + " != {{thisurl}} - is document.referrer not reliable?");
+    }
+    url = encodeURIComponent(url);
     // make an async API call to the server using POST and send a JSON message
     var xhr = new XMLHttpRequest();
     // send a json messafe to the server in the POST body 
 
-    xhr.open("POST", "{{hulaurl}}/v/hello?b={{b}}&h={{hostid}}", true);
+    xhr.open("POST", GetAPIUrl("/hello"), true);
 //    xhr.withCredentials = true;
     xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
     xhr.send(JSON.stringify(
