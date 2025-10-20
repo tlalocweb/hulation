@@ -34,3 +34,4 @@ model/tools/hulactl/hulactl
 model/tools/tviewtest/tviewtest
 test_ch_data
 test_ch_logs
+hula
