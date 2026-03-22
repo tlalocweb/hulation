@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -73,31 +74,33 @@ type listenerErr struct {
 // a blocking call which is a custom subsistute for fiber.ListenTLSWithCertificate()
 func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 	tlsHandler := &fiber.TLSHandler{}
-	config := &tls.Config{
+	tlsCfg := &tls.Config{
 		MinVersion:     tls.VersionTLS12,
 		Certificates:   []tls.Certificate{},
 		GetCertificate: tlsHandler.GetClientInfo,
 	}
 
-	// add all certs
+	// add static certs (non-ACME)
 	for _, cert := range l.SSL {
-		if cert != nil && !cert.NoConfig() {
-			config.Certificates = append(config.Certificates, *cert.GetTLSCert())
-		} else {
-			log.Errorf("nil or bad certificate for listener %s", l.GetListenOn())
+		if cert != nil && !cert.IsACME() && !cert.NoConfig() {
+			tlsCfg.Certificates = append(tlsCfg.Certificates, *cert.GetTLSCert())
 		}
 	}
 
-	log.Debugf("Starting TLS server on port %s - has %d certificates", l.GetListenOn(), len(config.Certificates))
+	// if ACME is configured, use autocert manager for certificate retrieval
+	if l.ACMEManager != nil {
+		tlsCfg.GetCertificate = l.ACMEManager.GetCertificate
+		tlsCfg.NextProtos = append(tlsCfg.NextProtos, "h2", "http/1.1", "acme-tls/1")
+		log.Infof("ACME: using autocert manager for TLS on %s", l.GetListenOn())
+	}
+
+	log.Debugf("Starting TLS server on port %s - has %d static certificates, ACME=%v", l.GetListenOn(), len(tlsCfg.Certificates), l.ACMEManager != nil)
 
 	ln, err := net.Listen("tcp", l.GetListenOn())
 	if err != nil {
 		return fmt.Errorf("failed to listen (net.Listen): %w", err)
 	}
-	ln = tls.NewListener(ln, config)
-	if err != nil {
-		return fmt.Errorf("failed to listen (tls): %w", err)
-	}
+	ln = tls.NewListener(ln, tlsCfg)
 	err = fiberapp.Listener(ln)
 	return err
 }
@@ -242,16 +245,19 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	if len(l.SSL) > 0 {
 		log.Infof("Starting TLS server on port %s", l.GetListenOn())
 
-		// err = l.FiberApp.ListenTLSWithCertificate(l.GetListenOn(), *l.SSL.GetTLSCert())
-		// if err != nil {
-		// 	log.Fatalf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
-		// 	err = fmt.Errorf("Error listening on port %s: %s", l.GetListenOn(), err.Error())
-		// 	errchan <- &listenerErr{
-		// 		listener: l,
-		// 		err:      err,
-		// 	}
-		// }
-		// return
+		// If ACME is active, start HTTP-01 challenge handler on :80
+		// This also redirects non-challenge HTTP traffic to HTTPS
+		if l.ACMEManager != nil {
+			acmeHTTPAddr := fmt.Sprintf(":%d", l.ACMEHTTPPort)
+			go func() {
+				httpHandler := l.ACMEManager.HTTPHandler(nil)
+				log.Infof("ACME: starting HTTP-01 challenge handler on %s", acmeHTTPAddr)
+				if httpErr := http.ListenAndServe(acmeHTTPAddr, httpHandler); httpErr != nil {
+					log.Errorf("ACME: HTTP-01 challenge handler error: %s", httpErr.Error())
+				}
+			}()
+		}
+
 		err = FiberListenWithListener(l, l.FiberApp)
 		if err != nil {
 			log.Fatalf("Error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())

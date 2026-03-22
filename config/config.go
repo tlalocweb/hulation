@@ -11,11 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"go.izuma.io/conftagz"
 	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
+	"go.izuma.io/conftagz"
+	"golang.org/x/crypto/acme/autocert"
 	"gopkg.in/yaml.v2"
 )
 
@@ -427,6 +428,10 @@ type Listener struct {
 	// the combine CORS config for all servers on this listener
 	CORS *CORSConfig
 	SSL  []*SSLConfig
+	// ACME / Let's Encrypt manager for this listener (nil if not using ACME)
+	ACMEManager *autocert.Manager
+	// Port for the ACME HTTP-01 challenge listener (default: 80)
+	ACMEHTTPPort int
 	// the fiber app for this listener - if applicable
 	FiberApp *fiber.App
 	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
@@ -467,10 +472,20 @@ type CORSConfig struct {
 	UnsafeAnyOrigin bool `yaml:"unsafe_any_origin" env:"UNSAFE_ANY_ORIGIN"`
 }
 
+type ACMEConfig struct {
+	Email    string   `yaml:"email,omitempty"`
+	CacheDir string   `yaml:"cache_dir,omitempty" default:"certs"`
+	Domains  []string `yaml:"domains,omitempty"`
+	// Port for the HTTP-01 challenge listener (default: 80)
+	HTTPPort int `yaml:"http_port,omitempty" default:"80"`
+}
+
 type SSLConfig struct {
 	// can be either the cert / key itself infline or a path to the cert / key
 	Cert string `yaml:"cert,omitempty"`
 	Key  string `yaml:"key,omitempty"`
+	// ACME / Let's Encrypt automatic certificate management
+	ACME *ACMEConfig `yaml:"acme,omitempty"`
 	// if the above is a path, it moved here
 	certPath string
 	keyPath  string
@@ -478,7 +493,11 @@ type SSLConfig struct {
 }
 
 func (cfg *SSLConfig) NoConfig() bool {
-	return len(cfg.Cert) < 1 && len(cfg.Key) < 1
+	return len(cfg.Cert) < 1 && len(cfg.Key) < 1 && cfg.ACME == nil
+}
+
+func (cfg *SSLConfig) IsACME() bool {
+	return cfg.ACME != nil
 }
 
 func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
@@ -871,12 +890,63 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		listenerforserver.CORS = &cfg.CORS
 		if s.SSL != nil && !s.SSL.NoConfig() {
-			err = s.SSL.LoadSSLConfig()
-			if err != nil {
-				return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
+			if s.SSL.IsACME() {
+				// ACME / Let's Encrypt: collect domains and build manager on the listener
+				acmeCfg := s.SSL.ACME
+				cacheDir := acmeCfg.CacheDir
+				if len(cacheDir) < 1 {
+					cacheDir = "certs"
+				}
+				cacheDir, _ = SubstConfVars(cacheDir, map[string]string{"confdir": confDir})
+				// collect domains: explicit list, or derive from Host + Aliases
+				domains := acmeCfg.Domains
+				if len(domains) == 0 {
+					domains = append(domains, s.Host)
+					domains = append(domains, s.Aliases...)
+				}
+				httpPort := acmeCfg.HTTPPort
+				if httpPort == 0 {
+					httpPort = 80
+				}
+				if listenerforserver.ACMEManager == nil {
+					listenerforserver.ACMEManager = &autocert.Manager{
+						Prompt:     autocert.AcceptTOS,
+						Email:      acmeCfg.Email,
+						Cache:      autocert.DirCache(cacheDir),
+						HostPolicy: autocert.HostWhitelist(domains...),
+					}
+					listenerforserver.ACMEHTTPPort = httpPort
+					log.Infof("ACME: created autocert manager for listener %s (domains: %v, cache: %s, http_port: %d)", s.listenOn, domains, cacheDir, httpPort)
+				} else {
+					// merge domains into existing manager's HostPolicy
+					existingDomains := listenerforserver.ACMEManager.HostPolicy
+					_ = existingDomains // previous whitelist is replaced with merged set
+					// rebuild whitelist with all domains
+					var allDomains []string
+					for _, srv := range listenerforserver.servers {
+						if srv.SSL != nil && srv.SSL.IsACME() {
+							if len(srv.SSL.ACME.Domains) > 0 {
+								allDomains = append(allDomains, srv.SSL.ACME.Domains...)
+							} else {
+								allDomains = append(allDomains, srv.Host)
+								allDomains = append(allDomains, srv.Aliases...)
+							}
+						}
+					}
+					allDomains = append(allDomains, domains...)
+					listenerforserver.ACMEManager.HostPolicy = autocert.HostWhitelist(allDomains...)
+					log.Infof("ACME: merged domains into autocert manager for listener %s (added: %v)", s.listenOn, domains)
+				}
+				// ACME servers still contribute to SSL presence so TLS path is taken
+				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else {
+				err = s.SSL.LoadSSLConfig()
+				if err != nil {
+					return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
+				}
+				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
 			}
-			listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
-		} else if len(listenerforserver.SSL) > 0 {
+		} else if len(listenerforserver.SSL) > 0 || listenerforserver.ACMEManager != nil {
 			log.Warnf("SSL config for server %s is missing but TLS will be used by other servers on same port.", s.Host)
 		}
 		// if host has a special directive, work it out first:

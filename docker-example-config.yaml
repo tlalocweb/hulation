@@ -6,6 +6,12 @@ port: 8088
 # ssl:
 #   cert: cert.pem
 #   key: key.pem
+# or use Let's Encrypt automatic certificates:
+# ssl:
+#   acme:
+#     email: admin@example.com
+#     cache_dir: /var/hula/certs
+#     http_port: 80  # change if behind a reverse proxy
 proxies:
   - target: http://localhost:1314
     by_path: "/"
