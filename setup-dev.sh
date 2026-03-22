@@ -89,8 +89,8 @@ show_help() {
     echo "  --docker               Install Docker"
     echo "  --cleanbin             Remove previously built/installed items in .bin"
     echo "  --only <component>     Only install specific component(s)"
-    echo "                         Valid components: go, docker, golangci-lint,"
-    echo "                         dependencies, env-script"
+    echo "                         Valid components: go, clickhouse-driver, docker,"
+    echo "                         golangci-lint, go-modules, dependencies, env-script"
     echo ""
     echo "Examples:"
     echo "  $0                     Install core components (default)"
@@ -150,8 +150,8 @@ should_install_component() {
     # Core components are installed by default unless --only is specified
     if [[ "$INSTALL_CORE" == "true" ]]; then
         if [[ "$component" == "go" || "$component" == "dependencies" ||
-              "$component" == "golangci-lint" || "$component" == "go-modules" ||
-              "$component" == "env-script" ]]; then
+              "$component" == "clickhouse-driver" || "$component" == "golangci-lint" ||
+              "$component" == "go-modules" || "$component" == "env-script" ]]; then
             return 0
         fi
     fi
@@ -398,6 +398,45 @@ install_go_modules() {
     echo "Go module dependencies downloaded"
 }
 
+install_clickhouse_driver() {
+    # The go.mod has: replace gorm.io/driver/clickhouse => ../clickhouse
+    # We need this sibling repo checked out for builds to work.
+    local DRIVER_DIR="${REPO_DIR}/../clickhouse"
+    local DRIVER_REPO="${CLICKHOUSE_DRIVER_REPO:-tlalocweb/clickhouse}"
+    local DRIVER_BRANCH="${CLICKHOUSE_DRIVER_BRANCH:-master}"
+
+    if [ -d "${DRIVER_DIR}" ]; then
+        echo "clickhouse driver already exists at ${DRIVER_DIR}"
+        cd "${DRIVER_DIR}"
+        run_with_error_handling git fetch
+        run_with_error_handling git checkout "${DRIVER_BRANCH}"
+        run_with_error_handling git pull
+        cd "${REPO_DIR}"
+        return 0
+    fi
+
+    echo "Cloning clickhouse driver (${DRIVER_REPO}, branch: ${DRIVER_BRANCH})..."
+    cd "${REPO_DIR}/.."
+
+    if [ -n "${GIT_TOKEN}" ]; then
+        git clone "https://x-access-token:${GIT_TOKEN}@github.com/${DRIVER_REPO}.git" clickhouse
+    else
+        git clone "git@github.com:${DRIVER_REPO}.git" clickhouse
+    fi
+
+    if [ $? -ne 0 ]; then
+        echo "Failed to clone clickhouse driver"
+        cd "${REPO_DIR}"
+        return 1
+    fi
+
+    cd clickhouse
+    git checkout "${DRIVER_BRANCH}"
+    cd "${REPO_DIR}"
+
+    echo "clickhouse driver installed at ${DRIVER_DIR}"
+}
+
 install_docker() {
     # Check if Docker is already installed
     if command -v docker >/dev/null 2>&1; then
@@ -554,6 +593,11 @@ fi
 if should_install_component "go"; then
     echo "=== Installing Go ==="
     install_go
+fi
+
+if should_install_component "clickhouse-driver"; then
+    echo "=== Installing clickhouse driver (sibling dependency) ==="
+    install_clickhouse_driver
 fi
 
 if should_install_component "go-modules"; then
