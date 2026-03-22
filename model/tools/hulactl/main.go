@@ -28,7 +28,7 @@ import (
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
 
-	"github.com/IzumaNetworks/conftagz"
+	"go.izuma.io/conftagz"
 )
 
 func askForConfirmation() bool {

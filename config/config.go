@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IzumaNetworks/conftagz"
+	"go.izuma.io/conftagz"
 	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
