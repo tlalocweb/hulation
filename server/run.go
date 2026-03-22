@@ -1,17 +1,22 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gofiber/contrib/fiberzerolog"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/config"
 	handler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/log"
@@ -300,6 +305,37 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		return 1
 	}
 
+	// Start Docker backend containers if any server has them configured
+	var backendMgr *backend.Manager
+	hasBackends := false
+	for _, s := range conf.Servers {
+		if len(s.Backends) > 0 {
+			hasBackends = true
+			break
+		}
+	}
+	if hasBackends {
+		var berr error
+		backendMgr, berr = backend.NewManager()
+		if berr != nil {
+			log.Errorf("Failed to initialize Docker backend manager: %s", berr.Error())
+			return 1
+		}
+		defer backendMgr.Close()
+
+		startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		for _, s := range conf.Servers {
+			if len(s.Backends) > 0 {
+				if berr = backendMgr.StartBackendsForServer(startCtx, s.Host, s.Backends); berr != nil {
+					log.Errorf("Failed to start backends for server %s: %s", s.Host, berr.Error())
+					startCancel()
+					return 1
+				}
+			}
+		}
+		startCancel()
+	}
+
 	waitForServers := &sync.WaitGroup{}
 	errchan := make(chan *listenerErr, 10)
 	runcnt := 0
@@ -310,23 +346,45 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		go RunListenerFiber(l, waitForServers, errchan)
 	}
 
+	// Signal handling for graceful shutdown
+	sigchan := make(chan os.Signal, 1)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
 mainLoop:
 	for {
 		select {
-		// TODO - handle signals here
-		case err := <-errchan:
-			if err.done {
-				log.Debugf("Listener %s is done", err.listener.GetListenOn())
+		case sig := <-sigchan:
+			log.Infof("Received signal %s, shutting down", sig)
+			if backendMgr != nil {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				backendMgr.StopAll(shutdownCtx)
+				shutdownCancel()
+			}
+			// Shutdown all fiber apps
+			for _, l := range conf.GetListeners() {
+				if l.FiberApp != nil {
+					l.FiberApp.Shutdown()
+				}
+			}
+			break mainLoop
+		case lerr := <-errchan:
+			if lerr.done {
+				log.Debugf("Listener %s is done", lerr.listener.GetListenOn())
 				runcnt--
 				if runcnt < 1 {
 					log.Debugf("All listeners are done")
 					break mainLoop
 				}
 			} else {
-				log.Errorf("Error on listener %s: %s", err.listener.GetListenOn(), err.err.Error())
+				log.Errorf("Error on listener %s: %s", lerr.listener.GetListenOn(), lerr.err.Error())
 				exitcode = 1
+				// Stop backends before exiting
+				if backendMgr != nil {
+					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					backendMgr.StopAll(shutdownCtx)
+					shutdownCancel()
+				}
 				return
-				//break mainLoop
 			}
 		}
 	}

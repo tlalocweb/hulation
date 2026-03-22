@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/utils"
@@ -388,7 +389,8 @@ type Server struct {
 	// where 'host' is the Host field of the server this config is about
 	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
-	Hooks            *VisitorHooks `yaml:"hooks,omitempty"`
+	Hooks    *VisitorHooks `yaml:"hooks,omitempty"`
+	Backends []*backend.BackendConfig `yaml:"backends,omitempty"`
 	externalUrl      string
 	externalHostPort string
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
@@ -1034,6 +1036,40 @@ func LoadConfig(filename string) (*Config, error) {
 					return nil, err
 				}
 			}
+		}
+
+		// Validate and finalize backend configs
+		if len(s.Backends) > 0 {
+			for i, b := range s.Backends {
+				if err := b.Validate(s.Host); err != nil {
+					return nil, err
+				}
+				// Substitute config vars in environment values
+				for j, env := range b.Environment {
+					b.Environment[j] = SubstConfVarsLogErrorf(env,
+						map[string]string{"confdir": confDir, "host": s.Host},
+						fmt.Sprintf("server[%s].backends[%s].environment[%d]", s.Host, b.ContainerName, j))
+				}
+				// Substitute config vars in volumes
+				for j, vol := range b.Volumes {
+					b.Volumes[j] = SubstConfVarsLogErrorf(vol,
+						map[string]string{"confdir": confDir, "host": s.Host},
+						fmt.Sprintf("server[%s].backends[%s].volumes[%d]", s.Host, b.ContainerName, j))
+				}
+				log.Debugf("server[%s].backends[%d]: name=%s image=%s virtual_path=%s container_path=%s",
+					s.Host, i, b.ContainerName, b.Image, b.VirtualPath, b.ContainerPath)
+			}
+		}
+	}
+
+	// Check for duplicate container names across all servers
+	containerNames := make(map[string]string) // containerName -> serverHost
+	for _, s := range cfg.Servers {
+		for _, b := range s.Backends {
+			if existing, ok := containerNames[b.ContainerName]; ok {
+				return nil, fmt.Errorf("duplicate container_name %q: used by server %s and %s", b.ContainerName, existing, s.Host)
+			}
+			containerNames[b.ContainerName] = s.Host
 		}
 	}
 

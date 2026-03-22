@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/config"
 	fhandler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/log"
@@ -147,4 +148,42 @@ func SetupRoutesFiber(l *config.Listener) {
 	l.FiberApp.Get("/scripts/"+hulation.GetConfig().PublishedHelloScriptFilename, fhandler.HelloScriptFile)
 	l.FiberApp.Get("/scripts/"+hulation.GetConfig().PublishedFormsScriptFilename, fhandler.FormsScriptFile)
 
+	// Register backend proxy routes for each server's backends
+	for _, server := range l.GetServers() {
+		if len(server.Backends) == 0 {
+			continue
+		}
+		for _, b := range server.Backends {
+			if !b.IsReady() {
+				log.Warnf("Backend %s for server %s is not ready, skipping proxy route", b.ContainerName, server.Host)
+				continue
+			}
+			proxyHandler := backend.NewProxyHandler(b)
+			// Capture loop variables for the closure
+			serverHost := server.Host
+			backendName := b.ContainerName
+			virtualPath := b.VirtualPath
+
+			// Register a catch-all route for this backend's virtual path.
+			// The host-check inside the handler ensures isolation between virtual servers.
+			l.FiberApp.All(virtualPath+"/*", func(c *fiber.Ctx) error {
+				hostconf, _, _, _ := fhandler.GetHostConfig(c)
+				if hostconf == nil || hostconf.Host != serverHost {
+					return c.Next() // not this server, skip to next handler
+				}
+				return proxyHandler.Handle(c)
+			})
+			// Also handle exact path match (e.g. /api without trailing slash)
+			l.FiberApp.All(virtualPath, func(c *fiber.Ctx) error {
+				hostconf, _, _, _ := fhandler.GetHostConfig(c)
+				if hostconf == nil || hostconf.Host != serverHost {
+					return c.Next()
+				}
+				return proxyHandler.Handle(c)
+			})
+
+			log.Infof("Server %s: proxying %s -> %s (container: %s)",
+				serverHost, virtualPath, b.GetProxyTarget(), backendName)
+		}
+	}
 }
