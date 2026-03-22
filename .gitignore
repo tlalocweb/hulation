@@ -35,3 +35,9 @@ model/tools/tviewtest/tviewtest
 test_ch_data
 test_ch_logs
 hula
+
+# Dev environment
+.bin/
+.external/
+.gopath/
+env.sh
