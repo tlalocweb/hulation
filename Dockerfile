@@ -9,7 +9,6 @@ RUN apk add clang lld
 COPY --from=xx / /
 
 ADD hulation /src/hulation
-ADD conftagz /src/conftagz
 ADD clickhouse /src/clickhouse
 RUN mkdir -p /src
 ARG TARGETPLATFORM
