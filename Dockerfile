@@ -1,5 +1,5 @@
 FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 LABEL org.opencontainers.image.source=https://github.com/tlalocweb/hulation
 LABEL org.opencontainers.image.description="Hula - the modern web server for DM and CDP services"
 LABEL org.opencontainers.image.licenses=Apache-2.0
