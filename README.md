@@ -1,6 +1,6 @@
 # Hula
 
-A modern web server for DM and CDP services.
+A modern web server for DM and CDP services. Hula is specifically designed to make deploying static web sites built with tools like [hugo](https://github.com/gohugoio/hugo) much easier, faster and requiring less tokens when driven by AI. 
 
 Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ecd70).
 
