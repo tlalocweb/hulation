@@ -1,8 +1,233 @@
 # Hula
 
-A modern web server for DM and CDP services. Hula is specifically designed to make deploying static web sites built with tools like [hugo](https://github.com/gohugoio/hugo) much easier, faster and requiring less tokens when driven by AI. 
+A modern web server for DM and CDP services. Hula is specifically designed to make deploying static web sites built with tools like [hugo](https://github.com/gohugoio/hugo) much easier, faster and requiring less tokens when driven by AI.
 
-Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ecd70).
+## Quick Start
+
+Get a site running with automatic HTTPS on any Linux machine with Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/install.sh | bash
+```
+
+This creates a `./hula` directory, pulls the Hula and ClickHouse Docker images, and starts both containers. You can customize with environment variables:
+
+```bash
+HULA_PORT=443 HULA_DIR=/opt/hula curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/install.sh | bash
+```
+
+### Prerequisites
+
+- **Docker Engine 20.10+** — [Install Docker](https://docs.docker.com/engine/install/) or `curl -fsSL https://get.docker.com | sh`
+- **Linux server** with a public IP (for ACME/Let's Encrypt)
+- **Ports 80 and 443** reachable from the internet, either directly or through your proxy / firewall (port 80 is required for ACME HTTP-01 certificate challenges)
+- **DNS** A records pointing your domain to the server
+
+### Getting Your Site Live with HTTPS
+
+After running the installer, follow these steps to serve your site with automatic Let's Encrypt certificates:
+
+**1. Point your DNS**
+
+Create A records for your domain pointing to your server's public IP:
+
+```
+example.com      → 203.0.113.10
+www.example.com  → 203.0.113.10
+```
+
+**2. Edit the config**
+
+```bash
+cd hula
+nano config.yaml
+```
+
+Replace the contents with (adjust to your domain, email, and site details).
+
+First, generate your admin password hash:
+
+```bash
+# If installed via the quick-start installer:
+./hulactl generatehash
+
+# Or install it standalone (see "Install CLI Tools" below):
+# curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | bash
+# hulactl generatehash
+```
+
+Then paste the hash into your config:
+
+```yaml
+admin:
+  hash: "<paste your generated hash here>"
+
+jwt_key: "change-me-to-something-random"
+
+port: 443
+
+ssl:
+  acme:
+    email: you@example.com
+    cache_dir: /var/hula/certs
+
+servers:
+  - host: example.com
+    aliases:
+      - www.example.com
+    id: mysite
+    root: /var/hula/public
+
+cors:
+  allow_credentials: true
+
+dbconfig:
+  host: hula-clickhouse
+  port: 9000
+  user: hula
+  pass: hula
+  dbname: hula
+```
+
+**3. Add your site content**
+
+Copy your static site (e.g., Hugo output) into the public directory:
+
+```bash
+cp -r /path/to/your/site/public/* ./public/
+```
+
+The `public/` directory maps to `/var/hula/public` inside the container.
+
+**4. Open firewall ports**
+
+Ports 80 and 443 must be reachable from the internet:
+
+```bash
+# Ubuntu/Debian with ufw
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Or with firewalld
+sudo firewall-cmd --permanent --add-service=http --add-service=https
+sudo firewall-cmd --reload
+```
+
+**5. Restart with HTTPS ports exposed**
+
+Stop the default instance and restart with ports 80 and 443:
+
+```bash
+./start-with-docker.sh --stop
+HULA_PORT=443 ./start-with-docker.sh
+```
+
+Note: you also need port 80 exposed for ACME challenges. Edit `start-with-docker.sh` or run manually:
+
+```bash
+docker run -d \
+  --name hula \
+  --network hula-net \
+  -p 443:443 -p 80:80 \
+  -v "$(pwd)/config.yaml":/etc/hula/config.yaml:ro \
+  -v "$(pwd)/hula_certs":/var/hula/certs \
+  -v "$(pwd)/public":/var/hula/public:ro \
+  --restart unless-stopped \
+  ghcr.io/tlalocweb/hula:latest
+```
+
+**6. Visit your site**
+
+Open `https://example.com` — Hula automatically obtains a Let's Encrypt certificate on the first request. The certificate is cached in `hula_certs/` and renews automatically.
+
+### Management
+
+```bash
+cd hula
+
+# View logs
+./start-with-docker.sh --logs
+
+# Stop everything
+./start-with-docker.sh --stop
+
+# Restart after config changes
+./start-with-docker.sh --restart
+
+# Pull and restart with latest image
+./start-with-docker.sh --pull --restart
+```
+
+### Docker Compose
+
+For more control, see [DEPLOYMENT.md](DEPLOYMENT.md) which covers Docker Compose, backend containers, and Kubernetes deployments.
+
+## Install CLI Tools
+
+Install `hulactl` (the Hula management CLI) on Linux or macOS without building from source:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | bash
+```
+
+This downloads the latest pre-built `hulactl` binary for your platform and installs it to `~/.local/bin/`. You can customize the install location or pin a version:
+
+```bash
+# Install to /usr/local/bin
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | sudo bash
+
+# Pin a specific version
+HULA_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | bash
+```
+
+Use `hulactl` to generate admin password hashes, manage forms, landers, and users:
+
+```bash
+hulactl generatehash       # create an admin password hash for config.yaml
+hulactl auth               # authenticate against a running Hula server
+hulactl createform         # create a new form
+hulactl createlander       # create a new lander
+```
+
+## Building from Source
+
+```bash
+# Install development tools
+./setup-dev.sh
+source env.sh
+
+# Build
+make            # build hula server
+make all        # build server + CLI tools (hulactl, setupdb)
+make help       # show all targets
+```
+
+## Backend Containers
+
+Hula can manage Docker containers as backend services and reverse-proxy requests to them. Each virtual server can have one or more backends:
+
+```yaml
+servers:
+  - host: example.com
+    port: 443
+    ssl:
+      acme:
+        email: admin@example.com
+        cache_dir: /var/hula/certs
+    backends:
+      - container_name: myapi
+        image: registry.example.com/myapi:latest
+        virtual_path: "/api"
+        container_path: "/api/v2"
+        expose:
+          - "8002"
+        restart: always
+        environment:
+          - API_KEY=secret
+        command: /app/server --port 8002
+```
+
+Backends on different virtual servers are isolated on separate Docker networks. Backends on the same server can reach each other. When running Hula in Docker, mount the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
 ## TLS / SSL
 
@@ -44,23 +269,6 @@ servers:
 | `domains` | No | Host + Aliases | Explicit list of domains. If omitted, derived from the server's `host` and `aliases`. |
 | `http_port` | No | `80` | Port for the HTTP-01 challenge listener. Change this when port 80 is handled by a reverse proxy that forwards to an alternate port. |
 
-**Example with explicit domains:**
-
-```yaml
-servers:
-  - host: example.com
-    port: 443
-    aliases:
-      - www.example.com
-    ssl:
-      acme:
-        email: admin@example.com
-        cache_dir: /var/hula/certs
-        domains:
-          - example.com
-          - www.example.com
-```
-
 **How it works:**
 
 - Certificates are automatically obtained on first request and cached to disk in `cache_dir`.
@@ -76,18 +284,6 @@ servers:
 - DNS for all configured domains must point to the server.
 - The `cache_dir` must be writable and should be on persistent storage (so certs survive restarts).
 
-**Docker example:**
+## API
 
-```yaml
-servers:
-  - host: mysite.example.com
-    port: 443
-    ssl:
-      acme:
-        email: admin@example.com
-        cache_dir: /var/hula/certs
-```
-
-When running in Docker, make sure to:
-- Expose ports 80 and 443: `docker run -p 80:80 -p 443:443 ...`
-- Mount a persistent volume for the cert cache: `-v hula-certs:/var/hula/certs`
+Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ecd70).
