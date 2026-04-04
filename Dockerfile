@@ -27,7 +27,7 @@ WORKDIR /src
 #RUN git clone https://github.com/FiloSottile/mkcert.git
 #WORKDIR /src/mkcert
 #RUN go build -ldflags "-X main.Version=$(git describe --tags)" && xx-verify mkcert
-FROM --platform=$BUILDPLATFORM alpine:3.19
+FROM alpine:3.19
 RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts
 ADD hulation/docker-example-config.yaml /etc/hula/config.yaml
 COPY --from=build /src/hulation/hula /hula/hula
