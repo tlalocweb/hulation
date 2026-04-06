@@ -10,10 +10,10 @@ echo "Building hula version ${hulaversion} built on ${hulabuilddate}"
 
 case "${1}" in
     --local)
-        # Build for local platform only, load into docker
+        # Build for local platform only, no cross-compilation toolchain needed
         echo "Building for local platform..."
         docker build \
-            -f "$(dirname "$0")/Dockerfile" \
+            -f "$(dirname "$0")/Dockerfile.local" \
             --build-arg hulaversion="${hulaversion}" \
             --build-arg hulabuilddate="${hulabuilddate}" \
             --tag "${IMAGE}:${TAG}" \

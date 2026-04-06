@@ -132,7 +132,7 @@ docker-push:
 docker-local:
 	@echo "Building Docker image $(DOCKER_IMAGE):$(DOCKER_TAG) for local platform..."
 	docker build \
-		-f $(DOCKERFILE) \
+		-f $(CURDIR)/Dockerfile.local \
 		--build-arg hulaversion=$(VERSION) \
 		--build-arg hulabuilddate=$(BUILD_DATE) \
 		--tag $(DOCKER_IMAGE):$(DOCKER_TAG) \
