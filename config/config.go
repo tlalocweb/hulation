@@ -1089,7 +1089,7 @@ func LoadConfig(filename string) (*Config, error) {
 	if cfg.SSL != nil {
 		// skip if these are both entirely empty - it means the user
 		// did not want SSL, otherwise let the error handling work
-		if !cfg.SSL.NoConfig() {
+		if !cfg.SSL.NoConfig() && !cfg.SSL.IsACME() {
 			err = cfg.SSL.LoadSSLConfig()
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
