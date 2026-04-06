@@ -13,6 +13,7 @@ case "${1}" in
         # Build for local platform only, no cross-compilation toolchain needed
         echo "Building for local platform..."
         docker build \
+            --network=host \
             -f "$(dirname "$0")/Dockerfile.local" \
             --build-arg hulaversion="${hulaversion}" \
             --build-arg hulabuilddate="${hulabuilddate}" \
