@@ -585,6 +585,7 @@ type Config struct {
 	Servers        []*Server  `yaml:"servers,omitempty"`
 	CORS           CORSConfig `yaml:"cors,omitempty"`
 	SSL            *SSLConfig `yaml:"ssl,omitempty"`
+	Registries map[string]*backend.RegistryConfig `yaml:"registries,omitempty"`
 	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
 	JWTKey         string     `yaml:"jwt_key,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
@@ -708,6 +709,16 @@ func LoadConfig(filename string) (*Config, error) {
 	cfg.DBConfig.Host = SubstConfVarsLogErrorf(cfg.DBConfig.Host, map[string]string{"confdir": confDir}, "dbconfig.host")
 
 	log.Debugf("config: db %+v", *cfg.DBConfig)
+
+	// Registry credential substitution
+	for name, reg := range cfg.Registries {
+		if reg.Server == "" {
+			return nil, fmt.Errorf("registry %q missing required 'server' field", name)
+		}
+		reg.Server = SubstConfVarsLogErrorf(reg.Server, map[string]string{"confdir": confDir}, fmt.Sprintf("registries[%s].server", name))
+		reg.Username = SubstConfVarsLogErrorf(reg.Username, map[string]string{"confdir": confDir}, fmt.Sprintf("registries[%s].username", name))
+		reg.Password = SubstConfVarsLogErrorf(reg.Password, map[string]string{"confdir": confDir}, fmt.Sprintf("registries[%s].password", name))
+	}
 
 	conftagz.RegisterTestFunc("validtimeduration", ValidTimeDuration)
 
@@ -993,18 +1004,10 @@ func LoadConfig(filename string) (*Config, error) {
 		// log.Debugf("cfg.byListener[%s].servers = %+v", s.listenOn, listenerforserver.servers)
 		// log.Debugf("cfg.byListener[%s].serverByHost[%s] = %+v", s.listenOn, s.Host, listenerforserver.serverByHost)
 		cfg.byListener[s.listenOn].serverByHost[s.Host] = s
-		// look at aliases
+		// add aliases to listener's serverByHost and to byAllAlias
 		for _, a := range s.Aliases {
-			_, ok := cfg.byServer[a]
-			if ok {
-				log.Errorf(`alias "%s" for server config %s already referenced`, a, s.Host)
-			}
-			if validIpAddressRE.MatchString(a) || validHostnameRE.MatchString(a) {
-				log.Debugf(`server[%s] alias %s`, s.Host, a)
-				cfg.byServer[a] = s
-			} else {
-				log.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
-			}
+			cfg.byListener[s.listenOn].serverByHost[a] = s
+			cfg.byAllAlias[a] = s
 		}
 		s.Root = SubstConfVarsLogErrorf(s.Root, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].root", s.Host))
 		for _, f := range s.NonRootStaticFolders {

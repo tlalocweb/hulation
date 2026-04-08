@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/tlalocweb/hulation/log"
@@ -20,13 +21,15 @@ type Manager struct {
 	mu         sync.Mutex
 	cli        *client.Client
 	inDocker   bool
-	selfID     string            // own container ID (if running in Docker)
-	networks   map[string]string // serverHost -> networkID
-	containers map[string]string // containerName -> containerID
+	selfID     string                       // own container ID (if running in Docker)
+	networks   map[string]string            // serverHost -> networkID
+	containers map[string]string            // containerName -> containerID
+	registries map[string]*RegistryConfig   // registry server host -> config
 }
 
 // NewManager creates a new backend manager with a Docker client.
-func NewManager() (*Manager, error) {
+// registries is a map of user-defined name -> RegistryConfig (may be nil).
+func NewManager(registries map[string]*RegistryConfig) (*Manager, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
@@ -53,12 +56,21 @@ func NewManager() (*Manager, error) {
 		log.Infof("backend: running outside Docker, will publish ports to host")
 	}
 
+	// Build server-keyed registry lookup map
+	regByServer := make(map[string]*RegistryConfig)
+	for _, reg := range registries {
+		if reg.Server != "" {
+			regByServer[reg.Server] = reg
+		}
+	}
+
 	return &Manager{
 		cli:        cli,
 		inDocker:   inDocker,
 		selfID:     selfID,
 		networks:   make(map[string]string),
 		containers: make(map[string]string),
+		registries: regByServer,
 	}, nil
 }
 
@@ -184,10 +196,25 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	return nil
 }
 
-// pullImage pulls a Docker image, logging progress.
+// pullImage pulls a Docker image, using registry credentials if configured.
+// If the image already exists locally, the pull is skipped.
 func (m *Manager) pullImage(ctx context.Context, imageName string) error {
+	// Check if image exists locally
+	_, _, err := m.cli.ImageInspectWithRaw(ctx, imageName)
+	if err == nil {
+		log.Infof("backend: image %s found locally, skipping pull", imageName)
+		return nil
+	}
+
 	log.Infof("backend: pulling image %s", imageName)
-	reader, err := m.cli.ImagePull(ctx, imageName, image.PullOptions{})
+
+	pullOpts := image.PullOptions{}
+	if auth := m.getAuthForImage(imageName); auth != "" {
+		pullOpts.RegistryAuth = auth
+		log.Debugf("backend: using registry credentials for %s", imageName)
+	}
+
+	reader, err := m.cli.ImagePull(ctx, imageName, pullOpts)
 	if err != nil {
 		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
 	}
@@ -196,6 +223,40 @@ func (m *Manager) pullImage(ctx context.Context, imageName string) error {
 	_, _ = io.Copy(io.Discard, reader)
 	log.Infof("backend: pulled image %s", imageName)
 	return nil
+}
+
+// getAuthForImage returns the base64-encoded registry auth for the given image,
+// or "" if no matching registry is configured.
+func (m *Manager) getAuthForImage(imageName string) string {
+	// Docker image names: registry.io/user/repo:tag or just repo:tag (Docker Hub)
+	parts := strings.SplitN(imageName, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	registryHost := parts[0]
+	// Only treat as a registry if it contains a dot or colon
+	// (otherwise it's a Docker Hub user/org like "library/nginx")
+	if !strings.Contains(registryHost, ".") && !strings.Contains(registryHost, ":") {
+		return ""
+	}
+
+	reg, ok := m.registries[registryHost]
+	if !ok {
+		return ""
+	}
+
+	authConfig := registry.AuthConfig{
+		Username:      reg.Username,
+		Password:      reg.Password,
+		ServerAddress: reg.Server,
+	}
+	encoded, err := registry.EncodeAuthConfig(authConfig)
+	if err != nil {
+		log.Errorf("backend: failed to encode registry auth for %s: %s", registryHost, err)
+		return ""
+	}
+	return encoded
 }
 
 // createAndStartContainer creates and starts a Docker container for a backend.

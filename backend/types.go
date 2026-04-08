@@ -8,6 +8,13 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
+// RegistryConfig holds credentials for a private Docker registry.
+type RegistryConfig struct {
+	Server   string `yaml:"server"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
 // BackendConfig represents a Docker container backend service that hulation
 // reverse-proxies to. Config fields are compose-compatible where possible.
 type BackendConfig struct {

@@ -22,6 +22,7 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/router"
+	"golang.org/x/net/http2"
 )
 
 // func RunServer(server *config.Listener) (err error) {
@@ -76,13 +77,53 @@ type listenerErr struct {
 	err      error
 }
 
-// a blocking call which is a custom subsistute for fiber.ListenTLSWithCertificate()
+// singleConnListener is a net.Listener that serves exactly one connection
+// then blocks forever on subsequent Accept calls. Used to feed a single
+// TLS conn to an http.Server.
+type singleConnListener struct {
+	conn net.Conn
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newSingleConnListener(c net.Conn) *singleConnListener {
+	return &singleConnListener{conn: c, ch: make(chan struct{})}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	var c net.Conn
+	l.once.Do(func() { c = l.conn })
+	if c != nil {
+		return c, nil
+	}
+	// Block until Close is called
+	<-l.ch
+	return nil, net.ErrClosed
+}
+
+func (l *singleConnListener) Close() error {
+	select {
+	case <-l.ch:
+	default:
+		close(l.ch)
+	}
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr {
+	return l.conn.LocalAddr()
+}
+
+// FiberListenWithListener starts a TLS server that dispatches based on ALPN:
+//   - h2 connections go to a net/http handler (HTTP/2)
+//   - http/1.1 connections go to the Fiber app (fasthttp)
 func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 	tlsHandler := &fiber.TLSHandler{}
 	tlsCfg := &tls.Config{
 		MinVersion:     tls.VersionTLS12,
 		Certificates:   []tls.Certificate{},
 		GetCertificate: tlsHandler.GetClientInfo,
+		NextProtos:     []string{"h2", "http/1.1"},
 	}
 
 	// add static certs (non-ACME)
@@ -94,20 +135,67 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 
 	// if ACME is configured, use autocert manager for certificate retrieval
 	if l.ACMEManager != nil {
-		tlsCfg.GetCertificate = l.ACMEManager.GetCertificate
-		tlsCfg.NextProtos = append(tlsCfg.NextProtos, "h2", "http/1.1", "acme-tls/1")
+		acmeMgr := l.ACMEManager
+		tlsCfg.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := acmeMgr.GetCertificate(hello)
+			if err != nil {
+				log.Errorf("ACME: GetCertificate error for %s: %s", hello.ServerName, err)
+			}
+			return cert, err
+		}
+		tlsCfg.NextProtos = append(tlsCfg.NextProtos, "acme-tls/1")
 		log.Infof("ACME: using autocert manager for TLS on %s", l.GetListenOn())
 	}
 
 	log.Debugf("Starting TLS server on port %s - has %d static certificates, ACME=%v", l.GetListenOn(), len(tlsCfg.Certificates), l.ACMEManager != nil)
 
+	// Set up the HTTP/2 server with the h2 handler
+	h2Handler := NewH2Handler(l)
+	h2Server := &http.Server{
+		Handler: h2Handler,
+	}
+	if err := http2.ConfigureServer(h2Server, &http2.Server{}); err != nil {
+		return fmt.Errorf("failed to configure HTTP/2: %w", err)
+	}
+
 	ln, err := net.Listen("tcp", l.GetListenOn())
 	if err != nil {
 		return fmt.Errorf("failed to listen (net.Listen): %w", err)
 	}
-	ln = tls.NewListener(ln, tlsCfg)
-	err = fiberapp.Listener(ln)
-	return err
+	tlsLn := tls.NewListener(ln, tlsCfg)
+	log.Infof("TLS server listening on %s (h2 + http/1.1)", l.GetListenOn())
+
+	// Accept loop: dispatch based on negotiated ALPN protocol
+	for {
+		conn, err := tlsLn.Accept()
+		if err != nil {
+			return fmt.Errorf("accept error: %w", err)
+		}
+		go func(c net.Conn) {
+			tlsConn, ok := c.(*tls.Conn)
+			if !ok {
+				c.Close()
+				return
+			}
+			// Complete the TLS handshake
+			if err := tlsConn.Handshake(); err != nil {
+				log.Debugf("TLS handshake error: %s", err)
+				tlsConn.Close()
+				return
+			}
+			proto := tlsConn.ConnectionState().NegotiatedProtocol
+			switch proto {
+			case "h2":
+				// HTTP/2: feed the conn to the net/http server
+				scl := newSingleConnListener(tlsConn)
+				h2Server.Serve(scl)
+				scl.Close()
+			default:
+				// HTTP/1.1: serve via Fiber's fasthttp server
+				fiberapp.Server().ServeConn(tlsConn)
+			}
+		}(conn)
+	}
 }
 
 // Starts up a fiber server on a specific port / address and then adds all the routes in for that
@@ -316,7 +404,7 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 	}
 	if hasBackends {
 		var berr error
-		backendMgr, berr = backend.NewManager()
+		backendMgr, berr = backend.NewManager(conf.Registries)
 		if berr != nil {
 			log.Errorf("Failed to initialize Docker backend manager: %s", berr.Error())
 			return 1
