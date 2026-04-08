@@ -18,7 +18,8 @@ import (
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/config"
-	handler "github.com/tlalocweb/hulation/fiberhandler"
+	fhandler "github.com/tlalocweb/hulation/fiberhandler"
+	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/router"
@@ -139,7 +140,8 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 		tlsCfg.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			cert, err := acmeMgr.GetCertificate(hello)
 			if err != nil {
-				log.Errorf("ACME: GetCertificate error for %s: %s", hello.ServerName, err)
+				// Missing/invalid SNI from bots and scanners is expected — log as debug
+				log.Debugf("ACME: GetCertificate error for %s: %s", hello.ServerName, err)
 			}
 			return cert, err
 		}
@@ -264,9 +266,9 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	// }
 
 	l.FiberApp.Use(func(c *fiber.Ctx) error {
-		hostconf, _, _, _ := handler.GetHostConfig(c)
+		hostconf, _, _, _ := fhandler.GetHostConfig(c)
 		if hostconf != nil {
-			handler.SetCSP(c, hostconf)
+			fhandler.SetCSP(c, hostconf)
 		}
 		return c.Next()
 	})
@@ -295,7 +297,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 				MaxAge:        int(server.RootMaxAge),
 				CacheDuration: duration,
 				Next: func(c *fiber.Ctx) bool {
-					hostconf, _, _, _ := handler.GetHostConfig(c)
+					hostconf, _, _, _ := fhandler.GetHostConfig(c)
 					if hostconf != nil {
 						if hostconf.Host == server.Host {
 							return false
@@ -332,7 +334,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 		}
 	}
 
-	handler.InitVistorHandlers()
+	handler.InitVisitorHandlers()
 	// check for TLS
 
 	if len(l.SSL) > 0 {
