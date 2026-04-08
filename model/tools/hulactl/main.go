@@ -22,7 +22,7 @@ import (
 
 	"github.com/tlalocweb/hulation/client"
 	"github.com/tlalocweb/hulation/config"
-	handler "github.com/tlalocweb/hulation/fiberhandler"
+	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
 	"gorm.io/driver/clickhouse"

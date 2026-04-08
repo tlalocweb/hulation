@@ -18,7 +18,6 @@ import (
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/config"
-	fhandler "github.com/tlalocweb/hulation/fiberhandler"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
@@ -266,9 +265,10 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	// }
 
 	l.FiberApp.Use(func(c *fiber.Ctx) error {
-		hostconf, _, _, _ := fhandler.GetHostConfig(c)
+		ctx := handler.NewFiberCtx(c)
+		hostconf, _, _, _ := handler.GetHostConfig(ctx)
 		if hostconf != nil {
-			fhandler.SetCSP(c, hostconf)
+			handler.SetCSP(ctx, hostconf)
 		}
 		return c.Next()
 	})
@@ -297,7 +297,8 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 				MaxAge:        int(server.RootMaxAge),
 				CacheDuration: duration,
 				Next: func(c *fiber.Ctx) bool {
-					hostconf, _, _, _ := fhandler.GetHostConfig(c)
+					ctx := handler.NewFiberCtx(c)
+					hostconf, _, _, _ := handler.GetHostConfig(ctx)
 					if hostconf != nil {
 						if hostconf.Host == server.Host {
 							return false

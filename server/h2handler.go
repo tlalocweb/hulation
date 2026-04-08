@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/model"
 )
 
 // H2Handler handles HTTP/2 requests using Go's net/http.
@@ -49,9 +52,69 @@ func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Infof("h2 %s %s %s %d %s %s", r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
 }
 
+const opaModule = `
+package hulation.authz
+
+import rego.v1
+
+default allow := false
+
+allow if {
+	some cap in input.attrs
+	cap == "admin"
+}
+`
+
+func newH2OpaMiddleware() handler.Middleware {
+	return handler.NewOpaMiddleware(handler.OpaConfig{
+		RegoQuery:             "data.hulation.authz.allow",
+		RegoPolicy:            bytes.NewBufferString(opaModule),
+		IncludeQueryString:    true,
+		DeniedStatusCode:      http.StatusForbidden,
+		DeniedResponseMessage: "status forbidden",
+		IncludeHeaders:        []string{"Authorization"},
+		InputCreationMethod: func(ctx handler.RequestCtx) (map[string]interface{}, int, string, error) {
+			ahdr := ctx.Header("Authorization")
+			var token string
+			n, err := fmt.Sscanf(ahdr, "Bearer %s", &token)
+			if err != nil {
+				return nil, http.StatusUnauthorized, "error parsing token", fmt.Errorf("error parsing token: %w", err)
+			}
+			if n < 1 {
+				return nil, http.StatusUnauthorized, "no token", fmt.Errorf("no token")
+			}
+			ok, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+			if err != nil {
+				return nil, http.StatusUnauthorized, "error verifying token", fmt.Errorf("error verifying token: %w", err)
+			}
+			if !ok {
+				return nil, http.StatusUnauthorized, "token not valid", fmt.Errorf("token not valid")
+			}
+			ctx.SetLocals("jwt", token)
+			ctx.SetLocals("perms", perms)
+			return map[string]interface{}{
+				"method":   ctx.Method(),
+				"path":     ctx.Path(),
+				"jwt":      token,
+				"jwtkey":   app.GetConfig().JWTKey,
+				"rootname": app.GetConfig().Admin.Username,
+				"userid":   perms.UserID,
+				"attrs":    perms.ListCaps(),
+				"ip":       ctx.IP(),
+			}, 0, "", nil
+		},
+	})
+}
+
 func (h *H2Handler) setupRoutes() {
 	cfg := app.GetConfig()
 	visitorPrefix := cfg.VisitorPrefix
+
+	// OPA middleware for admin API protection on h2
+	opa := newH2OpaMiddleware()
+	wrapOpa := func(h handler.Handler) http.HandlerFunc {
+		return handler.WrapForNetHTTP(opa(h))
+	}
 
 	// --- Unified handler routes (visitor tracking, scripts) ---
 
@@ -75,21 +138,21 @@ func (h *H2Handler) setupRoutes() {
 	landerPath := cfg.LanderPath
 	h.mux.Handle("GET "+visitorPrefix+landerPath+"/{landerid}", handler.WrapForNetHTTP(handler.DoLanding))
 
-	// Admin API (behind auth — OPA middleware not yet wired for h2)
+	// Admin API — login is not OPA-protected, everything else is
 	h.mux.Handle("POST /api/auth/login", handler.WrapForNetHTTP(handler.Login))
 	h.mux.Handle("GET /hulastatus", handler.WrapForNetHTTP(handler.Status))
-	h.mux.Handle("GET /api/status", handler.WrapForNetHTTP(handler.Status))
-	h.mux.Handle("POST /api/auth/logout", handler.WrapForNetHTTP(handler.Logout))
-	h.mux.Handle("POST /api/auth/user", handler.WrapForNetHTTP(handler.NewUser))
-	h.mux.Handle("GET /api/auth/user/{userlookup}", handler.WrapForNetHTTP(handler.GetUser))
-	h.mux.Handle("PATCH /api/auth/user/{userid}", handler.WrapForNetHTTP(handler.ModifyUser))
-	h.mux.Handle("GET /api/auth/ok", handler.WrapForNetHTTP(handler.StatusAuthOK))
-	h.mux.Handle("POST /api/form/create", handler.WrapForNetHTTP(handler.FormCreate))
-	h.mux.Handle("DELETE /api/form/{formid}", handler.WrapForNetHTTP(handler.FormDelete))
-	h.mux.Handle("PATCH /api/form/{formid}", handler.WrapForNetHTTP(handler.FormModify))
-	h.mux.Handle("POST /api/lander/create", handler.WrapForNetHTTP(handler.LanderCreate))
-	h.mux.Handle("DELETE /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderDelete))
-	h.mux.Handle("PATCH /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderModify))
+	h.mux.Handle("GET /api/status", wrapOpa(handler.Status))
+	h.mux.Handle("POST /api/auth/logout", wrapOpa(handler.Logout))
+	h.mux.Handle("POST /api/auth/user", wrapOpa(handler.NewUser))
+	h.mux.Handle("GET /api/auth/user/{userlookup}", wrapOpa(handler.GetUser))
+	h.mux.Handle("PATCH /api/auth/user/{userid}", wrapOpa(handler.ModifyUser))
+	h.mux.Handle("GET /api/auth/ok", wrapOpa(handler.StatusAuthOK))
+	h.mux.Handle("POST /api/form/create", wrapOpa(handler.FormCreate))
+	h.mux.Handle("DELETE /api/form/{formid}", wrapOpa(handler.FormDelete))
+	h.mux.Handle("PATCH /api/form/{formid}", wrapOpa(handler.FormModify))
+	h.mux.Handle("POST /api/lander/create", wrapOpa(handler.LanderCreate))
+	h.mux.Handle("DELETE /api/lander/{landerid}", wrapOpa(handler.LanderDelete))
+	h.mux.Handle("PATCH /api/lander/{landerid}", wrapOpa(handler.LanderModify))
 
 	log.Infof("h2: registered all unified handler routes")
 
