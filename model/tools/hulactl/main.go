@@ -841,6 +841,87 @@ func main() {
 		model.AutoMigrateFormModels(db)
 
 		fmt.Printf("Automigrate done.\n")
+	case CMD_UPDATEADMINHASH:
+		if hulactlconfig.HulationConfigPath == "" {
+			fmt.Printf("Need -hulaconf flag pointing to the hulation config file.\n")
+			os.Exit(1)
+		}
+		l, err := readline.NewEx(&readline.Config{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+			os.Exit(1)
+		}
+		passwordb, err := l.ReadPassword("Enter new admin password: ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+			os.Exit(1)
+		}
+		passwordb2, err := l.ReadPassword("Confirm password: ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if string(passwordb) != string(passwordb2) {
+			fmt.Printf("Passwords do not match.\n")
+			os.Exit(1)
+		}
+		hash, _, err := utils.GenerateHulaHashFromPlaintextPass(string(passwordb))
+		if err != nil {
+			fmt.Printf("Error generating hash: %s\n", err.Error())
+			os.Exit(1)
+		}
+		err = utils.ModifyYamlFile(hulactlconfig.HulationConfigPath, []string{"admin", "hash"}, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: hash,
+		})
+		if err != nil {
+			fmt.Printf("Error updating config file: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Admin hash updated in %s\n", hulactlconfig.HulationConfigPath)
+
+	case CMD_BADACTORS:
+		client := GetHulactlClient(hulactlconfig)
+		// Get stats first for threshold info
+		stats, err := client.BadActorStats()
+		if err != nil {
+			fmt.Printf("Error getting bad actor stats: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Bad Actor Status: enabled=%v  dry_run=%v  threshold=%d  ttl=%s\n",
+			stats.Enabled, stats.DryRun, stats.BlockThreshold, stats.TTL)
+		fmt.Printf("Blocked IPs: %d  Allowlisted: %d  Signatures: %d\n\n",
+			stats.BlockedIPs, stats.AllowlistedIPs, stats.Signatures)
+
+		entries, err := client.BadActorList()
+		if err != nil {
+			fmt.Printf("Error getting bad actor list: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if len(entries) == 0 {
+			fmt.Printf("No bad actors detected.\n")
+		} else {
+			fmt.Printf("%-18s %-7s %-9s %-22s %-22s %s\n",
+				"IP", "SCORE", "STATUS", "DETECTED", "EXPIRES", "REASON")
+			fmt.Printf("%-18s %-7s %-9s %-22s %-22s %s\n",
+				"--", "-----", "------", "--------", "-------", "------")
+			for _, e := range entries {
+				status := "flagged"
+				if e.Blocked {
+					status = "BLOCKED"
+				}
+				fmt.Printf("%-18s %-7d %-9s %-22s %-22s %s\n",
+					e.IP,
+					e.Score,
+					status,
+					e.DetectedAt.Format("2006-01-02 15:04:05"),
+					e.ExpiresAt.Format("2006-01-02 15:04:05"),
+					e.LastReason,
+				)
+			}
+			fmt.Printf("\n%d entries total\n", len(entries))
+		}
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		fmt.Printf("Usage: %s <configfile> <command>\n", os.Args[0])

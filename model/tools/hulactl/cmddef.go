@@ -54,6 +54,11 @@ const (
 	CMD_DELETEDB_HELP      = "Delete the database used by hulation"
 	CMD_INITDB             = "initdb"
 	CMD_INITDB_HELP        = "Initialize the database used by hulation"
+	CMD_BADACTORS          = "badactors"
+	CMD_BADACTORS_HELP     = "List bad actors with scores and blocked status"
+	CMD_UPDATEADMINHASH       = "updateadminhash"
+	CMD_UPDATEADMINHASH_HELP  = "Generate a password hash and write it to the hulation config file"
+	CMD_UPDATEADMINHASH_USAGE = "updateadminhash\nRequires -hulaconf flag pointing to hulation config file"
 )
 
 var commands []Command
@@ -76,6 +81,8 @@ func init() {
 		Command{CMD_LOGOUT, CMD_LOGOUT_HELP, ""},
 		Command{CMD_DELETEDB, CMD_DELETEDB_HELP, ""},
 		Command{CMD_INITDB, CMD_INITDB_HELP, ""},
+		Command{CMD_BADACTORS, CMD_BADACTORS_HELP, ""},
+		Command{CMD_UPDATEADMINHASH, CMD_UPDATEADMINHASH_HELP, CMD_UPDATEADMINHASH_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

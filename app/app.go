@@ -41,6 +41,8 @@ func ParseFlags() {
 	logopts := flag.String("logopts", "", "sets log options")
 	debuglevel := flag.Int("debug", 0, "sets log level to debug")
 	configfile := flag.String("config", "config.yaml", "config file to use")
+	logtags := flag.String("logtags", "", "comma-separated list of log tags to enable")
+	nologtags := flag.String("nologtags", "", "comma-separated list of log tags to exclude")
 	//	jsonlogs := flag.Bool("J", false, "use JSON logs")
 
 	flag.Parse()
@@ -123,6 +125,17 @@ func ParseFlags() {
 	}
 	log.SetLevel(logLevel)
 
+	// Apply tag filters from CLI flags
+	if logtags != nil && *logtags != "" {
+		if err := log.SetTagFilterFromString(*logtags); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid log tags: %s\n", err.Error())
+		}
+	}
+	if nologtags != nil && *nologtags != "" {
+		if err := log.SetTagBlockFilterFromString(*nologtags); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid no-log tags: %s\n", err.Error())
+		}
+	}
 }
 func DumpVersion() {
 	if config.Version != "" {
@@ -134,6 +147,37 @@ func DumpVersion() {
 		return
 	}
 	fmt.Println("(unknown)")
+}
+
+// ReloadConfig re-reads the config file from disk and swaps the global config pointer.
+// Returns the old config so callers can compare fields.
+func ReloadConfig() (oldConf *config.Config, err error) {
+	newConf, err := config.LoadConfig(appConfigFile)
+	if err != nil {
+		err = fmt.Errorf("reload config: %w", err)
+		return
+	}
+	oldConf = appConfig
+	appConfig = newConf
+	return
+}
+
+// ApplyLogTagConfig applies log tag filters from the config file.
+// CLI flags take precedence over config values.
+func ApplyLogTagConfig() {
+	if appConfig == nil {
+		return
+	}
+	if log.GetTagFilter() == 0 && appConfig.LogTags != "" {
+		if err := log.SetTagFilterFromString(appConfig.LogTags); err != nil {
+			log.Warnf("Invalid log_tags in config: %s", err.Error())
+		}
+	}
+	if appConfig.NoLogTags != "" {
+		if err := log.SetTagBlockFilterFromString(appConfig.NoLogTags); err != nil {
+			log.Warnf("Invalid no_log_tags in config: %s", err.Error())
+		}
+	}
 }
 
 func GetConfigPath() string {

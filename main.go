@@ -36,6 +36,7 @@ func main() {
 		log.Fatalf("Error reading config: %s", err.Error())
 		utils.CleanShutdown(1)
 	}
+	app.ApplyLogTagConfig()
 
 	// if conf.Store == nil {
 	// 	log.Fatalf("Store config is missing")

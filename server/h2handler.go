@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
@@ -46,10 +48,34 @@ func (rr *responseRecorder) WriteHeader(code int) {
 }
 
 func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Bad actor check — before any routing
+	if badactor.IsEnabled() {
+		ip := extractIPFromRequest(r)
+		if block, _ := badactor.GetStore().CheckAndBlock(ip, r.UserAgent(), r.Method, r.URL.Path, r.URL.RawQuery, r.Host); block {
+			panic(http.ErrAbortHandler) // abort silently
+		}
+	}
 	start := time.Now()
 	rec := &responseRecorder{ResponseWriter: w, status: 200}
 	h.mux.ServeHTTP(rec, r)
 	log.Infof("h2 %s %s %s %d %s %s", r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+}
+
+func extractIPFromRequest(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 const opaModule = `
@@ -153,6 +179,18 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("POST /api/lander/create", wrapOpa(handler.LanderCreate))
 	h.mux.Handle("DELETE /api/lander/{landerid}", wrapOpa(handler.LanderDelete))
 	h.mux.Handle("PATCH /api/lander/{landerid}", wrapOpa(handler.LanderModify))
+
+	// Bad actor admin API
+	if badactor.IsEnabled() {
+		h.mux.Handle("GET /api/badactor/list", wrapOpa(badactor.ListBadActors))
+		h.mux.Handle("DELETE /api/badactor/block/{ip}", wrapOpa(badactor.EvictBadActor))
+		h.mux.Handle("POST /api/badactor/block", wrapOpa(badactor.ManualBlock))
+		h.mux.Handle("GET /api/badactor/allowlist", wrapOpa(badactor.ListAllowlistHandler))
+		h.mux.Handle("POST /api/badactor/allowlist", wrapOpa(badactor.AddToAllowlistHandler))
+		h.mux.Handle("DELETE /api/badactor/allowlist/{ip}", wrapOpa(badactor.RemoveFromAllowlistHandler))
+		h.mux.Handle("GET /api/badactor/stats", wrapOpa(badactor.BadActorStats))
+		h.mux.Handle("GET /api/badactor/signatures", wrapOpa(badactor.ListSignaturesHandler))
+	}
 
 	log.Infof("h2: registered all unified handler routes")
 

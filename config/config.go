@@ -482,6 +482,27 @@ type ACMEConfig struct {
 	HTTPPort int `yaml:"http_port,omitempty" default:"80"`
 }
 
+// BadActorConfig configures the bad actor detection and blocking feature.
+// Present in config = enabled. Bool fields use negative names so false (zero value) = on.
+type BadActorConfig struct {
+	// Set true to disable the entire feature
+	Disable bool `yaml:"disable"`
+	// Path to a custom signatures YAML file (optional — embedded defaults always loaded)
+	SignaturesFile string `yaml:"signatures_file,omitempty"`
+	// Total score an IP must reach to be blocked
+	BlockThreshold int `yaml:"block_threshold" default:"50"`
+	// How long a blocked IP stays blocked
+	TTL string `yaml:"ttl,omitempty" test:"$(validtimeduration)" default:"24h"`
+	// How often the background eviction sweep runs
+	EvictionInterval string `yaml:"eviction_interval,omitempty" test:"$(validtimeduration)" default:"15m"`
+	// Set true to NOT block at TCP level before TLS handshake
+	NoBlockPreTLS bool `yaml:"no_block_pre_tls"`
+	// Set true to NOT load known bad actors from ClickHouse on startup
+	NoLoadFromDB bool `yaml:"no_load_from_db"`
+	// Set true to only log matches without actually blocking (audit mode)
+	DryRun bool `yaml:"dry_run,omitempty"`
+}
+
 type SSLConfig struct {
 	// can be either the cert / key itself infline or a path to the cert / key
 	Cert string `yaml:"cert,omitempty"`
@@ -586,6 +607,11 @@ type Config struct {
 	CORS           CORSConfig `yaml:"cors,omitempty"`
 	SSL            *SSLConfig `yaml:"ssl,omitempty"`
 	Registries map[string]*backend.RegistryConfig `yaml:"registries,omitempty"`
+	BadActors  *BadActorConfig                      `yaml:"bad_actors,omitempty"`
+	// Comma-separated list of log tags to enable (only these tags will log)
+	LogTags   string `yaml:"log_tags,omitempty"`
+	// Comma-separated list of log tags to exclude from logging
+	NoLogTags string `yaml:"no_log_tags,omitempty"`
 	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
 	JWTKey         string     `yaml:"jwt_key,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`

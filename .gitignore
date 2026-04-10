@@ -41,3 +41,4 @@ hula
 .external/
 .gopath/
 env.sh
+hulactl

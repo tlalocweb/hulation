@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/tlalocweb/hulation/backend"
+	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
@@ -115,6 +116,19 @@ func SetupRoutesFiber(l *config.Listener) {
 		lander.Post("/create", wrapWithOpa(opa, handler.LanderCreate))
 		lander.Delete("/:landerid", wrapWithOpa(opa, handler.LanderDelete))
 		lander.Patch("/:landerid", wrapWithOpa(opa, handler.LanderModify))
+
+		// Bad actor management
+		if badactor.IsEnabled() {
+			ba := api.Group("/badactor")
+			ba.Get("/list", wrapWithOpa(opa, badactor.ListBadActors))
+			ba.Delete("/block/:ip", wrapWithOpa(opa, badactor.EvictBadActor))
+			ba.Post("/block", wrapWithOpa(opa, badactor.ManualBlock))
+			ba.Get("/allowlist", wrapWithOpa(opa, badactor.ListAllowlistHandler))
+			ba.Post("/allowlist", wrapWithOpa(opa, badactor.AddToAllowlistHandler))
+			ba.Delete("/allowlist/:ip", wrapWithOpa(opa, badactor.RemoveFromAllowlistHandler))
+			ba.Get("/stats", wrapWithOpa(opa, badactor.BadActorStats))
+			ba.Get("/signatures", wrapWithOpa(opa, badactor.ListSignaturesHandler))
+		}
 	}
 
 	// Visitor API — no auth required

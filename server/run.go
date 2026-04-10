@@ -17,6 +17,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/backend"
+	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
@@ -173,6 +174,14 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 			return fmt.Errorf("accept error: %w", err)
 		}
 		go func(c net.Conn) {
+			// Pre-TLS bad actor check — block known bad IPs before wasting CPU on handshake
+			if badactor.IsEnabled() {
+				host, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+				if block, _ := badactor.GetStore().CheckKnownOnly(host); block {
+					c.Close()
+					return
+				}
+			}
 			tlsConn, ok := c.(*tls.Conn)
 			if !ok {
 				c.Close()
@@ -259,6 +268,17 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	log.Debugf("CORS AllowOrigins: %s", corsconfig.AllowOrigins)
 	log.Debugf("CORS AllowCredentials: %t", corsconfig.AllowCredentials)
 	log.Debugf("CORS AllowMethods: %s", corsconfig.AllowMethods)
+
+	// Bad actor check — must be first middleware
+	if badactor.IsEnabled() {
+		l.FiberApp.Use(func(c *fiber.Ctx) error {
+			ba := badactor.GetStore()
+			if block, _ := ba.CheckAndBlock(c.IP(), c.Get("User-Agent"), c.Method(), c.Path(), string(c.Request().URI().QueryString()), c.Hostname()); block {
+				return nil // drop connection — no response
+			}
+			return c.Next()
+		})
+	}
 
 	l.FiberApp.Use(cors.New(corsconfig))
 	log.Debugf("CORS middleware enabled for listener %s", l.GetListenOn())
@@ -396,6 +416,14 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		return 1
 	}
 
+	// Initialize bad actor detection
+	if conf.BadActors != nil && !conf.BadActors.Disable {
+		if err := badactor.Init(conf.BadActors, model.GetDB(), conf.Servers); err != nil {
+			log.Errorf("Failed to initialize bad actor detection: %s", err.Error())
+			// Non-fatal — continue without bad actor protection
+		}
+	}
+
 	// Start Docker backend containers if any server has them configured
 	var backendMgr *backend.Manager
 	hasBackends := false
@@ -446,6 +474,7 @@ mainLoop:
 		select {
 		case sig := <-sigchan:
 			log.Infof("Received signal %s, shutting down", sig)
+			badactor.Shutdown()
 			if backendMgr != nil {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				backendMgr.StopAll(shutdownCtx)

@@ -1,0 +1,490 @@
+version: 1
+
+categories:
+  web_shells:
+    description: "Web shell and backdoor probes"
+    signatures:
+      - name: c99_shell
+        type: url
+        pattern: "(?i)/c99\\.php"
+        score: 100
+        reason: "C99 web shell probe"
+      - name: r57_shell
+        type: url
+        pattern: "(?i)/r57\\.php"
+        score: 100
+        reason: "R57 web shell probe"
+      - name: b374k_shell
+        type: url
+        pattern: "(?i)/b374k\\.php"
+        score: 100
+        reason: "B374K web shell probe"
+      - name: wso_shell
+        type: url
+        pattern: "(?i)/wso\\.php"
+        score: 100
+        reason: "WSO web shell probe"
+      - name: shell_php
+        type: url
+        pattern: "(?i)/shell\\.(php|asp|aspx|jsp)"
+        score: 100
+        reason: "Web shell probe"
+      - name: cmd_php
+        type: url
+        pattern: "(?i)/cmd\\.(php|asp|aspx|jsp)"
+        score: 100
+        reason: "Command shell probe"
+      - name: backdoor_php
+        type: url
+        pattern: "(?i)/backdoor\\.(php|asp|aspx|jsp)"
+        score: 100
+        reason: "Backdoor probe"
+      - name: alfa_shell
+        type: url
+        pattern: "(?i)/alfacgiapi/"
+        score: 100
+        reason: "Alfa web shell probe"
+
+  exploit_payloads:
+    description: "Active exploit attempts"
+    signatures:
+      - name: log4shell_jndi
+        type: query_string
+        pattern: "(?i)\\$\\{jndi:"
+        score: 100
+        reason: "Log4Shell exploit attempt"
+      - name: path_traversal_etc
+        type: url
+        pattern: "(?i)(\\.\\./){3,}|/etc/(passwd|shadow|hosts)"
+        score: 100
+        reason: "Path traversal exploit"
+      - name: sql_injection_url
+        type: url
+        pattern: "(?i)(union\\s+select|sleep\\(\\d|benchmark\\(|information_schema)"
+        score: 100
+        reason: "SQL injection in URL"
+      - name: sql_injection_qs
+        type: query_string
+        pattern: "(?i)(union\\s+select|sleep\\(\\d|benchmark\\(|0x[0-9a-f]{8,})"
+        score: 100
+        reason: "SQL injection in query"
+      - name: xss_attempt
+        type: query_string
+        pattern: "(?i)(<script|javascript:|on(load|error|mouseover)\\s*=)"
+        score: 100
+        reason: "XSS attempt"
+      - name: rfi_attempt
+        type: query_string
+        pattern: "(?i)(=https?://|=ftp://|=php://|=data:)"
+        score: 80
+        reason: "Remote file inclusion attempt"
+      - name: php_code_injection
+        type: query_string
+        pattern: "(?i)(base64_decode\\(|system\\(|exec\\(|passthru\\(|eval\\()"
+        score: 100
+        reason: "PHP code injection attempt"
+      - name: cmd_exec_attempt
+        type: url
+        pattern: "(?i)(/bin/sh|cmd\\.exe|/proc/self/environ)"
+        score: 100
+        reason: "Command execution attempt"
+
+  source_code_vcs:
+    description: "Version control and source code exposure"
+    signatures:
+      - name: git_config
+        type: url
+        pattern: "(?i)/\\.git/(config|HEAD|index|logs|refs|objects|COMMIT_EDITMSG)"
+        score: 80
+        reason: ".git repository probe"
+      - name: git_credentials
+        type: url
+        pattern: "(?i)/\\.git[/-]?credentials?"
+        score: 80
+        reason: "Git credentials probe"
+      - name: gitconfig
+        type: url
+        pattern: "(?i)/\\.gitconfig"
+        score: 80
+        reason: ".gitconfig probe"
+      - name: svn_entries
+        type: url
+        pattern: "(?i)/\\.svn/(entries|wc\\.db)"
+        score: 80
+        reason: "SVN repository probe"
+      - name: hg_config
+        type: url
+        pattern: "(?i)/\\.hg/hgrc"
+        score: 80
+        reason: "Mercurial repository probe"
+      - name: gitmodules
+        type: url
+        pattern: "(?i)/\\.gitmodules"
+        score: 80
+        reason: ".gitmodules probe"
+
+  environment_secrets:
+    description: "Environment files and secret exposure"
+    signatures:
+      - name: env_file
+        type: url
+        pattern: "(?i)/\\.env(\\.local|\\.production|\\.staging|\\.backup|\\.bak|\\.old|\\.save)?$"
+        score: 80
+        reason: "Environment file probe"
+      - name: aws_credentials
+        type: url
+        pattern: "(?i)/\\.aws/(credentials|config)"
+        score: 80
+        reason: "AWS credentials probe"
+      - name: docker_config
+        type: url
+        pattern: "(?i)/\\.docker/config\\.json"
+        score: 80
+        reason: "Docker credentials probe"
+      - name: kube_config
+        type: url
+        pattern: "(?i)/\\.kube/config"
+        score: 80
+        reason: "Kubernetes config probe"
+      - name: ssh_keys
+        type: url
+        pattern: "(?i)/\\.ssh/(id_rsa|id_ed25519|authorized_keys)"
+        score: 80
+        reason: "SSH key probe"
+      - name: npmrc
+        type: url
+        pattern: "(?i)/\\.npmrc"
+        score: 80
+        reason: "NPM credentials probe"
+      - name: netrc
+        type: url
+        pattern: "(?i)/[._]netrc"
+        score: 80
+        reason: ".netrc credentials probe"
+      - name: pypirc
+        type: url
+        pattern: "(?i)/\\.pypirc"
+        score: 80
+        reason: "PyPI credentials probe"
+      - name: composer_auth
+        type: url
+        pattern: "(?i)/\\.?composer/auth\\.json"
+        score: 80
+        reason: "Composer credentials probe"
+      - name: gh_hosts
+        type: url
+        pattern: "(?i)/\\.config/gh/hosts\\.ya?ml"
+        score: 80
+        reason: "GitHub CLI credentials probe"
+      - name: terraform_state
+        type: url
+        pattern: "(?i)/terraform\\.tfstate"
+        score: 80
+        reason: "Terraform state probe"
+      - name: wp_config
+        type: url
+        pattern: "(?i)/wp-config\\.php(\\.bak|\\.old|\\.orig|\\.save)?$"
+        score: 80
+        reason: "WordPress config probe"
+      - name: htpasswd
+        type: url
+        pattern: "(?i)/\\.htpasswd"
+        score: 80
+        reason: ".htpasswd credentials probe"
+      - name: yarnrc
+        type: url
+        pattern: "(?i)/\\.yarnrc"
+        score: 80
+        reason: ".yarnrc credentials probe"
+
+  cloud_metadata:
+    description: "Cloud instance metadata probes (SSRF)"
+    signatures:
+      - name: aws_metadata
+        type: url
+        pattern: "(?i)/latest/meta-data"
+        score: 80
+        reason: "AWS metadata probe"
+      - name: gcp_metadata
+        type: url
+        pattern: "(?i)/computeMetadata/v1"
+        score: 80
+        reason: "GCP metadata probe"
+      - name: azure_metadata
+        type: url
+        pattern: "(?i)/metadata/instance"
+        score: 80
+        reason: "Azure metadata probe"
+      - name: oracle_metadata
+        type: url
+        pattern: "(?i)/opc/v1/instance"
+        score: 80
+        reason: "Oracle Cloud metadata probe"
+
+  iot_exploits:
+    description: "IoT/router firmware exploit attempts"
+    signatures:
+      - name: gpon_exploit
+        type: url
+        pattern: "(?i)/GponForm/diag_Form"
+        score: 80
+        reason: "GPON router exploit"
+      - name: boaform_exploit
+        type: url
+        pattern: "(?i)/boaform/"
+        score: 80
+        reason: "Router boaform exploit"
+      - name: hnap_exploit
+        type: url
+        pattern: "(?i)/HNAP1/"
+        score: 80
+        reason: "D-Link/Netgear HNAP exploit"
+      - name: setup_cgi
+        type: url
+        pattern: "(?i)/setup\\.cgi"
+        score: 80
+        reason: "Router setup.cgi exploit"
+
+  malicious_user_agents:
+    description: "Known malicious scanner user agents"
+    signatures:
+      - name: sqlmap
+        type: user_agent
+        pattern: "(?i)sqlmap"
+        score: 50
+        reason: "sqlmap SQL injection tool"
+      - name: nikto
+        type: user_agent
+        pattern: "(?i)nikto"
+        score: 50
+        reason: "Nikto web scanner"
+      - name: nmap_scripting
+        type: user_agent
+        pattern: "(?i)nmap"
+        score: 50
+        reason: "Nmap scripting engine"
+      - name: masscan
+        type: user_agent
+        pattern: "(?i)masscan"
+        score: 50
+        reason: "Masscan port scanner"
+      - name: zgrab
+        type: user_agent
+        pattern: "(?i)zgrab"
+        score: 50
+        reason: "ZGrab scanner"
+      - name: gobuster
+        type: user_agent
+        pattern: "(?i)gobuster"
+        score: 50
+        reason: "Gobuster directory scanner"
+      - name: dirbuster
+        type: user_agent
+        pattern: "(?i)dirbuster"
+        score: 50
+        reason: "DirBuster scanner"
+      - name: nuclei
+        type: user_agent
+        pattern: "(?i)nuclei"
+        score: 50
+        reason: "Nuclei vulnerability scanner"
+      - name: wpscan
+        type: user_agent
+        pattern: "(?i)wpscan"
+        score: 50
+        reason: "WPScan WordPress scanner"
+      - name: acunetix
+        type: user_agent
+        pattern: "(?i)acunetix"
+        score: 50
+        reason: "Acunetix web scanner"
+      - name: openvas
+        type: user_agent
+        pattern: "(?i)openvas"
+        score: 50
+        reason: "OpenVAS vulnerability scanner"
+      - name: zmeu
+        type: user_agent
+        pattern: "(?i)ZmEu"
+        score: 50
+        reason: "ZmEu exploit scanner"
+      - name: leakix
+        type: user_agent
+        pattern: "(?i)(leakix|l9scan|l9explore)"
+        score: 50
+        reason: "LeakIX exposure scanner"
+      - name: morfeus
+        type: user_agent
+        pattern: "(?i)morfeus"
+        score: 50
+        reason: "Morfeus exploit scanner"
+
+  admin_panels:
+    description: "Admin panel probes"
+    signatures:
+      - name: phpmyadmin
+        type: url
+        pattern: "(?i)/(phpmyadmin|pma|myadmin|phpMyAdmin|dh_phpmyadmin)"
+        score: 30
+        reason: "phpMyAdmin probe"
+      - name: wp_admin
+        type: url
+        pattern: "(?i)/wp-admin"
+        score: 30
+        reason: "WordPress admin probe"
+      - name: wp_login
+        type: url
+        pattern: "(?i)/wp-login\\.php"
+        score: 30
+        reason: "WordPress login probe"
+      - name: adminer
+        type: url
+        pattern: "(?i)/adminer(\\.php)?"
+        score: 30
+        reason: "Adminer database probe"
+      - name: tomcat_manager
+        type: url
+        pattern: "(?i)/manager/(html|text|status)"
+        score: 30
+        reason: "Tomcat manager probe"
+      - name: jenkins
+        type: url
+        pattern: "(?i)/jenkins/(login|script)"
+        score: 30
+        reason: "Jenkins probe"
+      - name: jboss
+        type: url
+        pattern: "(?i)/(jmx-console|web-console|admin-console|invoker/)"
+        score: 30
+        reason: "JBoss console probe"
+      - name: weblogic
+        type: url
+        pattern: "(?i)/(wls-wsat|console/login)"
+        score: 30
+        reason: "WebLogic probe"
+      - name: solr_admin
+        type: url
+        pattern: "(?i)/solr/admin"
+        score: 30
+        reason: "Apache Solr admin probe"
+
+  framework_debug:
+    description: "Framework debug and development endpoints"
+    signatures:
+      - name: spring_actuator
+        type: url
+        pattern: "(?i)/actuator/(env|heapdump|mappings|configprops|beans|shutdown|jolokia)"
+        score: 30
+        reason: "Spring Boot Actuator probe"
+      - name: laravel_telescope
+        type: url
+        pattern: "(?i)/telescope/requests"
+        score: 30
+        reason: "Laravel Telescope probe"
+      - name: laravel_ignition
+        type: url
+        pattern: "(?i)/_ignition/"
+        score: 30
+        reason: "Laravel Ignition probe"
+      - name: phpinfo
+        type: url
+        pattern: "(?i)/(phpinfo|info|test)\\.php"
+        score: 30
+        reason: "PHP info probe"
+      - name: debug_pprof
+        type: url
+        pattern: "(?i)/debug/pprof"
+        score: 30
+        reason: "Go pprof probe"
+      - name: server_status
+        type: url
+        pattern: "(?i)/(server-status|server-info|nginx_status)"
+        score: 30
+        reason: "Server status probe"
+      - name: elmah
+        type: url
+        pattern: "(?i)/(elmah|trace)\\.axd"
+        score: 30
+        reason: "ASP.NET debug probe"
+      - name: swagger
+        type: url
+        pattern: "(?i)/(swagger-ui\\.html|swagger/|api-docs/)"
+        score: 20
+        reason: "API docs probe"
+
+  cms_probes:
+    description: "CMS-specific probes"
+    signatures:
+      - name: xmlrpc
+        type: url
+        pattern: "(?i)/xmlrpc\\.php"
+        score: 20
+        reason: "WordPress XML-RPC probe"
+      - name: wp_debug_log
+        type: url
+        pattern: "(?i)/wp-content/debug\\.log"
+        score: 20
+        reason: "WordPress debug log probe"
+      - name: wp_user_enum
+        type: url
+        pattern: "(?i)/wp-json/wp/v2/users"
+        score: 20
+        reason: "WordPress user enumeration"
+      - name: phpunit_rce
+        type: url
+        pattern: "(?i)/vendor/phpunit/"
+        score: 30
+        reason: "PHPUnit RCE probe (CVE-2017-9841)"
+      - name: elfinder
+        type: url
+        pattern: "(?i)/elfinder/"
+        score: 30
+        reason: "elFinder file manager probe"
+
+  backup_files:
+    description: "Backup and database dump files"
+    signatures:
+      - name: sql_dump
+        type: url
+        pattern: "(?i)/(backup|database|dump|db|data|site)\\.sql"
+        score: 10
+        reason: "SQL dump file probe"
+      - name: backup_archive
+        type: url
+        pattern: "(?i)/(backup|site|www|web)\\.(zip|tar\\.gz|tar|rar|7z)"
+        score: 10
+        reason: "Backup archive probe"
+      - name: bak_files
+        type: url
+        pattern: "(?i)\\.(bak|backup|old|orig|save|swp|~)$"
+        score: 10
+        reason: "Backup file extension probe"
+      - name: bash_history
+        type: url
+        pattern: "(?i)/\\.(bash_history|mysql_history|sh_history)"
+        score: 80
+        reason: "Shell history probe"
+      - name: ws_ftp_log
+        type: url
+        pattern: "(?i)/WS_FTP\\.LOG"
+        score: 10
+        reason: "FTP log probe"
+
+  thinkphp:
+    description: "ThinkPHP framework exploits"
+    signatures:
+      - name: thinkphp_rce
+        type: url
+        pattern: "(?i)/index\\.php\\?s=.*think"
+        score: 100
+        reason: "ThinkPHP RCE exploit"
+      - name: thinkcmf_rce
+        type: query_string
+        pattern: "(?i)content=.*die\\("
+        score: 100
+        reason: "ThinkCMF RCE exploit"
+      - name: xdebug_probe
+        type: query_string
+        pattern: "(?i)XDEBUG_SESSION_START"
+        score: 30
+        reason: "Xdebug remote debugging probe"

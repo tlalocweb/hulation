@@ -21,6 +21,7 @@ Key settings to change for production:
 ```yaml
 admin:
   # Generate with: hulactl generatehash
+  # Or update directly: hulactl -hulaconf config.yaml updateadminhash
   hash: "$argon2id$v=19$m=16384,t=12,p=4$..."
 
 # Generate a strong random string
@@ -405,6 +406,94 @@ kubectl apply -f hula.yaml
 - **Backend containers feature**: The Docker-managed backends feature is not available on Kubernetes. Use sidecar containers or separate Deployments/Services instead, and configure `proxies:` in `config.yaml` to point at those services.
 - **Health endpoint**: `/hulastatus` is unauthenticated and suitable for liveness and readiness probes. If running on a non-standard port or without TLS, adjust the probe `port` and `scheme` accordingly.
 - **Ingress**: The example uses a `LoadBalancer` Service. Replace with an Ingress resource or NodePort as appropriate for your cluster. If using an ingress controller for TLS termination, configure `external_scheme: https` and disable the `ssl:` block in `config.yaml`.
+
+## hulactl CLI
+
+`hulactl` is a command-line tool for managing a running Hulation instance. It is built separately from the server and runs on the host (not inside the container).
+
+### Building
+
+```bash
+make hulactl
+```
+
+The binary is placed at `.bin/hulactl`.
+
+### Initial Setup
+
+**Set the admin password** (writes the hash directly into the config file):
+
+```bash
+.bin/hulactl -hulaconf /path/to/config.yaml updateadminhash
+```
+
+This prompts for a password, generates an Argon2 hash, and updates the `admin.hash` field in the config file. Restart the hula container afterward to pick up the change.
+
+You can also generate a hash without modifying a file:
+
+```bash
+.bin/hulactl generatehash
+```
+
+**Authenticate** (get and save a JWT token):
+
+```bash
+.bin/hulactl -hulaapi https://your-server auth
+```
+
+The token is saved to `hulactl.yaml` (default: `/etc/hulation/hulactl.yaml`) and reused by subsequent commands.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `generatehash` | Generate a password hash (prints to stdout) |
+| `updateadminhash` | Generate a hash and write it to a hulation config file |
+| `auth` | Authenticate and save JWT token |
+| `authok` | Verify authentication is working |
+| `badactors` | List bad actors with scores and blocked/flagged status |
+| `createform` | Create a new form |
+| `modifyform` | Modify an existing form |
+| `submitform` | Submit form data |
+| `createlander` | Create a new lander |
+| `initdb` | Initialize the ClickHouse database |
+| `deletedb` | Delete the ClickHouse database |
+
+### Configuration
+
+`hulactl` reads from `/etc/hulation/hulactl.yaml` by default (override with `-config`):
+
+```yaml
+loglevel: warn
+hulaurl: https://your-server:443
+token: <saved by auth command>
+```
+
+Flags can also be passed directly:
+
+```bash
+.bin/hulactl -hulaapi https://localhost:443 -hulaconf /path/to/config.yaml <command>
+```
+
+### Example: Viewing Bad Actors
+
+```bash
+.bin/hulactl -hulaapi https://your-server badactors
+```
+
+Output:
+
+```
+Bad Actor Status: enabled=true  dry_run=false  threshold=50  ttl=24h
+Blocked IPs: 3  Allowlisted: 1  Signatures: 40
+
+IP                 SCORE   STATUS    DETECTED               EXPIRES                REASON
+--                 -----   ------    --------               -------                ------
+192.168.1.100      100     BLOCKED   2026-04-10 14:23:01    2026-04-11 14:23:01    web shell probe
+10.0.0.55          30      flagged   2026-04-10 15:01:22    2026-04-11 15:01:22    admin panel probe
+
+3 entries total
+```
 
 ## Ports Reference
 
