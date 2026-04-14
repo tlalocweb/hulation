@@ -503,12 +503,63 @@ type BadActorConfig struct {
 	DryRun bool `yaml:"dry_run,omitempty"`
 }
 
+// TLSOptions allows tuning the TLS version for a virtual host or hula itself.
+type TLSOptions struct {
+	// Minimum TLS version: "tls10", "tls11", "tls12", "tls13" (default: "tls12")
+	MinVersion string `yaml:"min_version,omitempty"`
+	// Maximum TLS version: "tls10", "tls11", "tls12", "tls13" (default: no limit)
+	MaxVersion string `yaml:"max_version,omitempty"`
+}
+
+func parseTLSVersion(s string) (uint16, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "tls10", "tls1.0", "1.0":
+		return tls.VersionTLS10, nil
+	case "tls11", "tls1.1", "1.1":
+		return tls.VersionTLS11, nil
+	case "tls12", "tls1.2", "1.2", "":
+		return tls.VersionTLS12, nil
+	case "tls13", "tls1.3", "1.3":
+		return tls.VersionTLS13, nil
+	default:
+		return 0, fmt.Errorf("unknown TLS version: %q", s)
+	}
+}
+
+// GetMinVersion returns the uint16 TLS version constant. Defaults to TLS 1.2.
+func (t *TLSOptions) GetMinVersion() uint16 {
+	if t == nil || t.MinVersion == "" {
+		return tls.VersionTLS12
+	}
+	v, err := parseTLSVersion(t.MinVersion)
+	if err != nil {
+		log.Warnf("tls config: %s, using TLS 1.2", err)
+		return tls.VersionTLS12
+	}
+	return v
+}
+
+// GetMaxVersion returns the uint16 TLS version constant. Returns 0 (no limit) if not set.
+func (t *TLSOptions) GetMaxVersion() uint16 {
+	if t == nil || t.MaxVersion == "" {
+		return 0
+	}
+	v, err := parseTLSVersion(t.MaxVersion)
+	if err != nil {
+		log.Warnf("tls config: %s, using no max", err)
+		return 0
+	}
+	return v
+}
+
 type SSLConfig struct {
 	// can be either the cert / key itself infline or a path to the cert / key
 	Cert string `yaml:"cert,omitempty"`
 	Key  string `yaml:"key,omitempty"`
 	// ACME / Let's Encrypt automatic certificate management
 	ACME *ACMEConfig `yaml:"acme,omitempty"`
+	// TLS version controls (min/max)
+	TLS *TLSOptions `yaml:"tls,omitempty"`
 	// if the above is a path, it moved here
 	certPath string
 	keyPath  string
@@ -584,8 +635,9 @@ func ValidTimeDuration(val interface{}, fieldname string) bool {
 }
 
 type Admin struct {
-	Username string `yaml:"username,omitempty" env:"ADMIN_USERNAME" test:"~.+" default:"admin"`
-	Hash     string `yaml:"hash" env:"HULA_ADMIN_HASH" test:"~.+"`
+	Username     string `yaml:"username,omitempty" env:"ADMIN_USERNAME" test:"~.+" default:"admin"`
+	Hash         string `yaml:"hash" env:"HULA_ADMIN_HASH" test:"~.+"`
+	TotpRequired bool   `yaml:"totp_required,omitempty"`
 }
 
 type Config struct {
@@ -606,6 +658,10 @@ type Config struct {
 	Servers        []*Server  `yaml:"servers,omitempty"`
 	CORS           CORSConfig `yaml:"cors,omitempty"`
 	SSL            *SSLConfig `yaml:"ssl,omitempty"`
+	// TLS certificate for hula's own admin/API endpoints.
+	// Covers localhost, 127.0.0.1, ::1, and hula_host automatically.
+	// Supports cert/key files, ACME, or omit for auto self-signed.
+	HulaSSL        *SSLConfig `yaml:"hula_ssl,omitempty"`
 	Registries map[string]*backend.RegistryConfig `yaml:"registries,omitempty"`
 	BadActors  *BadActorConfig                      `yaml:"bad_actors,omitempty"`
 	// Comma-separated list of log tags to enable (only these tags will log)
@@ -614,6 +670,11 @@ type Config struct {
 	NoLogTags string `yaml:"no_log_tags,omitempty"`
 	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
 	JWTKey         string     `yaml:"jwt_key,omitempty"`
+	// Base64url-encoded 32-byte key for encrypting TOTP secrets at rest.
+	// Generate with: hulactl totp-key
+	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
+	// Issuer name shown in authenticator apps (default: "Hulation")
+	TotpIssuer string `yaml:"totp_issuer,omitempty" default:"Hulation"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
@@ -751,6 +812,13 @@ func LoadConfig(filename string) (*Config, error) {
 	err = conftagz.Process(nil, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("bad config: %s,", err.Error())
+	}
+
+	// conftagz may create empty pointer structs from default tags.
+	// Reset HulaSSL if it was not explicitly configured.
+	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" && cfg.HulaSSL.ACME != nil && cfg.HulaSSL.ACME.Email == "" {
+		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
+		cfg.HulaSSL = nil
 	}
 
 	if len(cfg.Servers) < 1 {
@@ -1123,6 +1191,14 @@ func LoadConfig(filename string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
 			}
+		}
+	}
+
+	// Load hula's own SSL cert if configured (static cert files)
+	if cfg.HulaSSL != nil && !cfg.HulaSSL.NoConfig() && !cfg.HulaSSL.IsACME() {
+		err = cfg.HulaSSL.LoadSSLConfig()
+		if err != nil {
+			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
 		}
 	}
 

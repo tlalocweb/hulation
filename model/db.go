@@ -214,6 +214,10 @@ func SetupDB(hulationconf *config.Config, premodelhook PreConnectModelFunc) (con
 	if err != nil {
 		log.Errorf("Error automigrating lander models: %s", err.Error())
 	}
+	err = AutoMigrateTotpModels(gormdb)
+	if err != nil {
+		log.Errorf("Error automigrating totp models: %s", err.Error())
+	}
 
 	return
 }

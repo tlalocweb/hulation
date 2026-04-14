@@ -21,6 +21,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/joho/godotenv v1.5.1
 	github.com/open-policy-agent/opa v1.14.1
+	github.com/pquerna/otp v1.5.0
 	github.com/risor-io/risor v1.8.1
 	github.com/rivo/tview v0.42.0
 	github.com/rs/zerolog v1.34.0
@@ -52,6 +53,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
+	github.com/boombuler/barcode v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect

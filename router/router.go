@@ -105,6 +105,15 @@ func SetupRoutesFiber(l *config.Listener) {
 		auth.Patch("/user/:userid", wrapWithOpa(opa, handler.ModifyUser))
 		auth.Get("/ok", wrapWithOpa(opa, handler.StatusAuthOK))
 
+		// TOTP - validate does NOT require OPA (uses totp_pending token)
+		l.FiberApp.Post("/api/auth/totp/validate", handler.WrapForFiber(handler.TotpValidate))
+		// TOTP admin endpoints - require OPA
+		totpGrp := auth.Group("/totp")
+		totpGrp.Post("/setup", wrapWithOpa(opa, handler.TotpSetup))
+		totpGrp.Post("/verify-setup", wrapWithOpa(opa, handler.TotpVerifySetup))
+		totpGrp.Post("/disable", wrapWithOpa(opa, handler.TotpDisable))
+		totpGrp.Get("/status", wrapWithOpa(opa, handler.TotpStatus))
+
 		// Forms
 		form := api.Group("/form")
 		form.Post("/create", wrapWithOpa(opa, handler.FormCreate))

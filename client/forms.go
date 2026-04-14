@@ -199,7 +199,7 @@ func (c *Client) FormSubmit(formsub []byte, formid string, hostid string) (resp 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp = NewResponse()
-	res, err := http.DefaultClient.Do(req)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		c.errout("client: error making http request: %s\n", err)
 		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}

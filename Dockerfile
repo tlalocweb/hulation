@@ -22,6 +22,7 @@ ARG hulabuilddate=notset
 ENV hulabuilddate=${hulabuilddate}
 RUN xx-go --wrap
 RUN go build -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaversion} -X github.com/tlalocweb/hulation/config.BuildDate=${hulabuilddate}" -o hula . && xx-verify hula
+RUN go build -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaversion} -X github.com/tlalocweb/hulation/config.BuildDate=${hulabuilddate}" -o hulactl ./model/tools/hulactl && xx-verify hulactl
 #RUN go build -tags fiberhandlerdebug   -tags model_debug -ldflags "-X config.Version=$(hulaversion)" -o hula . && xx-verify hula
 WORKDIR /src
 #RUN git clone https://github.com/FiloSottile/mkcert.git
@@ -31,6 +32,7 @@ FROM alpine:3.19
 RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts
 ADD hulation/docker-example-config.yaml /etc/hula/config.yaml
 COPY --from=build /src/hulation/hula /hula/hula
+COPY --from=build /src/hulation/hulactl /hula/hulactl
 COPY --from=build /src/hulation/scripts /hula/scripts
 # could place a copy in /var/hula/scripts in case someone wants to edit them, etc.
 # config would need to updated

@@ -40,7 +40,7 @@ func (c *Client) BadActorList() (entries []BadActorListEntry, err error) {
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}
 		return
@@ -76,7 +76,7 @@ func (c *Client) BadActorStats() (stats *BadActorStatsResponse, err error) {
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}
 		return

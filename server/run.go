@@ -118,13 +118,34 @@ func (l *singleConnListener) Addr() net.Addr {
 // FiberListenWithListener starts a TLS server that dispatches based on ALPN:
 //   - h2 connections go to a net/http handler (HTTP/2)
 //   - http/1.1 connections go to the Fiber app (fasthttp)
-func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
+func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *tls.Certificate, hulaNames map[string]bool) error {
 	tlsHandler := &fiber.TLSHandler{}
+
+	// Compute effective TLS version from all SSL configs on this listener.
+	// The strictest (highest) min_version wins.
+	var effectiveMin uint16 = tls.VersionTLS12
+	var effectiveMax uint16
+	for _, ssl := range l.SSL {
+		if ssl != nil && ssl.TLS != nil {
+			if v := ssl.TLS.GetMinVersion(); v > effectiveMin {
+				effectiveMin = v
+			}
+			if v := ssl.TLS.GetMaxVersion(); v > 0 && (effectiveMax == 0 || v < effectiveMax) {
+				effectiveMax = v
+			}
+		}
+	}
+
 	tlsCfg := &tls.Config{
-		MinVersion:     tls.VersionTLS12,
+		MinVersion:     effectiveMin,
+		MaxVersion:     effectiveMax,
 		Certificates:   []tls.Certificate{},
 		GetCertificate: tlsHandler.GetClientInfo,
 		NextProtos:     []string{"h2", "http/1.1"},
+	}
+
+	if effectiveMin > tls.VersionTLS12 || effectiveMax > 0 {
+		log.Infof("TLS version constraints on %s: min=0x%04x max=0x%04x", l.GetListenOn(), effectiveMin, effectiveMax)
 	}
 
 	// add static certs (non-ACME)
@@ -134,19 +155,45 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 		}
 	}
 
-	// if ACME is configured, use autocert manager for certificate retrieval
-	if l.ACMEManager != nil {
-		acmeMgr := l.ACMEManager
-		tlsCfg.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := acmeMgr.GetCertificate(hello)
-			if err != nil {
-				// Missing/invalid SNI from bots and scanners is expected — log as debug
-				log.Debugf("ACME: GetCertificate error for %s: %s", hello.ServerName, err)
-			}
-			return cert, err
-		}
+	// Set up SNI-based certificate selection with tiered routing
+	var acmeMgr = l.ACMEManager
+	staticCerts := tlsCfg.Certificates
+
+	if acmeMgr != nil {
 		tlsCfg.NextProtos = append(tlsCfg.NextProtos, "acme-tls/1")
 		log.Infof("ACME: using autocert manager for TLS on %s", l.GetListenOn())
+	}
+
+	tlsCfg.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		sni := hello.ServerName
+
+		// Tier 1: Hula's own identity (admin/localhost connections)
+		if hulaNames[sni] || sni == "" {
+			if hulaCert != nil {
+				return hulaCert, nil
+			}
+		}
+
+		// Tier 2: Virtual host ACME certs
+		if acmeMgr != nil {
+			cert, err := acmeMgr.GetCertificate(hello)
+			if err == nil {
+				return cert, nil
+			}
+			log.Debugf("ACME: no cert for SNI %q: %s", sni, err)
+		}
+
+		// Tier 3: Static virtual host certs
+		if len(staticCerts) > 0 {
+			return &staticCerts[0], nil
+		}
+
+		// Tier 4: Fallback to hula self-signed cert
+		if hulaCert != nil {
+			return hulaCert, nil
+		}
+
+		return nil, fmt.Errorf("no certificate available for %q", sni)
 	}
 
 	log.Debugf("Starting TLS server on port %s - has %d static certificates, ACME=%v", l.GetListenOn(), len(tlsCfg.Certificates), l.ACMEManager != nil)
@@ -210,7 +257,7 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App) error {
 
 // Starts up a fiber server on a specific port / address and then adds all the routes in for that
 // port / address that apply.
-func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *listenerErr) (err error) {
+func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *listenerErr, hulaCert *tls.Certificate, hulaNames map[string]bool) (err error) {
 	defer func() {
 		errchan <- &listenerErr{
 			listener: l,
@@ -374,7 +421,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 			}()
 		}
 
-		err = FiberListenWithListener(l, l.FiberApp)
+		err = FiberListenWithListener(l, l.FiberApp, hulaCert, hulaNames)
 		if err != nil {
 			log.Fatalf("Error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
 			err = fmt.Errorf("error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
@@ -399,6 +446,98 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 		}
 	}
 	return
+}
+
+// reloadConfig handles SIGHUP: re-reads the config file, hot-swaps cheap fields,
+// re-inits components that support it, and warns about expensive changes that
+// require a full restart.
+func reloadConfig(oldConf *config.Config) {
+	log.Infof("SIGHUP received — reloading config")
+
+	_, err := app.ReloadConfig()
+	if err != nil {
+		log.Errorf("config reload failed: %s (keeping old config)", err)
+		return
+	}
+	newConf := app.GetConfig()
+
+	// --- Warn about expensive fields that require a full restart ---
+	if oldConf.Port != newConf.Port {
+		log.Warnf("reload: port changed (%d -> %d) — full restart required", oldConf.Port, newConf.Port)
+	}
+	if oldConf.ListenOn != newConf.ListenOn {
+		log.Warnf("reload: listen_on changed — full restart required")
+	}
+	if oldConf.DBConfig != nil && newConf.DBConfig != nil {
+		if oldConf.DBConfig.Host != newConf.DBConfig.Host ||
+			oldConf.DBConfig.Port != newConf.DBConfig.Port ||
+			oldConf.DBConfig.Username != newConf.DBConfig.Username ||
+			oldConf.DBConfig.Password != newConf.DBConfig.Password ||
+			oldConf.DBConfig.DBName != newConf.DBConfig.DBName {
+			log.Warnf("reload: dbconfig changed — full restart required")
+		}
+	}
+	if sslChanged(oldConf, newConf) {
+		log.Warnf("reload: ssl/acme config changed — full restart required")
+	}
+	if serversChanged(oldConf, newConf) {
+		log.Warnf("reload: servers config changed (hosts/aliases) — full restart required")
+	}
+
+	// --- Hot-swap cheap fields (already effective via app.GetConfig()) ---
+	// admin.hash, admin.username, jwt_key, jwt_expiration — all read live
+
+	// --- Re-apply log tag filters ---
+	app.ApplyLogTagConfig()
+	log.Infof("reload: log tag filters re-applied")
+
+	// --- Re-init bad actor system ---
+	if newConf.BadActors != nil && !newConf.BadActors.Disable {
+		if err := badactor.Reinit(newConf.BadActors, model.GetDB(), newConf.Servers); err != nil {
+			log.Errorf("reload: failed to reinit bad actor system: %s", err)
+		} else {
+			log.Infof("reload: bad actor system reloaded")
+		}
+	} else if badactor.IsEnabled() {
+		// Was enabled, now disabled
+		badactor.Shutdown()
+		log.Infof("reload: bad actor system disabled")
+	}
+
+	log.Infof("config reload complete")
+}
+
+func sslChanged(old, new *config.Config) bool {
+	if old.SSL == nil && new.SSL == nil {
+		return false
+	}
+	if (old.SSL == nil) != (new.SSL == nil) {
+		return true
+	}
+	if old.SSL.Cert != new.SSL.Cert || old.SSL.Key != new.SSL.Key {
+		return true
+	}
+	if (old.SSL.ACME == nil) != (new.SSL.ACME == nil) {
+		return true
+	}
+	if old.SSL.ACME != nil && new.SSL.ACME != nil {
+		if old.SSL.ACME.Email != new.SSL.ACME.Email || old.SSL.ACME.CacheDir != new.SSL.ACME.CacheDir {
+			return true
+		}
+	}
+	return false
+}
+
+func serversChanged(old, new *config.Config) bool {
+	if len(old.Servers) != len(new.Servers) {
+		return true
+	}
+	for i := range old.Servers {
+		if old.Servers[i].Host != new.Servers[i].Host {
+			return true
+		}
+	}
+	return false
 }
 
 // Runs the main server
@@ -455,6 +594,36 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		startCancel()
 	}
 
+	// Build hula identity names and resolve TLS cert for admin/internal connections
+	hulaNames := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+	if conf.HulaHost != "" && conf.HulaHost != "localhost" {
+		hulaNames[conf.HulaHost] = true
+	}
+
+	var hulaCert *tls.Certificate
+	if conf.HulaSSL != nil && !conf.HulaSSL.NoConfig() {
+		if conf.HulaSSL.IsACME() {
+			// ACME for hula handled in GetCertificate callback (hulaCert stays nil)
+			log.Infof("hula TLS: using ACME for hula identity")
+		} else {
+			hulaCert = conf.HulaSSL.GetTLSCert()
+			log.Infof("hula TLS: using configured cert for hula identity")
+		}
+	}
+	if hulaCert == nil && (conf.HulaSSL == nil || !conf.HulaSSL.IsACME()) {
+		hosts := make([]string, 0, len(hulaNames))
+		for h := range hulaNames {
+			hosts = append(hosts, h)
+		}
+		var cerr error
+		hulaCert, cerr = GenerateSelfSignedCert(hosts)
+		if cerr != nil {
+			log.Errorf("Failed to generate hula self-signed cert: %s", cerr)
+			return 1
+		}
+		log.Infof("hula TLS: generated self-signed cert for %v", hosts)
+	}
+
 	waitForServers := &sync.WaitGroup{}
 	errchan := make(chan *listenerErr, 10)
 	runcnt := 0
@@ -462,17 +631,22 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		log.Debugf("starting listener goroutine: %s", l.GetListenOn())
 		waitForServers.Add(1)
 		runcnt++
-		go RunListenerFiber(l, waitForServers, errchan)
+		go RunListenerFiber(l, waitForServers, errchan, hulaCert, hulaNames)
 	}
 
-	// Signal handling for graceful shutdown
+	// Signal handling for graceful shutdown and config reload
 	sigchan := make(chan os.Signal, 1)
-	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 mainLoop:
 	for {
 		select {
 		case sig := <-sigchan:
+			if sig == syscall.SIGHUP {
+				reloadConfig(conf)
+				conf = app.GetConfig()
+				continue
+			}
 			log.Infof("Received signal %s, shutting down", sig)
 			badactor.Shutdown()
 			if backendMgr != nil {

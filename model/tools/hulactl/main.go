@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	// "gorm.io/driver/clickhouse"
@@ -51,6 +54,31 @@ func askForConfirmation() bool {
 			fmt.Println("Please type yes or no and then press enter:")
 		}
 	}
+}
+
+// findHulaProcess scans /proc for a running process whose executable is named "hula".
+func findHulaProcess() (int, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, fmt.Errorf("cannot read /proc: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		exe, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
+		if err != nil {
+			continue
+		}
+		if filepath.Base(exe) == "hula" {
+			return pid, nil
+		}
+	}
+	return 0, fmt.Errorf("no running hula process found")
 }
 
 func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ctx context.Context, err error) {
@@ -98,7 +126,15 @@ func setupInitConn(hulationconf *config.Config, dbname string) (conn *sql.DB, ct
 	return
 }
 
-const DEFAULT_CONFIG_FILE = "/etc/hulation/hulactl.yaml"
+var DEFAULT_CONFIG_FILE = defaultConfigFilePath()
+
+func defaultConfigFilePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "hulactl.yaml"
+	}
+	return filepath.Join(home, ".hula", "hulactl.yaml")
+}
 
 var hulactlconfigfile string
 
@@ -114,6 +150,7 @@ type HulactlConfig struct {
 	GetBodyFromStdin   bool   `flag:"bodystdin" usage:"get body from stdin"`
 	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
 	HostId             string `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
+	Insecure           bool   `yaml:"insecure" flag:"insecure" usage:"skip TLS certificate verification"`
 }
 
 func doAltGetBody(config *HulactlConfig) bool {
@@ -254,6 +291,9 @@ func GetHulationServerConfigOrExit(confpath string) (hulationconf *config.Config
 
 func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
 	c = client.NewClient(hulactlconfig.HulationApiUrl, hulactlconfig.Token)
+	if hulactlconfig.Insecure {
+		c.SetInsecure(true)
+	}
 	if hulactlconfig.DebugMode {
 		c.Noisy = true
 		c.NoisyErr = true
@@ -379,11 +419,35 @@ func main() {
 		// 	client.Noisy = true
 		// 	client.NoisyErr = true
 		// }
-		client := GetHulactlClient(hulactlconfig)
-		_, token, err := client.Auth(identity, password)
+		hulaclient := GetHulactlClient(hulactlconfig)
+		authResp, token, err := hulaclient.Auth(identity, password)
 		if err != nil {
 			fmt.Printf("Error: %s\n", err.Error())
 			os.Exit(1)
+		}
+
+		// Check if TOTP is required
+		if authResp != nil && authResp.Response != nil {
+			ar, ok := authResp.Response.(client.AuthResponse)
+			if ok && ar.TotpRequired {
+				if ar.TotpNeedsSetup {
+					fmt.Printf("TOTP is required but not yet set up. Use 'totp-setup' command first.\n")
+					os.Exit(1)
+				}
+				fmt.Printf("TOTP required. Enter code from authenticator:\n")
+				l.SetPrompt("TOTP Code: ")
+				totpCode, err := l.Readline()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading TOTP code: %s\n", err.Error())
+					os.Exit(1)
+				}
+				valResp, err := hulaclient.TotpValidate(ar.TotpToken, strings.TrimSpace(totpCode), false)
+				if err != nil {
+					fmt.Printf("TOTP validation error: %s\n", err.Error())
+					os.Exit(1)
+				}
+				token = valResp.JWT
+			}
 		}
 
 		fmt.Printf("Token: %s\n", token)
@@ -392,7 +456,10 @@ func main() {
 			_, err = os.Stat(hulactlconfigfile)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// create the file
+					// create parent directory and file
+					if dir := filepath.Dir(hulactlconfigfile); dir != "." {
+						os.MkdirAll(dir, 0700)
+					}
 					_, err = os.Create(hulactlconfigfile)
 					if err != nil {
 						fmt.Printf("Error creating config file: %s\n", err.Error())
@@ -403,7 +470,7 @@ func main() {
 					os.Exit(1)
 				}
 			}
-			// save the token to the config file
+			// save the token and API URL to the config file
 			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"token"}, &yaml.Node{
 				Kind:  yaml.ScalarNode,
 				Value: token,
@@ -412,6 +479,23 @@ func main() {
 				fmt.Printf("Error saving token to config file (%s): %s\n", hulactlconfigfile, err.Error())
 			} else {
 				fmt.Printf("Token saved to config file (%s)\n", hulactlconfigfile)
+			}
+			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"hulaurl"}, &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: hulactlconfig.HulationApiUrl,
+			})
+			if err != nil {
+				fmt.Printf("Error saving API URL to config file: %s\n", err.Error())
+			}
+			if hulactlconfig.Insecure {
+				err = utils.ModifyYamlFile(hulactlconfigfile, []string{"insecure"}, &yaml.Node{
+					Kind:  yaml.ScalarNode,
+					Tag:   "!!bool",
+					Value: "true",
+				})
+				if err != nil {
+					fmt.Printf("Error saving insecure flag to config file: %s\n", err.Error())
+				}
 			}
 		}
 
@@ -879,6 +963,67 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Admin hash updated in %s\n", hulactlconfig.HulationConfigPath)
+
+	case CMD_RELOAD:
+		pid, err := findHulaProcess()
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			fmt.Printf("Error finding process %d: %s\n", pid, err.Error())
+			os.Exit(1)
+		}
+		err = proc.Signal(syscall.SIGHUP)
+		if err != nil {
+			fmt.Printf("Error sending SIGHUP to pid %d: %s\n", pid, err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Sent SIGHUP to hula (pid %d) — config reload triggered\n", pid)
+
+	case CMD_TOTPKEY:
+		key, err := utils.GenerateTOTPEncryptionKey()
+		if err != nil {
+			fmt.Printf("Error generating key: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("TOTP encryption key: %s\n", key)
+		fmt.Printf("\nAdd to your hulation config:\n  totp_encryption_key: \"%s\"\n", key)
+
+	case CMD_TOTPSETUP:
+		client := GetHulactlClient(hulactlconfig)
+		// Step 1: Call setup endpoint
+		setupResp, err := client.TotpSetup()
+		if err != nil {
+			fmt.Printf("Error setting up TOTP: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("TOTP Setup\n")
+		fmt.Printf("  Secret: %s\n", setupResp.Secret)
+		fmt.Printf("  URL (for QR code): %s\n", setupResp.URL)
+		fmt.Printf("\n  Recovery codes (save these!):\n")
+		for i, code := range setupResp.RecoveryCodes {
+			fmt.Printf("    %d. %s\n", i+1, code)
+		}
+		fmt.Printf("\nEnter the code from your authenticator app to complete setup:\n")
+		l, err := readline.NewEx(&readline.Config{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+			os.Exit(1)
+		}
+		l.SetPrompt("TOTP Code: ")
+		code, err := l.Readline()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading code: %s\n", err.Error())
+			os.Exit(1)
+		}
+		err = client.TotpVerifySetup(strings.TrimSpace(code))
+		if err != nil {
+			fmt.Printf("Error verifying TOTP: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("TOTP enabled successfully.\n")
 
 	case CMD_BADACTORS:
 		client := GetHulactlClient(hulactlconfig)

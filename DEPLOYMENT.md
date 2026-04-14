@@ -443,6 +443,26 @@ You can also generate a hash without modifying a file:
 
 The token is saved to `hulactl.yaml` (default: `/etc/hulation/hulactl.yaml`) and reused by subsequent commands.
 
+### Using hulactl Inside Docker
+
+hulactl is included in the hula Docker image at `/hula/hulactl`. When running inside the container, pass `-hulaapi` pointing to the local server:
+
+```bash
+# Set the admin password
+docker exec -it hula /hula/hulactl -hulaapi https://localhost:443 -hulaconf /etc/hula/config.yaml updateadminhash
+
+# Authenticate
+docker exec -it hula /hula/hulactl -hulaapi https://localhost:443 auth
+
+# List bad actors
+docker exec -it hula /hula/hulactl -hulaapi https://localhost:443 badactors
+
+# Reload config (sends SIGHUP to hula)
+docker exec hula /hula/hulactl reload
+# Or without hulactl:
+docker kill --signal=HUP hula
+```
+
 ### Commands
 
 | Command | Description |

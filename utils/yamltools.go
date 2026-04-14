@@ -60,10 +60,21 @@ func ModifyYamlFile(filename string, path []string, value *yaml.Node) (err error
 		return
 	}
 	var doc yaml.Node
-	err = yaml.Unmarshal(dat, &doc)
-	if err != nil {
-		err = fmt.Errorf("error parsing file %s: %s", filename, err.Error())
-		return
+	if len(dat) > 0 {
+		err = yaml.Unmarshal(dat, &doc)
+		if err != nil {
+			err = fmt.Errorf("error parsing file %s: %s", filename, err.Error())
+			return
+		}
+	}
+	// If file was empty or contained null, create a proper document with an empty mapping
+	if doc.Kind == 0 || (doc.Kind == yaml.DocumentNode && (len(doc.Content) == 0 || doc.Content[0].Kind == yaml.ScalarNode)) {
+		doc = yaml.Node{
+			Kind: yaml.DocumentNode,
+			Content: []*yaml.Node{
+				{Kind: yaml.MappingNode},
+			},
+		}
 	}
 
 	err = setYamlNode(&doc, path, value)

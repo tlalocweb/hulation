@@ -180,6 +180,13 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("DELETE /api/lander/{landerid}", wrapOpa(handler.LanderDelete))
 	h.mux.Handle("PATCH /api/lander/{landerid}", wrapOpa(handler.LanderModify))
 
+	// TOTP - validate does NOT require OPA (uses totp_pending token)
+	h.mux.Handle("POST /api/auth/totp/validate", handler.WrapForNetHTTP(handler.TotpValidate))
+	h.mux.Handle("POST /api/auth/totp/setup", wrapOpa(handler.TotpSetup))
+	h.mux.Handle("POST /api/auth/totp/verify-setup", wrapOpa(handler.TotpVerifySetup))
+	h.mux.Handle("POST /api/auth/totp/disable", wrapOpa(handler.TotpDisable))
+	h.mux.Handle("GET /api/auth/totp/status", wrapOpa(handler.TotpStatus))
+
 	// Bad actor admin API
 	if badactor.IsEnabled() {
 		h.mux.Handle("GET /api/badactor/list", wrapOpa(badactor.ListBadActors))

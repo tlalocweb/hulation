@@ -59,6 +59,12 @@ const (
 	CMD_UPDATEADMINHASH       = "updateadminhash"
 	CMD_UPDATEADMINHASH_HELP  = "Generate a password hash and write it to the hulation config file"
 	CMD_UPDATEADMINHASH_USAGE = "updateadminhash\nRequires -hulaconf flag pointing to hulation config file"
+	CMD_RELOAD                = "reload"
+	CMD_RELOAD_HELP           = "Send SIGHUP to the running hula process to reload config"
+	CMD_TOTPKEY               = "totp-key"
+	CMD_TOTPKEY_HELP          = "Generate a TOTP encryption key for the config file"
+	CMD_TOTPSETUP             = "totp-setup"
+	CMD_TOTPSETUP_HELP        = "Set up TOTP for the admin user (interactive)"
 )
 
 var commands []Command
@@ -83,6 +89,9 @@ func init() {
 		Command{CMD_INITDB, CMD_INITDB_HELP, ""},
 		Command{CMD_BADACTORS, CMD_BADACTORS_HELP, ""},
 		Command{CMD_UPDATEADMINHASH, CMD_UPDATEADMINHASH_HELP, CMD_UPDATEADMINHASH_USAGE},
+		Command{CMD_RELOAD, CMD_RELOAD_HELP, ""},
+		Command{CMD_TOTPKEY, CMD_TOTPKEY_HELP, ""},
+		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

@@ -31,9 +31,10 @@ func GetCaps(caps string) []string {
 }
 
 type JWTClaims struct {
-	Id         string   // user id
-	LoginToken string   `json:"t"` // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
-	Caps       []string `json:"c"` // map of capabilities
+	Id          string   // user id
+	LoginToken  string   `json:"t"`              // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
+	Caps        []string `json:"c"`              // map of capabilities
+	TotpPending bool     `json:"tp,omitempty"`   // true if this is a limited token pending TOTP validation
 	jwt.RegisteredClaims
 }
 
@@ -86,7 +87,34 @@ func newJWTClaims(db *gorm.DB, userid string, token string, expiration time.Dura
 }
 
 type LoginOpts struct {
-	IsAdmin bool
+	IsAdmin     bool
+	TotpPending bool
+}
+
+// NewTotpPendingToken creates a short-lived JWT (5 min) with totp_pending=true.
+// This token can only be used to validate TOTP, not to access other APIs.
+func NewTotpPendingToken(db *gorm.DB, userid string) (string, error) {
+	dur := 5 * time.Minute
+	token, err := CreateNewLoginToken(db, userid, time.Now().Add(dur))
+	if err != nil {
+		return "", fmt.Errorf("error creating totp pending login token: %w", err)
+	}
+	claims := &JWTClaims{
+		Id:          userid,
+		LoginToken:  token.ID,
+		Caps:        []string{"totp_pending"},
+		TotpPending: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(dur)),
+		},
+	}
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return jwtToken.SignedString([]byte(app.GetConfig().JWTKey))
+}
+
+// IsTotpPendingToken returns true if the given claims represent a totp-pending token.
+func IsTotpPendingToken(claims *JWTClaims) bool {
+	return claims.TotpPending
 }
 
 // creates a new JWT. Commits the token inside the JWT to the database

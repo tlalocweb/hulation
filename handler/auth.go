@@ -42,6 +42,11 @@ func Login(ctx RequestCtx) error {
 		return ctx.Status(http.StatusUnauthorized).SendString("")
 	}
 
+	// Check if TOTP is required for this user
+	if isadmin && CheckTotpRequired(input.Userid) {
+		return LoginResponseForTotp(ctx, input.Userid)
+	}
+
 	jwt, err2 := model.NewJWTClaimsCommit(model.GetDB(), input.Userid, &model.LoginOpts{
 		IsAdmin: isadmin,
 	})

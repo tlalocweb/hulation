@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,10 +14,11 @@ import (
 )
 
 type Client struct {
-	apiUrl   string
-	token    string
-	Noisy    bool // set to true to print output to OutputFunc
-	NoisyErr bool // set to true to error output to ErrOutFunc
+	apiUrl     string
+	token      string
+	Noisy      bool // set to true to print output to OutputFunc
+	NoisyErr   bool // set to true to error output to ErrOutFunc
+	httpClient *http.Client
 	// url breakdown
 	proto  string                            // protocol
 	host   string                            // host
@@ -43,15 +45,30 @@ func (c *Client) errout(format string, a ...any) {
 // then a call of Auth() will be needed
 func NewClient(url string, token string) (c *Client) {
 	c = &Client{
-		apiUrl:   url,
-		token:    token,
-		Noisy:    false,
-		NoisyErr: false,
-		Output:   fmt.Printf,
-		ErrOut:   fmt.Printf,
+		apiUrl:     url,
+		token:      token,
+		Noisy:      false,
+		NoisyErr:   false,
+		httpClient: http.DefaultClient,
+		Output:     fmt.Printf,
+		ErrOut:     fmt.Printf,
 	}
 	c.proto, c.host, c.port, c.path = utils.GetURLPieces(url)
 	return
+}
+
+// SetInsecure configures the client to skip TLS certificate verification.
+func (c *Client) SetInsecure(insecure bool) {
+	if insecure {
+		c.httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+				ForceAttemptHTTP2: true,
+			},
+		}
+	} else {
+		c.httpClient = http.DefaultClient
+	}
 }
 
 func (c *Client) GetAPIUrl() string {
@@ -106,12 +123,15 @@ func (r *ClientResponse) Duration() time.Duration {
 }
 
 type AuthResponse struct {
-	Token string `json:"jwt"`
+	Token          string `json:"jwt"`
+	TotpRequired   bool   `json:"totp_required,omitempty"`
+	TotpToken      string `json:"totp_token,omitempty"`
+	TotpNeedsSetup bool   `json:"totp_needs_setup,omitempty"`
 }
 
 // Auth get a JWT using the /auth/login endpoint
 func (c *Client) Auth(identity string, pass string) (resp *ClientResponse, token string, err error) {
-	url := fmt.Sprintf("%s://%s:%d%s/auth/login", c.proto, c.host, c.port, c.path)
+	url := c.apiUrl + "/api/auth/login"
 
 	hash := utils.GenerateHulaNetworkPassHash(pass)
 	// make request
@@ -125,10 +145,11 @@ func (c *Client) Auth(identity string, pass string) (resp *ClientResponse, token
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp = NewResponse()
-	res, err := http.DefaultClient.Do(req)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		c.errout("client: error making http request: %s\n", err)
 		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}
+		return
 	}
 	resp.Finish(res.StatusCode, "", nil)
 	c.out("response: %d\n", res.StatusCode)
@@ -160,7 +181,7 @@ func (c *Client) Auth(identity string, pass string) (resp *ClientResponse, token
 }
 
 func (c *Client) StatusAuthOK() (resp *ClientResponse, err error) {
-	url := fmt.Sprintf("%s://%s:%d%s/api/auth/ok", c.proto, c.host, c.port, c.path)
+	url := c.apiUrl + "/api/auth/ok"
 	c.out("GET statusauthok url: %s\n", url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -171,7 +192,7 @@ func (c *Client) StatusAuthOK() (resp *ClientResponse, err error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp = NewResponse()
-	res, err := http.DefaultClient.Do(req)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		c.errout("client: error making http request: %s\n", err)
 		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}
