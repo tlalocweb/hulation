@@ -29,7 +29,8 @@ WORKDIR /src
 #WORKDIR /src/mkcert
 #RUN go build -ldflags "-X main.Version=$(git describe --tags)" && xx-verify mkcert
 FROM alpine:3.19
-RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts
+RUN apk add --no-cache git ca-certificates
+RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts /var/hula/sitedeploy
 ADD hulation/docker-example-config.yaml /etc/hula/config.yaml
 COPY --from=build /src/hulation/hula /hula/hula
 COPY --from=build /src/hulation/hulactl /hula/hulactl

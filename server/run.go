@@ -23,6 +23,7 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/router"
+	"github.com/tlalocweb/hulation/sitedeploy"
 	"golang.org/x/net/http2"
 )
 
@@ -594,6 +595,26 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		startCancel()
 	}
 
+	// Initialize site deploy build manager if any server has git autodeploy configured
+	hasAutoDeploy := false
+	for _, s := range conf.Servers {
+		if s.GitAutoDeploy != nil {
+			hasAutoDeploy = true
+			break
+		}
+	}
+	if hasAutoDeploy {
+		buildMgr, berr := sitedeploy.NewBuildManager()
+		if berr != nil {
+			log.Errorf("Failed to initialize site deploy manager: %s", berr.Error())
+			// Non-fatal: site deployment won't work but server continues
+		} else {
+			sitedeploy.SetGlobalBuildManager(buildMgr)
+			defer buildMgr.Close()
+			log.Infof("Site deploy build manager initialized")
+		}
+	}
+
 	// Build hula identity names and resolve TLS cert for admin/internal connections
 	hulaNames := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
 	if conf.HulaHost != "" && conf.HulaHost != "localhost" {
@@ -649,6 +670,9 @@ mainLoop:
 			}
 			log.Infof("Received signal %s, shutting down", sig)
 			badactor.Shutdown()
+			if bm := sitedeploy.GetBuildManager(); bm != nil {
+				bm.Close()
+			}
 			if backendMgr != nil {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				backendMgr.StopAll(shutdownCtx)

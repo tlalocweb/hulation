@@ -44,15 +44,16 @@ DOCKERFILE      := $(CURDIR)/Dockerfile
 BUILDX_BUILDER  := hula-builder
 
 # Build targets
-HULA_BIN     := $(BIN_DIR)/hula
-HULACTL_BIN  := $(BIN_DIR)/hulactl
-SETUPDB_BIN  := $(BIN_DIR)/setupdb
+HULA_BIN      := $(BIN_DIR)/hula
+HULACTL_BIN   := $(BIN_DIR)/hulactl
+SETUPDB_BIN   := $(BIN_DIR)/setupdb
+HULABUILD_BIN := $(BIN_DIR)/hulabuild
 
 # ============================================================================
 # Primary targets
 # ============================================================================
 
-.PHONY: all build hula hulactl setupdb tools
+.PHONY: all build hula hulactl setupdb hulabuild tools
 .PHONY: docker docker-push docker-local
 .PHONY: test test-unit test-verbose vet lint
 .PHONY: clean clean-docker
@@ -64,8 +65,8 @@ build: hula
 ## all: Build server and all CLI tools
 all: hula tools
 
-## tools: Build all CLI tools (hulactl, setupdb)
-tools: hulactl setupdb
+## tools: Build all CLI tools (hulactl, setupdb, hulabuild)
+tools: hulactl setupdb hulabuild
 
 # ============================================================================
 # Go binaries
@@ -91,6 +92,13 @@ setupdb: $(SETUPDB_BIN)
 $(SETUPDB_BIN): $(shell find . -name '*.go' -not -path './.external/*' -not -path './.bin/*' -not -path './.gopath/*') go.mod go.sum | $(BIN_DIR)
 	@echo "Building setupdb..."
 	$(GO) build -ldflags "$(LDFLAGS)" -o $@ ./model/tools/setupdb
+
+## hulabuild: Build the hulabuild binary (runs inside builder containers)
+hulabuild: $(HULABUILD_BIN)
+
+$(HULABUILD_BIN): $(shell find . -name '*.go' -not -path './.external/*' -not -path './.bin/*' -not -path './.gopath/*') go.mod go.sum | $(BIN_DIR)
+	@echo "Building hulabuild..."
+	$(GO) build -ldflags "$(LDFLAGS)" -o $@ ./model/tools/hulabuild
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
@@ -184,7 +192,7 @@ tidy:
 
 ## clean: Remove build artifacts
 clean:
-	rm -rf $(BIN_DIR)/hula $(BIN_DIR)/hulactl $(BIN_DIR)/setupdb
+	rm -rf $(BIN_DIR)/hula $(BIN_DIR)/hulactl $(BIN_DIR)/setupdb $(BIN_DIR)/hulabuild
 
 ## clean-all: Remove all generated files (binaries, external downloads)
 clean-all:

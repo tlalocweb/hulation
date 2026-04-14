@@ -334,6 +334,31 @@ func (s *Server) GetCSPMap() map[string]string {
 // 	return vh.onNewVisitorRisorHooks
 // }
 
+// GitCredentials holds authentication for git operations.
+type GitCredentials struct {
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+}
+
+// GitRefConfig specifies which git ref to check out.
+// Branch: a branch name. Tag: "semver" (any valid semver tag), "any" (any tag), or a specific tag name.
+type GitRefConfig struct {
+	Branch string `yaml:"branch,omitempty"`
+	Tag    string `yaml:"tag,omitempty"`
+}
+
+// GitAutoDeployConfig configures automatic site deployment from a git repository.
+type GitAutoDeployConfig struct {
+	Repo      string          `yaml:"repo"`
+	Creds     *GitCredentials `yaml:"creds,omitempty"`
+	Ref       GitRefConfig    `yaml:"ref"`
+	HulaBuild string          `yaml:"hula_build,omitempty"`
+	// Where to store cloned repos and build artifacts.
+	// Default: /var/hula/sitedeploy/<server-id>/repo
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	DataDir string `yaml:"data_dir,omitempty"`
+}
+
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
 	// optionally tell hulation to only run the server on the given network interfaces. By default hulation listens on all interfaces
@@ -390,7 +415,8 @@ type Server struct {
 	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
 	Hooks    *VisitorHooks `yaml:"hooks,omitempty"`
-	Backends []*backend.BackendConfig `yaml:"backends,omitempty"`
+	Backends      []*backend.BackendConfig `yaml:"backends,omitempty"`
+	GitAutoDeploy *GitAutoDeployConfig    `yaml:"root_git_autodeploy,omitempty"`
 	externalUrl      string
 	externalHostPort string
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
@@ -765,6 +791,19 @@ func (cfg *Config) GetServerByAnyAlias(host string) *Server {
 		return nil
 	}
 	return cfg.byAllAlias[host]
+}
+
+// GetServerByID returns the server with the given ID, or nil if not found.
+func (cfg *Config) GetServerByID(id string) *Server {
+	if cfg == nil {
+		return nil
+	}
+	for _, s := range cfg.Servers {
+		if s.ID == id {
+			return s
+		}
+	}
+	return nil
 }
 
 func LoadConfig(filename string) (*Config, error) {
@@ -1156,6 +1195,36 @@ func LoadConfig(filename string) (*Config, error) {
 				log.Debugf("server[%s].backends[%d]: name=%s image=%s virtual_path=%s container_path=%s",
 					s.Host, i, b.ContainerName, b.Image, b.VirtualPath, b.ContainerPath)
 			}
+		}
+
+		// Validate and finalize git autodeploy config
+		if s.GitAutoDeploy != nil {
+			gad := s.GitAutoDeploy
+			if gad.Repo == "" {
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy: repo is required", s.Host)
+			}
+			if gad.Ref.Branch == "" && gad.Ref.Tag == "" {
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy.ref: at least one of branch or tag is required", s.Host)
+			}
+			gad.Repo = SubstConfVarsLogErrorf(gad.Repo, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.repo", s.Host))
+			if gad.Creds != nil {
+				gad.Creds.Username = SubstConfVarsLogErrorf(gad.Creds.Username, map[string]string{"confdir": confDir, "serverid": s.ID},
+					fmt.Sprintf("server[%s].root_git_autodeploy.creds.username", s.Host))
+				gad.Creds.Password = SubstConfVarsLogErrorf(gad.Creds.Password, map[string]string{"confdir": confDir, "serverid": s.ID},
+					fmt.Sprintf("server[%s].root_git_autodeploy.creds.password", s.Host))
+			}
+			if gad.HulaBuild == "" {
+				gad.HulaBuild = "production"
+			}
+			if gad.DataDir == "" {
+				gad.DataDir = fmt.Sprintf("/var/hula/sitedeploy/%s/repo", s.ID)
+			} else {
+				gad.DataDir = SubstConfVarsLogErrorf(gad.DataDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+					fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
+			}
+			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s",
+				s.Host, gad.Repo, gad.Ref.Branch, gad.Ref.Tag, gad.HulaBuild, gad.DataDir)
 		}
 	}
 

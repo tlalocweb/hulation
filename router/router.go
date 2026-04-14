@@ -126,6 +126,12 @@ func SetupRoutesFiber(l *config.Listener) {
 		lander.Delete("/:landerid", wrapWithOpa(opa, handler.LanderDelete))
 		lander.Patch("/:landerid", wrapWithOpa(opa, handler.LanderModify))
 
+		// Site deployment
+		site := api.Group("/site")
+		site.Post("/trigger-build", wrapWithOpa(opa, handler.TriggerBuild))
+		site.Get("/build-status/:buildid", wrapWithOpa(opa, handler.BuildStatus))
+		site.Get("/builds/:serverid", wrapWithOpa(opa, handler.ListBuilds))
+
 		// Bad actor management
 		if badactor.IsEnabled() {
 			ba := api.Group("/badactor")
