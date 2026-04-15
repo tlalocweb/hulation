@@ -203,6 +203,16 @@ func getAltBody(config *HulactlConfig) (body string, err error) {
 }
 
 func GetConfig(opts *HulactlConfig) (err error) {
+	// Load .env file (if present) and set vars in the process environment
+	dotenvVars, dotenvErr := conftagz.LoadDotEnvFile(".env")
+	if dotenvErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: error loading .env file: %s\n", dotenvErr.Error())
+	} else {
+		for k, v := range dotenvVars {
+			os.Setenv(k, v)
+		}
+	}
+
 	conffilepath := DEFAULT_CONFIG_FILE
 	env := os.Environ()
 	// env into a map

@@ -19,7 +19,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/joho/godotenv v1.5.1
+	github.com/hashicorp/go-version v1.8.0
 	github.com/open-policy-agent/opa v1.14.1
 	github.com/pquerna/otp v1.5.0
 	github.com/risor-io/risor v1.8.1
@@ -33,7 +33,7 @@ require (
 	github.com/umputun/remark42/backend v1.14.0
 	github.com/valyala/fasthttp v1.67.0
 	go.etcd.io/bbolt v1.4.3
-	go.izuma.io/conftagz v0.0.16
+	go.izuma.io/conftagz v0.0.19
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.51.0
 	golang.org/x/text v0.35.0
@@ -73,7 +73,6 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect

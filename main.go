@@ -12,7 +12,7 @@ import (
 	"github.com/tlalocweb/hulation/server"
 	"github.com/tlalocweb/hulation/utils"
 
-	"github.com/joho/godotenv"
+	"go.izuma.io/conftagz"
 )
 
 func main() {
@@ -23,13 +23,18 @@ func main() {
 	// should print if debug is enabled
 	log.Debugf("Debug enabled")
 	log.Tracef("Trace enabled")
-	// Load .env file
-	if err := godotenv.Load(".env"); err != nil {
-		//		panic("Error loading .env file")
-		log.Infof("Did not load .env file: (%s)", err.Error())
+	// Load .env file (if present) and set vars in the process environment
+	envVars, err := conftagz.LoadDotEnvFile(".env")
+	if err != nil {
+		log.Errorf("Error loading .env file: %s", err.Error())
+	} else if len(envVars) > 0 {
+		for k, v := range envVars {
+			os.Setenv(k, v)
+		}
+		log.Infof("Loaded %d variable(s) from .env file", len(envVars))
 	}
 
-	err := app.LoadConfig()
+	err = app.LoadConfig()
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading config: %s\n", err.Error())

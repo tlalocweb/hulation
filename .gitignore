@@ -42,3 +42,4 @@ hula
 .gopath/
 env.sh
 hulactl
+hulabuild
