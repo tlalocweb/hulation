@@ -178,6 +178,410 @@ Multi-platform build and push:
 make docker-push
 ```
 
+## Site Deployment from Git
+
+Hulation can automatically build and deploy static websites from a git repository. When triggered via API, hula clones the repository, reads a build configuration, spins up an ephemeral Docker builder container, runs the site generator (Hugo, Astro, Gatsby, or MkDocs), and deploys the result to the server's static file root.
+
+### How It Works
+
+1. An admin calls `POST /api/site/trigger-build` with the server ID
+2. Hula clones (or pulls) the configured git repository
+3. Hula reads `.hula/sitebuild.yaml` from the repository for build instructions
+4. Hula starts a builder container (e.g., `hula-builder-alpine-default`) with the `hulabuild` binary as its entrypoint
+5. The site source is transferred into the builder container via the Docker API
+6. `hulabuild` runs the build commands (Hugo, Astro, etc.) inside the container
+7. The built site is transferred out and deployed to the server's root directory
+8. The builder container is removed
+
+Builder containers are ephemeral -- they are created for each build and destroyed when done. Hula communicates with the builder via stdin/stdout, and transfers files using the Docker API (`CopyToContainer` / `CopyFromContainer`), so no shared filesystem is required. This means site deployment works whether hula runs directly on the host or inside a Docker container.
+
+### Configuration
+
+Add `root_git_autodeploy` to a server in `config.yaml`:
+
+```yaml
+servers:
+  - host: www.example.com
+    id: mysite
+    aliases:
+      - example.com
+
+    ssl:
+      acme:
+        email: admin@example.com
+        cache_dir: /var/hula/certs
+        http_port: 80
+
+    # Static site serving
+    root: /var/hula/mysite/site
+    root_index: index.html
+    root_compress: true
+    root_max_age: 3600
+
+    # Git-based site deployment
+    root_git_autodeploy:
+      repo: https://github.com/yourorg/yoursite
+      creds:
+        username: deploy-user
+        password: {{env:GITHUB_AUTH_TOKEN}}
+      ref:
+        # Use one of:
+        tag: semver       # deploy the highest semver tag
+        # tag: any        # deploy the most recent tag
+        # tag: production # deploy the exact tag named "production"
+        # branch: main    # deploy from a branch
+      hula_build: production   # which build profile from sitebuild.yaml to use
+      # Optional: override where repos are cloned (default: /var/hula/sitedeploy/<id>/repo)
+      # data_dir: /custom/path/to/repo
+```
+
+**Credentials:** The `creds` section is optional for public repositories. For private repos, use `{{env:GITHUB_AUTH_TOKEN}}` to read the token from an environment variable. For GitHub, set `username` to any value and `password` to a Personal Access Token or fine-grained token with read access to the repo.
+
+**Ref modes:**
+
+| `ref` setting | Behavior |
+|---------------|----------|
+| `tag: semver` | Checks out the highest valid semver tag (e.g., `v2.1.0` over `v2.0.3`) |
+| `tag: any` | Checks out the most recent tag regardless of format |
+| `tag: <name>` | Checks out the exact tag (e.g., `production`, `latest`) |
+| `branch: <name>` | Checks out the specified branch |
+
+### The `.hula/sitebuild.yaml` File
+
+Every site repository must contain a `.hula/sitebuild.yaml` file at its root. This tells hula how to build the site.
+
+**Minimal example (Hugo site):**
+
+```yaml
+configs:
+  production:
+    commands: |
+      WORKDIR /builder
+      HUGO --minify
+      CP -r public/* site/
+      FINALIZE /site
+```
+
+**Full example with multiple profiles:**
+
+```yaml
+# Optional: choose a builder image (default: "default" which is alpine-based)
+builder_image: ubuntu22.04
+
+# Optional: global Hugo version requirement
+hugo:
+  at_least: 0.147.0
+
+configs:
+  production:
+    commands: |
+      WORKDIR /builder
+      HUGO --minify
+      CP -r public/* site/
+      CP -r extra_assets site/extra
+      RM -rf site/extra/drafts
+      FINALIZE /site
+
+  staging:
+    # Override Hugo version for this profile
+    hugo:
+      at_least: 0.160.0
+    # Install extra tools before the build
+    dockerfile_prebuild: |
+      RUN apt-get update && apt-get install -y imagemagick
+    commands: |
+      WORKDIR /site
+      HUGO
+      CP -r public/* site/
+      RUN convert site/images/hero.png -resize 1200x site/images/hero-opt.png
+      FINALIZE /site
+```
+
+**Builder images:**
+
+| Image name | Base | Tag |
+|------------|------|-----|
+| `default` or `alpine-default` | Alpine 3.19 | `hula-builder-alpine-default`, `hula-builder-default` |
+| `ubuntu22.04` | Ubuntu 22.04 | `hula-builder-ubuntu22.04` |
+
+Both images include Hugo (extended), Astro, Gatsby CLI, MkDocs, Node.js, Python, and git.
+
+**`dockerfile_prebuild`:** When a build profile includes `dockerfile_prebuild`, hula builds a derived Docker image by appending the prebuild commands to the base builder image. Derived images are cached by content hash -- if the prebuild commands haven't changed, the cached image is reused.
+
+### Build Commands Reference
+
+The `commands` field contains a list of commands executed in order inside the builder container. Each command must be on its own line. Lines starting with `#` are comments. Command names are case-insensitive but conventionally written in uppercase.
+
+| Command | Description |
+|---------|-------------|
+| `WORKDIR <path>` | **Required.** Set the working directory (must be absolute). Triggers transfer of the site source into the container at `<path>/site/`. |
+| `HUGO [flags]` | Run Hugo with optional flags (e.g., `--minify`, `-e production`). Runs in the `site/` subdirectory. |
+| `ASTRO [flags]` | Run Astro build with optional flags. |
+| `GATSBY [flags]` | Run Gatsby build with optional flags. |
+| `MKDOCS [flags]` | Run MkDocs build with optional flags. |
+| `CP <args>` | Copy files (same syntax as Linux `cp`). Paths are relative to `site/`. |
+| `RM <args>` | Remove files (same syntax as Linux `rm`). Paths are sandboxed to the WORKDIR. |
+| `RUN <command>` | Run an arbitrary shell command in the `site/` directory. |
+| `FINALIZE <path>` | **Required, must be last.** Tarballs the given directory and transfers it out of the container to become the deployed site. |
+
+**Example flow:**
+
+```
+WORKDIR /builder        # Creates /builder, transfers repo source to /builder/site/
+HUGO --minify           # Runs hugo in /builder/site/, output goes to /builder/site/public/
+CP -r public/* site/    # Copies built files (relative to /builder/site/)
+FINALIZE /site          # Tarballs /site, sends it back to hula for deployment
+```
+
+### API Endpoints
+
+All site deployment endpoints require admin authentication (JWT + OPA).
+
+**Trigger a build:**
+
+```bash
+curl -X POST https://your-server/api/site/trigger-build \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "mysite"}'
+```
+
+Response:
+
+```json
+{"status": "build_triggered", "build_id": "a1b2c3d4-..."}
+```
+
+Returns `409 Conflict` if a build is already running for that server.
+
+**Check build status:**
+
+```bash
+curl https://your-server/api/site/build-status/a1b2c3d4-... \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+
+```json
+{
+  "build_id": "a1b2c3d4-...",
+  "server_id": "mysite",
+  "status": 8,
+  "status_text": "complete",
+  "started_at": "2026-04-14T15:30:00Z",
+  "ended_at": "2026-04-14T15:30:45Z",
+  "logs": [
+    "Cloning/pulling repository...",
+    "Repository ready at /var/hula/sitedeploy/mysite/repo",
+    "Using build profile: production",
+    ">>> WORKDIR /builder",
+    ">>> HUGO --minify",
+    "[hugo] Start building sites...",
+    "[hugo] Total in 1234 ms",
+    ">>> FINALIZE /site",
+    "Site deployed successfully"
+  ],
+  "error": ""
+}
+```
+
+**List builds for a server:**
+
+```bash
+curl https://your-server/api/site/builds/mysite \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Returns an array of build states, newest first.
+
+**Build status values:**
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Build queued |
+| `cloning` | Cloning or pulling the git repository |
+| `preparing_image` | Building a derived image (if `dockerfile_prebuild` is used) |
+| `starting_container` | Starting the builder container |
+| `transferring_source` | Copying site source into the builder container |
+| `running` | Build commands executing |
+| `extracting_result` | Copying built site out of the builder container |
+| `deploying` | Writing the built site to the server's root directory |
+| `complete` | Build finished successfully |
+| `failed` | Build failed (see `error` field) |
+
+### Builder Images Setup
+
+Builder images must be loaded into Docker before triggering builds. They ship as tarballs with the hula distribution.
+
+**Build the images from source:**
+
+```bash
+cd builder-images
+./build-images.sh
+```
+
+This compiles `hulabuild`, builds both Docker images, and exports them as tarballs in `builder-images/output/`.
+
+**Load images on the target machine:**
+
+```bash
+docker load < hula-builder-ubuntu22.04.tar.gz
+docker load < hula-builder-alpine-default.tar.gz
+```
+
+Verify:
+
+```bash
+docker images | grep hula-builder
+```
+
+### Docker Compose with Site Deployment
+
+When running hula in Docker with site deployment enabled, you need:
+
+1. The Docker socket mounted (so hula can manage builder containers)
+2. A persistent volume for cloned repositories
+3. A persistent volume for the site root (so deployed sites survive container restarts)
+4. The `GITHUB_AUTH_TOKEN` environment variable (or however you pass git credentials)
+
+```yaml
+services:
+  hula:
+    image: ghcr.io/tlalocweb/hula:latest
+    container_name: hula
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./config.yaml:/etc/hula/config.yaml:ro
+      - hula-certs:/var/hula/certs
+      - hula-sites:/var/hula/mysite          # site root
+      - hula-sitedeploy:/var/hula/sitedeploy # git repos + build artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - GITHUB_AUTH_TOKEN=${GITHUB_AUTH_TOKEN}
+      - DB_HOST=hula-clickhouse
+      - DB_PASSWORD=change-me
+    depends_on:
+      hula-clickhouse:
+        condition: service_healthy
+
+  hula-clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: hula-clickhouse
+    restart: unless-stopped
+    volumes:
+      - ch-data:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_DB=hula
+      - CLICKHOUSE_USER=hula
+      - CLICKHOUSE_PASSWORD=change-me
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  hula-certs:
+  hula-sites:
+  hula-sitedeploy:
+  ch-data:
+```
+
+### Triggering Builds
+
+Builds are triggered via the API. Common integration patterns:
+
+**GitHub webhook (via a lightweight relay):**
+
+Set up a GitHub webhook that calls your server's trigger-build endpoint on push/tag events. You can use a small relay service, a GitHub Action, or a serverless function to transform the webhook payload into the hula API call.
+
+**GitHub Actions:**
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy Site
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger hula build
+        run: |
+          TOKEN=$(curl -s -X POST https://your-server/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"${{ secrets.HULA_ADMIN_PASSWORD }}"}' \
+            | jq -r '.token')
+          curl -X POST https://your-server/api/site/trigger-build \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"id": "mysite"}'
+```
+
+**Manual trigger (via curl or hulactl):**
+
+```bash
+# Authenticate first
+TOKEN=$(curl -s -X POST https://your-server/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"yourpassword"}' | jq -r '.token')
+
+# Trigger build
+curl -X POST https://your-server/api/site/trigger-build \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "mysite"}'
+
+# Poll status
+curl -s https://your-server/api/site/build-status/<build-id> \
+  -H "Authorization: Bearer $TOKEN" | jq .status_text
+```
+
+### Architecture: Hula in Docker
+
+When hula runs inside Docker, builder containers are **sibling containers**, not nested. Both talk to the same Docker daemon via the mounted socket. File transfers use the Docker API, not the filesystem:
+
+```
+Host
+├── Docker daemon
+│   ├── hula container
+│   │   ├── /var/run/docker.sock ──(mounted from host)
+│   │   ├── /var/hula/sitedeploy/  ──(persistent volume: git clones)
+│   │   └── /var/hula/mysite/site/ ──(persistent volume: served files)
+│   │
+│   └── hula-builder-xxxx container  ──(ephemeral)
+│       └── /builder/site/  ──(build workspace)
+│
+│   ← Docker API: CopyToContainer (source tarball)
+│   → Docker API: CopyFromContainer (built site tarball)
+```
+
+Requirements when hula runs in Docker:
+
+- Mount `/var/run/docker.sock` so hula can manage builder containers
+- Mount a persistent volume for `/var/hula/sitedeploy` so cloned repos survive restarts
+- Mount a persistent volume for the site root directory
+- Install `git` in the hula image (included by default in the official image)
+- Builder images must be loaded on the **host's** Docker daemon (not inside the hula container)
+
+### Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| "Docker daemon not reachable" | Docker socket not mounted | Add `-v /var/run/docker.sock:/var/run/docker.sock` |
+| "git not found in PATH" | git not installed in hula's container | Use the official hula image (includes git) or add `apk add git` |
+| "builder image not found" | Builder images not loaded | Run `docker load < hula-builder-alpine-default.tar.gz` on the host |
+| Build stuck at "transferring_source" | Large repository, slow I/O | Check Docker daemon resources; consider shallow clones (default) |
+| "build already in progress" (409) | Previous build still running | Wait for it to complete or check `/api/site/build-status` |
+| Site not updating after build | Volume not mounted for site root | Ensure the `root:` path in config maps to a persistent volume |
+
 ## Kubernetes
 
 ### Namespace and Secrets
@@ -404,6 +808,7 @@ kubectl apply -f hula.yaml
 
 - **ACME certificates**: The cert PVC must be `ReadWriteOnce` and the deployment should run a single replica (or use a shared volume) so that the ACME cache is consistent.
 - **Backend containers feature**: The Docker-managed backends feature is not available on Kubernetes. Use sidecar containers or separate Deployments/Services instead, and configure `proxies:` in `config.yaml` to point at those services.
+- **Site deployment feature**: Like backends, the `root_git_autodeploy` feature requires access to a Docker daemon to run builder containers. On Kubernetes this requires Docker-in-Docker or a Docker socket mount, which is not recommended in production. Consider building your static site in CI/CD and deploying the output to a PVC or object storage instead.
 - **Health endpoint**: `/hulastatus` is unauthenticated and suitable for liveness and readiness probes. If running on a non-standard port or without TLS, adjust the probe `port` and `scheme` accordingly.
 - **Ingress**: The example uses a `LoadBalancer` Service. Replace with an Ingress resource or NodePort as appropriate for your cluster. If using an ingress controller for TLS termination, configure `external_scheme: https` and disable the `ssl:` block in `config.yaml`.
 
@@ -532,5 +937,7 @@ IP                 SCORE   STATUS    DETECTED               EXPIRES             
 | `/var/hula/certs` | ACME certificate cache (persist across restarts) |
 | `/var/hula/public` | Static content root |
 | `/var/hula/scripts` | Custom scripts |
+| `/var/hula/sitedeploy` | Git clones and build artifacts for site deployment (persist) |
+| `/var/run/docker.sock` | Docker socket (required for backends and site deployment) |
 | `/var/lib/clickhouse` | ClickHouse data (persist) |
 | `/var/log/clickhouse-server` | ClickHouse logs |

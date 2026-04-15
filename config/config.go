@@ -860,6 +860,14 @@ func LoadConfig(filename string) (*Config, error) {
 		cfg.HulaSSL = nil
 	}
 
+	// conftagz may create empty GitAutoDeploy pointer structs — nil them out.
+	// A GitAutoDeployConfig with no repo AND no ref is conftagz noise, not user intent.
+	for _, s := range cfg.Servers {
+		if s.GitAutoDeploy != nil && s.GitAutoDeploy.Repo == "" && s.GitAutoDeploy.Ref.Branch == "" && s.GitAutoDeploy.Ref.Tag == "" {
+			s.GitAutoDeploy = nil
+		}
+	}
+
 	if len(cfg.Servers) < 1 {
 		return nil, fmt.Errorf("no servers defined")
 	}
@@ -1201,10 +1209,13 @@ func LoadConfig(filename string) (*Config, error) {
 		if s.GitAutoDeploy != nil {
 			gad := s.GitAutoDeploy
 			if gad.Repo == "" {
-				return nil, fmt.Errorf("server[%s].root_git_autodeploy: repo is required", s.Host)
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy: 'repo' is required", s.Host)
 			}
 			if gad.Ref.Branch == "" && gad.Ref.Tag == "" {
-				return nil, fmt.Errorf("server[%s].root_git_autodeploy.ref: at least one of branch or tag is required", s.Host)
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy: ref must have at least one of 'branch' or 'tag'", s.Host)
+			}
+			if s.Root != "" {
+				return nil, fmt.Errorf("server[%s]: cannot have both 'root' and 'root_git_autodeploy' — use one or the other", s.Host)
 			}
 			gad.Repo = SubstConfVarsLogErrorf(gad.Repo, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.repo", s.Host))
