@@ -55,6 +55,11 @@ func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler) // abort silently
 		}
 	}
+	// Redirect alias check — before any routing
+	ctx := handler.NewNetHTTPCtx(w, r)
+	if redirected, _ := handler.CheckRedirectAlias(ctx); redirected {
+		return
+	}
 	start := time.Now()
 	rec := &responseRecorder{ResponseWriter: w, status: 200}
 	h.mux.ServeHTTP(rec, r)

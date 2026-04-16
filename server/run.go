@@ -332,6 +332,16 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	log.Debugf("CORS middleware enabled for listener %s", l.GetListenOn())
 	// }
 
+	// Redirect alias check — must run before CSP and route handlers
+	l.FiberApp.Use(func(c *fiber.Ctx) error {
+		ctx := handler.NewFiberCtx(c)
+		redirected, err := handler.CheckRedirectAlias(ctx)
+		if err != nil || redirected {
+			return err
+		}
+		return c.Next()
+	})
+
 	l.FiberApp.Use(func(c *fiber.Ctx) error {
 		ctx := handler.NewFiberCtx(c)
 		hostconf, _, _, _ := handler.GetHostConfig(ctx)

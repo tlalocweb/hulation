@@ -380,6 +380,9 @@ type Server struct {
 	Port int `yaml:"port,omitempty"`
 	// optional - other names the Host header can be to match this server
 	Aliases []string `yaml:"aliases,omitempty"`
+	// optional - aliases that should 301 redirect to the primary Host instead of serving content
+	// these are registered like regular aliases for ACME/TLS but trigger a permanent redirect at request time
+	RedirectAliases []string `yaml:"redirect_aliases,omitempty"`
 	// ID should be a short random string - it is used as a parameter to the hulation server to identify the server
 	// and do a check with the Host header. It must be set - there is no default. This is not a secret.
 	ID     string `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
@@ -437,10 +440,21 @@ type Server struct {
 	// if this is true, the utils.GetHostConfig and similar lookups for this server based on the host header, will look both at the DNS name _and_
 	// the port number. By default, the port number is ignored in the lookup
 	respectPortInLookup bool
+	// set of aliases that should 301 redirect to the primary Host
+	redirectAliasSet map[string]bool
 }
 
 func (s *Server) RespectPortInLookup() bool {
 	return s.respectPortInLookup
+}
+
+// IsRedirectAlias returns true if the given hostname is configured as a redirect alias
+// (should 301 to the primary Host rather than serving content).
+func (s *Server) IsRedirectAlias(host string) bool {
+	if s.redirectAliasSet == nil {
+		return false
+	}
+	return s.redirectAliasSet[host]
 }
 
 func (s *Server) GetExternalUrl() string {
@@ -1151,11 +1165,34 @@ func LoadConfig(filename string) (*Config, error) {
 				return nil, fmt.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
 			}
 		}
+		// process redirect aliases: validate, register in lookups, and merge into Aliases for ACME
+		if len(s.RedirectAliases) > 0 {
+			s.redirectAliasSet = make(map[string]bool, len(s.RedirectAliases))
+			for n, ra := range s.RedirectAliases {
+				ra = SubstConfVarsLogErrorf(ra, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].redirect_alias[%s]", s.Host, ra))
+				s.RedirectAliases[n] = ra
+				_, ok := cfg.byServer[ra]
+				if ok {
+					log.Errorf(`redirect_alias "%s" for server config %s already referenced`, ra, s.Host)
+					return nil, fmt.Errorf(`redirect_alias "%s" for server config %s already referenced`, ra, s.Host)
+				}
+				if validIpAddressRE.MatchString(ra) || validHostnameRE.MatchString(ra) {
+					log.Debugf(`server[%s] redirect_alias %s`, s.Host, ra)
+					cfg.byServer[ra] = s
+					s.redirectAliasSet[ra] = true
+					// merge into Aliases so ACME domain collection picks it up
+					s.Aliases = append(s.Aliases, ra)
+				} else {
+					log.Errorf(`bad redirect_alias "%s" for server config: %s`, ra, s.Host)
+					return nil, fmt.Errorf(`bad redirect_alias "%s" for server config: %s`, ra, s.Host)
+				}
+			}
+		}
 		// log.Debugf("server[%s].externalUrl = %s", s.Host, s.externalUrl)
 		// log.Debugf("cfg.byListener[%s].servers = %+v", s.listenOn, listenerforserver.servers)
 		// log.Debugf("cfg.byListener[%s].serverByHost[%s] = %+v", s.listenOn, s.Host, listenerforserver.serverByHost)
 		cfg.byListener[s.listenOn].serverByHost[s.Host] = s
-		// add aliases to listener's serverByHost and to byAllAlias
+		// add aliases (including redirect aliases) to listener's serverByHost and to byAllAlias
 		for _, a := range s.Aliases {
 			cfg.byListener[s.listenOn].serverByHost[a] = s
 			cfg.byAllAlias[a] = s
