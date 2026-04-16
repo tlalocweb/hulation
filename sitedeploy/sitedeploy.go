@@ -346,7 +346,7 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 
 	// Send command list to hulabuild via stdin
 	commandListText := profile.Commands + "\n---\n"
-	conn, stdout, err := builder.startContainer(ctx, commandListText)
+	conn, stdout, err := builder.startContainer(ctx, commandListText, gad.BuildEnv)
 	if err != nil {
 		bs.fail(err)
 		return

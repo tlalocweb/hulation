@@ -359,6 +359,11 @@ type GitAutoDeployConfig struct {
 	// Where the built site is deployed and served from.
 	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
 	DeployDir string `yaml:"deploy_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/site"`
+	// Environment variables to pass into the builder container.
+	// Format: KEY=VALUE. Supports {{env:*}} substitution.
+	// Useful for passing secrets to static site generators at build time,
+	// e.g. "HUGO_PARAMS_TURNSTILESITE_KEY={{env:TURNSTILE_SITE_KEY}}"
+	BuildEnv []string `yaml:"build_env,omitempty"`
 	// If true, hula will NOT automatically pull and build the site on startup.
 	// By default hula pulls and builds all root_git_autodeploy sites at startup.
 	NoPullOnStart bool `yaml:"no_pull_on_start,omitempty"`
