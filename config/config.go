@@ -352,11 +352,16 @@ type GitAutoDeployConfig struct {
 	Repo      string          `yaml:"repo"`
 	Creds     *GitCredentials `yaml:"creds,omitempty"`
 	Ref       GitRefConfig    `yaml:"ref"`
-	HulaBuild string          `yaml:"hula_build,omitempty"`
+	HulaBuild string          `yaml:"hula_build,omitempty" default:"production"`
 	// Where to store cloned repos and build artifacts.
-	// Default: /var/hula/sitedeploy/<server-id>/repo
 	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
-	DataDir string `yaml:"data_dir,omitempty"`
+	DataDir string `yaml:"data_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/repo"`
+	// Where the built site is deployed and served from.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	DeployDir string `yaml:"deploy_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/site"`
+	// If true, hula will NOT automatically pull and build the site on startup.
+	// By default hula pulls and builds all root_git_autodeploy sites at startup.
+	NoPullOnStart bool `yaml:"no_pull_on_start,omitempty"`
 }
 
 type Server struct {
@@ -1225,17 +1230,14 @@ func LoadConfig(filename string) (*Config, error) {
 				gad.Creds.Password = SubstConfVarsLogErrorf(gad.Creds.Password, map[string]string{"confdir": confDir, "serverid": s.ID},
 					fmt.Sprintf("server[%s].root_git_autodeploy.creds.password", s.Host))
 			}
-			if gad.HulaBuild == "" {
-				gad.HulaBuild = "production"
-			}
-			if gad.DataDir == "" {
-				gad.DataDir = fmt.Sprintf("/var/hula/sitedeploy/%s/repo", s.ID)
-			} else {
-				gad.DataDir = SubstConfVarsLogErrorf(gad.DataDir, map[string]string{"confdir": confDir, "serverid": s.ID},
-					fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
-			}
-			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s",
-				s.Host, gad.Repo, gad.Ref.Branch, gad.Ref.Tag, gad.HulaBuild, gad.DataDir)
+			gad.DataDir = SubstConfVarsLogErrorf(gad.DataDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
+			gad.DeployDir = SubstConfVarsLogErrorf(gad.DeployDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.deploy_dir", s.Host))
+			// Set server Root from DeployDir so static file serving works
+			s.Root = gad.DeployDir
+			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s deploy_dir=%s",
+				s.Host, gad.Repo, gad.Ref.Branch, gad.Ref.Tag, gad.HulaBuild, gad.DataDir, gad.DeployDir)
 		}
 	}
 
@@ -1281,6 +1283,10 @@ func LoadConfig(filename string) (*Config, error) {
 			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
 		}
 	}
+
+	// Final pass: substitute {{env:*}} and other mustache vars in all string fields.
+	// This catches any config values that weren't explicitly handled above.
+	SubstConfVarsForAllStrings(&cfg, map[string]string{"confdir": confDir})
 
 	return &cfg, nil
 }

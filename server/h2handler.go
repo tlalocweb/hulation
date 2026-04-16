@@ -187,6 +187,11 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("POST /api/auth/totp/disable", wrapOpa(handler.TotpDisable))
 	h.mux.Handle("GET /api/auth/totp/status", wrapOpa(handler.TotpStatus))
 
+	// Site deployment
+	h.mux.Handle("POST /api/site/trigger-build", wrapOpa(handler.TriggerBuild))
+	h.mux.Handle("GET /api/site/build-status/{buildid}", wrapOpa(handler.BuildStatus))
+	h.mux.Handle("GET /api/site/builds/{serverid}", wrapOpa(handler.ListBuilds))
+
 	// Bad actor admin API
 	if badactor.IsEnabled() {
 		h.mux.Handle("GET /api/badactor/list", wrapOpa(badactor.ListBadActors))

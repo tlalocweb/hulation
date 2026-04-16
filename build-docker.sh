@@ -31,20 +31,64 @@ fi
 
 case "${ACTION}" in
     local)
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
         echo "Building for local platform..."
         docker buildx build \
             --network=host \
             --load \
-            -f "$(dirname "$0")/Dockerfile.local" \
+            -f "${SCRIPT_DIR}/Dockerfile.local" \
             --build-arg hulaversion="${hulaversion}" \
             --build-arg hulabuilddate="${hulabuilddate}" \
             --tag "${IMAGE}:${TAG}" \
             ${LATEST_TAG} \
-            "$(dirname "$0")/.."
+            "${SCRIPT_DIR}/.."
         echo "Image built: ${IMAGE}:${TAG}"
         if [ "${TAG_LATEST}" = true ]; then
             echo "Also tagged: ${IMAGE}:latest"
         fi
+
+        # Build hulabuild binary for the builder images
+        echo ""
+        echo "Building hulabuild binary..."
+        ARCH=$(uname -m)
+        case "${ARCH}" in
+            x86_64)  GOARCH=amd64 ;;
+            aarch64) GOARCH=arm64 ;;
+            *)       GOARCH=amd64 ;;
+        esac
+        GO="${SCRIPT_DIR}/.bin/go/bin/go"
+        if [ ! -f "${GO}" ]; then
+            GO=go
+        fi
+        CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" ${GO} build \
+            -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaversion}" \
+            -o "${SCRIPT_DIR}/builder-images/hulabuild-linux" \
+            "${SCRIPT_DIR}/model/tools/hulabuild"
+
+        # Build alpine-default builder image
+        echo "Building hula-builder-alpine-default..."
+        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux" "${SCRIPT_DIR}/builder-images/alpine-default/hulabuild"
+        docker build \
+            --network=host \
+            -t hula-builder-alpine-default:latest \
+            -t hula-builder-default:latest \
+            "${SCRIPT_DIR}/builder-images/alpine-default"
+        echo "Image built: hula-builder-alpine-default:latest (also tagged hula-builder-default:latest)"
+
+        # Build ubuntu22.04 builder image
+        echo "Building hula-builder-ubuntu22.04..."
+        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux" "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild"
+        docker build \
+            --network=host \
+            -t hula-builder-ubuntu22.04:latest \
+            "${SCRIPT_DIR}/builder-images/ubuntu22.04"
+        echo "Image built: hula-builder-ubuntu22.04:latest"
+
+        # Cleanup
+        rm -f "${SCRIPT_DIR}/builder-images/hulabuild-linux"
+        rm -f "${SCRIPT_DIR}/builder-images/alpine-default/hulabuild"
+        rm -f "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild"
         ;;
     push)
         echo "Building multi-platform and pushing..."

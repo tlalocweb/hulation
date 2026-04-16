@@ -612,6 +612,9 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 			sitedeploy.SetGlobalBuildManager(buildMgr)
 			defer buildMgr.Close()
 			log.Infof("Site deploy build manager initialized")
+
+			// Pull and build any sites that need it on startup (sequentially)
+			buildMgr.StartupBuildAll(conf.Servers)
 		}
 	}
 

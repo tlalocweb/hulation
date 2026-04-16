@@ -34,6 +34,13 @@ import (
 	"go.izuma.io/conftagz"
 )
 
+func lastLog(logs []string) string {
+	if len(logs) == 0 {
+		return ""
+	}
+	return logs[len(logs)-1]
+}
+
 func askForConfirmation() bool {
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -1075,6 +1082,97 @@ func main() {
 				)
 			}
 			fmt.Printf("\n%d entries total\n", len(entries))
+		}
+
+	case CMD_BUILDSITE:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl build <server-id>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		client := GetHulactlClient(hulactlconfig)
+		_, result, err := client.TriggerBuild(serverID)
+		if err != nil {
+			fmt.Printf("Error triggering build: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Build triggered: %s\n", result.BuildID)
+		fmt.Printf("Polling for completion...\n")
+
+		// Poll until complete or failed
+		for {
+			time.Sleep(2 * time.Second)
+			_, status, err := client.BuildStatus(result.BuildID)
+			if err != nil {
+				fmt.Printf("Error checking status: %s\n", err.Error())
+				os.Exit(1)
+			}
+			fmt.Printf("  [%s] %s\n", status.StatusText, lastLog(status.Logs))
+			if status.StatusText == "complete" {
+				fmt.Printf("\nBuild complete!\n")
+				break
+			}
+			if status.StatusText == "failed" {
+				fmt.Printf("\nBuild failed: %s\n", status.Error)
+				os.Exit(1)
+			}
+		}
+
+	case CMD_BUILDSTATUS:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl build-status <build-id>\n")
+			os.Exit(1)
+		}
+		client := GetHulactlClient(hulactlconfig)
+		_, status, err := client.BuildStatus(argz[1])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Build:   %s\n", status.BuildID)
+		fmt.Printf("Server:  %s\n", status.ServerID)
+		fmt.Printf("Status:  %s\n", status.StatusText)
+		fmt.Printf("Started: %s\n", status.StartedAt)
+		if status.EndedAt != nil {
+			fmt.Printf("Ended:   %s\n", *status.EndedAt)
+		}
+		if status.Error != "" {
+			fmt.Printf("Error:   %s\n", status.Error)
+		}
+		if len(status.Logs) > 0 {
+			fmt.Printf("\nLogs:\n")
+			for _, l := range status.Logs {
+				fmt.Printf("  %s\n", l)
+			}
+		}
+
+	case CMD_BUILDS:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl builds <server-id>\n")
+			os.Exit(1)
+		}
+		client := GetHulactlClient(hulactlconfig)
+		_, builds, err := client.ListBuilds(argz[1])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if len(builds) == 0 {
+			fmt.Printf("No builds found for server %s\n", argz[1])
+		} else {
+			fmt.Printf("%-38s %-12s %-22s %s\n", "BUILD ID", "STATUS", "STARTED", "ERROR")
+			fmt.Printf("%-38s %-12s %-22s %s\n", "--------", "------", "-------", "-----")
+			for _, b := range builds {
+				errStr := ""
+				if b.Error != "" {
+					if len(b.Error) > 40 {
+						errStr = b.Error[:40] + "..."
+					} else {
+						errStr = b.Error
+					}
+				}
+				fmt.Printf("%-38s %-12s %-22s %s\n", b.BuildID, b.StatusText, b.StartedAt, errStr)
+			}
 		}
 
 	default:

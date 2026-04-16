@@ -36,7 +36,7 @@ func newBuilderContainer(cli *client.Client) *BuilderContainer {
 func (bc *BuilderContainer) ensureImage(ctx context.Context, imageName string) error {
 	_, _, err := bc.cli.ImageInspectWithRaw(ctx, imageName)
 	if err != nil {
-		return fmt.Errorf("builder image %q not found locally. Load it with: docker load < hula-builder-%s.tar.gz", imageName, imageName)
+		return fmt.Errorf("builder image %q not found locally. Load it with: docker load < %s.tar.gz", imageName, imageName)
 	}
 	bc.imageName = imageName
 	return nil

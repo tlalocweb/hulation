@@ -114,16 +114,16 @@ func (e *executor) cmdStaticGen(generator, args string) error {
 	cmd.Env = os.Environ()
 
 	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		// Send build output as log lines
-		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	outStr := strings.TrimSpace(string(output))
+	if outStr != "" {
+		for _, line := range strings.Split(outStr, "\n") {
 			if line != "" {
 				e.proto.sendLog("[%s] %s", generator, line)
 			}
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("%s failed: %w", generator, err)
+		return fmt.Errorf("%s failed (dir=%s, args=%q): %w\noutput: %s", generator, siteDir, args, err, outStr)
 	}
 	e.proto.sendLog("%s completed successfully", generator)
 	return nil
@@ -141,11 +141,12 @@ func (e *executor) cmdCp(args string) error {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = siteDir
 	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		e.proto.sendLog("[cp] %s", strings.TrimSpace(string(output)))
+	outStr := strings.TrimSpace(string(output))
+	if outStr != "" {
+		e.proto.sendLog("[cp] %s", outStr)
 	}
 	if err != nil {
-		return fmt.Errorf("CP failed: %w", err)
+		return fmt.Errorf("CP failed (cmd=%q): %w\noutput: %s", cmdStr, err, outStr)
 	}
 	return nil
 }
@@ -176,11 +177,12 @@ func (e *executor) cmdRm(args string) error {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = siteDir
 	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		e.proto.sendLog("[rm] %s", strings.TrimSpace(string(output)))
+	outStr := strings.TrimSpace(string(output))
+	if outStr != "" {
+		e.proto.sendLog("[rm] %s", outStr)
 	}
 	if err != nil {
-		return fmt.Errorf("RM failed: %w", err)
+		return fmt.Errorf("RM failed (cmd=%q): %w\noutput: %s", cmdStr, err, outStr)
 	}
 	return nil
 }
@@ -195,15 +197,16 @@ func (e *executor) cmdRun(args string) error {
 	cmd.Env = os.Environ()
 
 	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	outStr := strings.TrimSpace(string(output))
+	if outStr != "" {
+		for _, line := range strings.Split(outStr, "\n") {
 			if line != "" {
 				e.proto.sendLog("[run] %s", line)
 			}
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("RUN failed: %w", err)
+		return fmt.Errorf("RUN failed (cmd=%q, dir=%s): %w\noutput: %s", args, siteDir, err, outStr)
 	}
 	return nil
 }

@@ -39,7 +39,7 @@ RUN npm install -g astro
 RUN npm install -g gatsby-cli
 
 # MkDocs
-RUN pip3 install --no-cache-dir --break-system-packages mkdocs mkdocs-material
+RUN pip3 install --no-cache-dir mkdocs mkdocs-material
 
 # Clean up npm cache
 RUN npm cache clean --force

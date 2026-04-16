@@ -65,6 +65,15 @@ const (
 	CMD_TOTPKEY_HELP          = "Generate a TOTP encryption key for the config file"
 	CMD_TOTPSETUP             = "totp-setup"
 	CMD_TOTPSETUP_HELP        = "Set up TOTP for the admin user (interactive)"
+	CMD_BUILDSITE             = "build"
+	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
+	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
+	CMD_BUILDSTATUS           = "build-status"
+	CMD_BUILDSTATUS_HELP      = "Get the status of a site build"
+	CMD_BUILDSTATUS_USAGE     = "build-status <build-id>"
+	CMD_BUILDS                = "builds"
+	CMD_BUILDS_HELP           = "List recent builds for a server"
+	CMD_BUILDS_USAGE          = "builds <server-id>"
 )
 
 var commands []Command
@@ -92,6 +101,9 @@ func init() {
 		Command{CMD_RELOAD, CMD_RELOAD_HELP, ""},
 		Command{CMD_TOTPKEY, CMD_TOTPKEY_HELP, ""},
 		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
+		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
+		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
+		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

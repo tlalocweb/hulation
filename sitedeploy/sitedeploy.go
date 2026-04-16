@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -438,6 +439,14 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 		return
 	}
 
+	// Record the commit hash we just built
+	currentHead := getGitHead(repoDir)
+	if currentHead != "" {
+		markerFile := filepath.Join(filepath.Dir(gad.DeployDir), ".last-build-commit")
+		os.MkdirAll(filepath.Dir(markerFile), 0o755)
+		os.WriteFile(markerFile, []byte(currentHead), 0o644)
+	}
+
 	bs.complete()
 	log.Infof("sitedeploy: build %s completed successfully for server %s", bs.BuildID, server.ID)
 }
@@ -509,6 +518,92 @@ func cleanDockerStreamLine(line string) string {
 		return line[8:]
 	}
 	return ""
+}
+
+// siteNeedsBuild returns true if the deploy directory is missing or empty.
+func siteNeedsBuild(deployDir string) bool {
+	entries, err := os.ReadDir(deployDir)
+	if err != nil {
+		return true // doesn't exist or can't read
+	}
+	return len(entries) == 0
+}
+
+// StartupBuildAll processes all servers with root_git_autodeploy sequentially.
+// For each server (unless no_pull_on_start is set), it clones/pulls the repo
+// and builds the site if it hasn't been built yet or if updates are available.
+// Servers are processed one at a time to avoid overloading the system.
+func (bm *BuildManager) StartupBuildAll(servers []*config.Server) {
+	for _, s := range servers {
+		if s.GitAutoDeploy == nil || s.GitAutoDeploy.NoPullOnStart {
+			continue
+		}
+
+		needsBuild := siteNeedsBuild(s.Root)
+		gad := s.GitAutoDeploy
+
+		if !needsBuild {
+			// Site exists — check if repo has updates by doing a pull
+			log.Infof("sitedeploy: startup check for %s — site exists at %s, checking for updates", s.ID, s.Root)
+		} else {
+			log.Infof("sitedeploy: startup build for %s — site not yet built at %s", s.ID, s.Root)
+		}
+
+		// Clone or pull the repo
+		repoDir, err := CloneOrPull(gad)
+		if err != nil {
+			log.Errorf("sitedeploy: startup clone/pull failed for %s: %s", s.ID, err)
+			continue
+		}
+
+		if !needsBuild {
+			// Repo was pulled. Check if HEAD changed since last build.
+			// We store the last-built commit in a marker file.
+			markerFile := filepath.Join(filepath.Dir(gad.DeployDir), ".last-build-commit")
+			currentHead := getGitHead(repoDir)
+			if currentHead != "" {
+				lastBuilt, _ := os.ReadFile(markerFile)
+				if string(lastBuilt) == currentHead {
+					log.Infof("sitedeploy: %s is up to date (commit %s), skipping build", s.ID, currentHead[:min(len(currentHead), 8)])
+					continue
+				}
+			}
+			log.Infof("sitedeploy: %s has updates, rebuilding", s.ID)
+		}
+
+		// Run a synchronous build
+		buildID := uuid.New().String()
+		bs := &BuildState{
+			BuildID:    buildID,
+			ServerID:   s.ID,
+			Status:     BuildPending,
+			StatusText: "pending",
+			StartedAt:  time.Now(),
+			Logs:       []string{"startup build"},
+		}
+
+		bm.mu.Lock()
+		bm.builds[buildID] = bs
+		bm.serverBuilds[s.ID] = append(bm.serverBuilds[s.ID], buildID)
+		bm.mu.Unlock()
+
+		bm.executeBuild(s, bs, nil)
+
+		if bs.Status == BuildComplete {
+			log.Infof("sitedeploy: startup build complete for %s", s.ID)
+		} else {
+			log.Errorf("sitedeploy: startup build failed for %s: %s", s.ID, bs.Error)
+		}
+	}
+}
+
+// getGitHead returns the current HEAD commit hash from the repo, or "".
+func getGitHead(repoDir string) string {
+	output, err := runGitOutput(repoDir, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(output)
 }
 
 // Package-level global for the BuildManager
