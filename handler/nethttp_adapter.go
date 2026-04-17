@@ -80,7 +80,7 @@ func (n *NetHTTPCtx) Param(name string) string {
 }
 
 func (n *NetHTTPCtx) IP() string {
-	// Check standard proxy headers first
+	// Check standard proxy headers
 	if xff := n.r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.IndexByte(xff, ','); i > 0 {
 			return strings.TrimSpace(xff[:i])

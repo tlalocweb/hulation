@@ -149,9 +149,9 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 		log.Infof("TLS version constraints on %s: min=0x%04x max=0x%04x", l.GetListenOn(), effectiveMin, effectiveMax)
 	}
 
-	// add static certs (non-ACME)
+	// add loaded certs (static and Cloudflare Origin CA — skip ACME, handled by autocert manager)
 	for _, cert := range l.SSL {
-		if cert != nil && !cert.IsACME() && !cert.NoConfig() {
+		if cert != nil && !cert.IsACME() && cert.GetTLSCert() != nil {
 			tlsCfg.Certificates = append(tlsCfg.Certificates, *cert.GetTLSCert())
 		}
 	}

@@ -618,16 +618,56 @@ type SSLConfig struct {
 	tlsCert  *tls.Certificate
 }
 
+// NoConfig returns true if no TLS mode was configured at all.
+// This checks struct presence (non-nil pointers from YAML parsing), not whether
+// fields like ZoneID are populated — those may be resolved from env vars later.
 func (cfg *SSLConfig) NoConfig() bool {
-	return len(cfg.Cert) < 1 && len(cfg.Key) < 1 && cfg.ACME == nil && cfg.CloudflareOriginCA == nil
+	return !cfg.hasStaticCert() && !cfg.hasACMEConfig() && cfg.CloudflareOriginCA == nil
 }
 
+func (cfg *SSLConfig) hasStaticCert() bool {
+	return len(cfg.Cert) > 0 || len(cfg.Key) > 0
+}
+
+// hasACMEConfig returns true if ACME was explicitly configured in the YAML
+// (Email is required and has no default tag, so it distinguishes real config
+// from conftagz auto-filling defaults on nested structs).
+func (cfg *SSLConfig) hasACMEConfig() bool {
+	return cfg.ACME != nil && cfg.ACME.Email != ""
+}
+
+// IsACME returns true if ACME is the active TLS mode.
 func (cfg *SSLConfig) IsACME() bool {
-	return cfg.ACME != nil
+	return cfg.hasACMEConfig()
 }
 
+// IsCloudflareOriginCA returns true if Cloudflare Origin CA is the active TLS mode.
+// ZoneID must be populated (from YAML or env var resolution) before this is called.
 func (cfg *SSLConfig) IsCloudflareOriginCA() bool {
-	return cfg.CloudflareOriginCA != nil
+	return cfg.CloudflareOriginCA != nil && cfg.CloudflareOriginCA.ZoneID != ""
+}
+
+// Validate checks that at most one TLS mode is configured and returns an error
+// describing the conflict if multiple modes are set.
+func (cfg *SSLConfig) Validate() error {
+	modes := 0
+	var names []string
+	if cfg.hasStaticCert() {
+		modes++
+		names = append(names, "static cert/key")
+	}
+	if cfg.IsACME() {
+		modes++
+		names = append(names, "acme")
+	}
+	if cfg.IsCloudflareOriginCA() {
+		modes++
+		names = append(names, "cloudflare_origin_ca")
+	}
+	if modes > 1 {
+		return fmt.Errorf("conflicting TLS modes: %s — configure exactly one", strings.Join(names, " + "))
+	}
+	return nil
 }
 
 func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
@@ -1074,7 +1114,32 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		listenerforserver.CORS = &cfg.CORS
 		if s.SSL != nil && !s.SSL.NoConfig() {
-			if s.SSL.IsACME() {
+			// Resolve env vars in Cloudflare config before validation
+			// (ZoneID may come from env, and IsCloudflareOriginCA checks it)
+			if s.SSL.CloudflareOriginCA != nil {
+				SubstConfVarsForAllStrings(s.SSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
+				cfca := s.SSL.CloudflareOriginCA
+				if cfca.APIToken == "" && s.ID != "" {
+					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + s.ID)
+				}
+				if cfca.ZoneID == "" && s.ID != "" {
+					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + s.ID)
+				}
+			}
+			if err := s.SSL.Validate(); err != nil {
+				return nil, fmt.Errorf("server %s ssl: %w", s.Host, err)
+			}
+			if s.SSL.IsCloudflareOriginCA() {
+				// Cloudflare Origin CA: provision or load cached cert (env vars already resolved above)
+				hostnames := []string{s.Host}
+				hostnames = append(hostnames, s.Aliases...)
+				cert, cerr := s.SSL.CloudflareOriginCA.ProvisionOrLoadCert(hostnames)
+				if cerr != nil {
+					return nil, fmt.Errorf("cloudflare origin CA for server %s: %w", s.Host, cerr)
+				}
+				s.SSL.tlsCert = cert
+				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else if s.SSL.IsACME() {
 				// ACME / Let's Encrypt: collect domains and build manager on the listener
 				acmeCfg := s.SSL.ACME
 				cacheDir := acmeCfg.CacheDir
@@ -1123,32 +1188,15 @@ func LoadConfig(filename string) (*Config, error) {
 				}
 				// ACME servers still contribute to SSL presence so TLS path is taken
 				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
-			} else if s.SSL.IsCloudflareOriginCA() {
-				// Cloudflare Origin CA: provision or load cached cert
-				SubstConfVarsForAllStrings(s.SSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
-				// Auto-resolve api_token and zone_id from env vars keyed by server ID:
-				//   CLOUDFLARE_API_TOKEN_{id}  and  CLOUDFLARE_ZONE_ID_{id}
-				cfca := s.SSL.CloudflareOriginCA
-				if cfca.APIToken == "" && s.ID != "" {
-					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + s.ID)
-				}
-				if cfca.ZoneID == "" && s.ID != "" {
-					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + s.ID)
-				}
-				hostnames := []string{s.Host}
-				hostnames = append(hostnames, s.Aliases...)
-				cert, cerr := s.SSL.CloudflareOriginCA.ProvisionOrLoadCert(hostnames)
-				if cerr != nil {
-					return nil, fmt.Errorf("cloudflare origin CA for server %s: %w", s.Host, cerr)
-				}
-				s.SSL.tlsCert = cert
-				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
-			} else {
+			} else if s.SSL.hasStaticCert() {
+				// Static cert/key provided inline or as file paths
 				err = s.SSL.LoadSSLConfig()
 				if err != nil {
-					return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
+					return nil, fmt.Errorf("ssl config for server %s: %s", s.Host, err.Error())
 				}
 				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else {
+				log.Warnf("server %s: ssl block present but no TLS mode configured (need acme, cloudflare_origin_ca, or cert/key)", s.Host)
 			}
 		} else if len(listenerforserver.SSL) > 0 || listenerforserver.ACMEManager != nil {
 			log.Warnf("SSL config for server %s is missing but TLS will be used by other servers on same port.", s.Host)
@@ -1334,9 +1382,8 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	if cfg.SSL != nil {
-		// skip if these are both entirely empty - it means the user
-		// did not want SSL, otherwise let the error handling work
-		if !cfg.SSL.NoConfig() && !cfg.SSL.IsACME() {
+		// Load global static cert if configured (skip ACME and Cloudflare — those are handled per-server)
+		if cfg.SSL.hasStaticCert() {
 			err = cfg.SSL.LoadSSLConfig()
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
@@ -1344,8 +1391,8 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}
 
-	// Load hula's own SSL cert if configured (static cert files)
-	if cfg.HulaSSL != nil && !cfg.HulaSSL.NoConfig() && !cfg.HulaSSL.IsACME() {
+	// Load hula's own SSL cert if configured (static cert files only)
+	if cfg.HulaSSL != nil && cfg.HulaSSL.hasStaticCert() {
 		err = cfg.HulaSSL.LoadSSLConfig()
 		if err != nil {
 			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())

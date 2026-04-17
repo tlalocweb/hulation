@@ -66,6 +66,10 @@ func (c *CloudflareOriginCAConfig) ProvisionOrLoadCert(hostnames []string) (*tls
 	if c.ZoneID == "" {
 		return nil, fmt.Errorf("cloudflare_origin_ca: zone_id is required")
 	}
+	log.Infof("cloudflare_origin_ca: zone_id=%s...%s token=%s...%s hostnames=%v key_type=%s validity=%d",
+		c.ZoneID[:min(6, len(c.ZoneID))], c.ZoneID[max(0, len(c.ZoneID)-4):],
+		c.APIToken[:min(8, len(c.APIToken))], c.APIToken[max(0, len(c.APIToken)-4):],
+		hostnames, c.KeyType, c.ValidityDays)
 
 	// Resolve cache dir with confdir substitution
 	cacheDir := c.CacheDir
@@ -271,18 +275,23 @@ func (c *CloudflareOriginCAConfig) createCertificate(csrPEM []byte, hostnames []
 		return nil, "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", cloudflareAPIBase+"/certificates", strings.NewReader(string(bodyJSON)))
+	apiURL := cloudflareAPIBase + "/certificates"
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(string(bodyJSON)))
 	if err != nil {
 		return nil, "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIToken)
 
+	log.Debugf("cloudflare_origin_ca: POST %s hostnames=%v type=%s validity=%d", apiURL, hostnames, requestType, validityDays)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("API request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	log.Debugf("cloudflare_origin_ca: response status=%d", resp.StatusCode)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

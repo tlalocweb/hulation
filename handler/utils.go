@@ -46,6 +46,11 @@ func GetHostConfig(ctx RequestCtx) (hostconf *config.Server, host string, httper
 	}
 	if hostconf == nil {
 		host = ctx.Header("Host")
+		// HTTP/2 uses the :authority pseudo-header which Go puts in r.Host,
+		// not in the Header map. Fall back to Hostname() for H2 requests.
+		if len(host) == 0 {
+			host = ctx.Hostname()
+		}
 		log.Debugf("GetHostConfig: host: %s", host)
 		hostonly = utils.GetHostOnlyFromHostPort(host)
 		hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)

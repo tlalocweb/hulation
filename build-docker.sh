@@ -32,6 +32,11 @@ fi
 case "${ACTION}" in
     local)
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        BUILD_CONTEXT="${SCRIPT_DIR}/.."
+
+        # Install .dockerignore at build context root to exclude .bin, .gopath, .cache, etc.
+        cp "${SCRIPT_DIR}/.dockerignore" "${BUILD_CONTEXT}/.dockerignore"
+        trap 'rm -f "${BUILD_CONTEXT}/.dockerignore"' EXIT
 
         echo "Building for local platform..."
         docker buildx build \
@@ -42,7 +47,7 @@ case "${ACTION}" in
             --build-arg hulabuilddate="${hulabuilddate}" \
             --tag "${IMAGE}:${TAG}" \
             ${LATEST_TAG} \
-            "${SCRIPT_DIR}/.."
+            "${BUILD_CONTEXT}"
         echo "Image built: ${IMAGE}:${TAG}"
         if [ "${TAG_LATEST}" = true ]; then
             echo "Also tagged: ${IMAGE}:latest"
@@ -91,18 +96,24 @@ case "${ACTION}" in
         rm -f "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild"
         ;;
     push)
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        BUILD_CONTEXT="${SCRIPT_DIR}/.."
+
+        # Install .dockerignore at build context root
+        cp "${SCRIPT_DIR}/.dockerignore" "${BUILD_CONTEXT}/.dockerignore"
+        trap 'rm -f "${BUILD_CONTEXT}/.dockerignore"' EXIT
+
         echo "Building multi-platform and pushing..."
-        cd "$(dirname "$0")/.."
         docker buildx create --use --platform=linux/arm64,linux/amd64 --name multi-platform-builder 2>/dev/null || true
         docker buildx inspect --bootstrap
         docker buildx build \
-            -f hulation/Dockerfile \
+            -f "${SCRIPT_DIR}/Dockerfile" \
             --build-arg hulaversion="${hulaversion}" \
             --build-arg hulabuilddate="${hulabuilddate}" \
             --platform linux/amd64,linux/arm64 \
             --tag "${IMAGE}:${TAG}" \
             ${LATEST_TAG} \
-            --push .
+            --push "${BUILD_CONTEXT}"
         ;;
     *)
         echo "Usage: $0 <--local|--push> [--latest]"
