@@ -56,7 +56,7 @@ func GetHostConfig(ctx RequestCtx) (hostconf *config.Server, host string, httper
 			host = hostonly
 		}
 	} else {
-		log.Errorf("GetHostConfig: Unknown host: %s", host)
+		log.Securityf("GetHostConfig: unknown host %q from %s", host, ctx.IP())
 		httperror = 404
 		err = fmt.Errorf("unknown host: %s", host)
 		return

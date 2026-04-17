@@ -252,6 +252,16 @@ func (s *TaggedLogger) Infof(str string, args ...interface{}) {
 	}
 }
 
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+func (s *TaggedLogger) Securityf(str string, args ...interface{}) {
+	if tagFilter > 0 && s.tag&tagFilter > 0 || tagFilter == 0 {
+		if s.tag&tagBlockFilter == 0 {
+			caller := s.CodeCallString()
+			s.logger.Info().Msgf("SECURITY: "+s.prefix+caller+str, args...)
+		}
+	}
+}
+
 func (s *TaggedLogger) Warnf(str string, args ...interface{}) {
 	if tagFilter > 0 && s.tag&tagFilter > 0 || tagFilter == 0 {
 		if s.tag&tagBlockFilter == 0 {
@@ -407,6 +417,14 @@ func (s *Sublogger) Infof(str string, args ...interface{}) {
 	}
 }
 
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+func (s *Sublogger) Securityf(str string, args ...interface{}) {
+	if tagFilter == 0 {
+		caller := s.CodeCallString()
+		s.logger.Info().Msgf("SECURITY: "+s.prefix+caller+str, args...)
+	}
+}
+
 func (s *Sublogger) Warnf(str string, args ...interface{}) {
 	if tagFilter == 0 {
 		caller := s.CodeCallString()
@@ -480,6 +498,15 @@ func Printf(str string, args ...interface{}) {
 func Infof(str string, args ...interface{}) {
 	if tagFilter == 0 {
 		log.Info().Msgf(str, args...)
+	}
+}
+
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+// Use for scanner probes, unknown hosts, blocked requests, and similar events that
+// are not errors but are operationally significant.
+func Securityf(str string, args ...interface{}) {
+	if tagFilter == 0 {
+		log.Info().Msgf("SECURITY: "+str, args...)
 	}
 }
 

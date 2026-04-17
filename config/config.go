@@ -608,6 +608,8 @@ type SSLConfig struct {
 	Key  string `yaml:"key,omitempty"`
 	// ACME / Let's Encrypt automatic certificate management
 	ACME *ACMEConfig `yaml:"acme,omitempty"`
+	// Cloudflare Origin CA automatic certificate provisioning
+	CloudflareOriginCA *CloudflareOriginCAConfig `yaml:"cloudflare_origin_ca,omitempty"`
 	// TLS version controls (min/max)
 	TLS *TLSOptions `yaml:"tls,omitempty"`
 	// if the above is a path, it moved here
@@ -617,11 +619,15 @@ type SSLConfig struct {
 }
 
 func (cfg *SSLConfig) NoConfig() bool {
-	return len(cfg.Cert) < 1 && len(cfg.Key) < 1 && cfg.ACME == nil
+	return len(cfg.Cert) < 1 && len(cfg.Key) < 1 && cfg.ACME == nil && cfg.CloudflareOriginCA == nil
 }
 
 func (cfg *SSLConfig) IsACME() bool {
 	return cfg.ACME != nil
+}
+
+func (cfg *SSLConfig) IsCloudflareOriginCA() bool {
+	return cfg.CloudflareOriginCA != nil
 }
 
 func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
@@ -1116,6 +1122,26 @@ func LoadConfig(filename string) (*Config, error) {
 					log.Infof("ACME: merged domains into autocert manager for listener %s (added: %v)", s.listenOn, domains)
 				}
 				// ACME servers still contribute to SSL presence so TLS path is taken
+				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else if s.SSL.IsCloudflareOriginCA() {
+				// Cloudflare Origin CA: provision or load cached cert
+				SubstConfVarsForAllStrings(s.SSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
+				// Auto-resolve api_token and zone_id from env vars keyed by server ID:
+				//   CLOUDFLARE_API_TOKEN_{id}  and  CLOUDFLARE_ZONE_ID_{id}
+				cfca := s.SSL.CloudflareOriginCA
+				if cfca.APIToken == "" && s.ID != "" {
+					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + s.ID)
+				}
+				if cfca.ZoneID == "" && s.ID != "" {
+					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + s.ID)
+				}
+				hostnames := []string{s.Host}
+				hostnames = append(hostnames, s.Aliases...)
+				cert, cerr := s.SSL.CloudflareOriginCA.ProvisionOrLoadCert(hostnames)
+				if cerr != nil {
+					return nil, fmt.Errorf("cloudflare origin CA for server %s: %w", s.Host, cerr)
+				}
+				s.SSL.tlsCert = cert
 				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
 			} else {
 				err = s.SSL.LoadSSLConfig()
