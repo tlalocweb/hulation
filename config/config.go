@@ -1150,8 +1150,10 @@ func LoadConfig(filename string) (*Config, error) {
 			}
 			if s.SSL.IsCloudflareOriginCA() {
 				// Cloudflare Origin CA: provision or load cached cert (env vars already resolved above)
+				// Include redirect aliases — they need TLS coverage too (for the 301 redirect to work over HTTPS)
 				hostnames := []string{s.Host}
 				hostnames = append(hostnames, s.Aliases...)
+				hostnames = append(hostnames, s.RedirectAliases...)
 				cert, cerr := s.SSL.CloudflareOriginCA.ProvisionOrLoadCert(hostnames)
 				if cerr != nil {
 					return nil, fmt.Errorf("cloudflare origin CA for server %s: %w", s.Host, cerr)

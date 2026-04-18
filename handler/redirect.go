@@ -16,7 +16,12 @@ func CheckRedirectAlias(ctx RequestCtx) (redirected bool, err error) {
 	if err != nil || hostconf == nil {
 		return false, nil
 	}
-	requestHost := utils.GetHostOnlyFromHostPort(ctx.Header("Host"))
+	// Use Host header, falling back to Hostname() for HTTP/2 (:authority pseudo-header)
+	reqHostRaw := ctx.Header("Host")
+	if len(reqHostRaw) == 0 {
+		reqHostRaw = ctx.Hostname()
+	}
+	requestHost := utils.GetHostOnlyFromHostPort(reqHostRaw)
 	if !hostconf.IsRedirectAlias(requestHost) {
 		return false, nil
 	}
