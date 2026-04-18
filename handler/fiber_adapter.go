@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
+	"github.com/tlalocweb/hulation/app"
 )
 
 // FiberCtx adapts *fiber.Ctx to the RequestCtx interface.
@@ -48,6 +49,15 @@ func (f *FiberCtx) Param(name string) string {
 }
 
 func (f *FiberCtx) IP() string {
+	// Trust CF-Connecting-IP only if RemoteAddr is a verified Cloudflare IP
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges != nil {
+		if cfip := f.c.Get("CF-Connecting-IP"); cfip != "" {
+			if cfRanges.ContainsString(f.c.Context().RemoteAddr().String()) {
+				return cfip
+			}
+		}
+	}
 	return f.c.IP()
 }
 

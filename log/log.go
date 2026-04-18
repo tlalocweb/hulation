@@ -98,6 +98,10 @@ func SetDebugVerbosity(verbosity int) {
 	debugVerbosity = verbosity
 }
 
+func IsVerbose() bool {
+	return debugVerbosity > 0
+}
+
 func SetTagFilter(tag uint64) {
 	tagFilter = tag
 }

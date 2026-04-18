@@ -48,10 +48,10 @@ func (rr *responseRecorder) WriteHeader(code int) {
 }
 
 func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Bad actor check — before any routing
+	clientIP := extractIPFromRequest(r)
+	// Bad actor check — uses real client IP (CF-Connecting-IP when behind Cloudflare)
 	if badactor.IsEnabled() {
-		ip := extractIPFromRequest(r)
-		if block, _ := badactor.GetStore().CheckAndBlock(ip, r.UserAgent(), r.Method, r.URL.Path, r.URL.RawQuery, r.Host); block {
+		if block, _ := badactor.GetStore().CheckAndBlock(clientIP, r.UserAgent(), r.Method, r.URL.Path, r.URL.RawQuery, r.Host); block {
 			panic(http.ErrAbortHandler) // abort silently
 		}
 	}
@@ -63,10 +63,23 @@ func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rec := &responseRecorder{ResponseWriter: w, status: 200}
 	h.mux.ServeHTTP(rec, r)
-	log.Infof("h2 %s %s %s %d %s %s", r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	if log.IsVerbose() && clientIP != r.RemoteAddr {
+		log.Infof("h2 %s (%s) %s %s %d %s %s", clientIP, r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	} else {
+		log.Infof("h2 %s %s %s %d %s %s", clientIP, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	}
 }
 
 func extractIPFromRequest(r *http.Request) string {
+	// Trust CF-Connecting-IP only if RemoteAddr is a verified Cloudflare IP
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges != nil {
+		if cfip := r.Header.Get("CF-Connecting-IP"); cfip != "" {
+			if cfRanges.ContainsString(r.RemoteAddr) {
+				return strings.TrimSpace(cfip)
+			}
+		}
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.IndexByte(xff, ','); i > 0 {
 			return strings.TrimSpace(xff[:i])

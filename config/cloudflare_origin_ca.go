@@ -51,6 +51,10 @@ type CloudflareOriginCAConfig struct {
 	KeyType string `yaml:"key_type,omitempty" default:"ecdsa"`
 	// Requested certificate validity in days: 7, 30, 90, 365, 730, 1095, or 5475 (default: 5475)
 	ValidityDays int `yaml:"validity_days,omitempty" default:"5475"`
+	// Allow connections from non-Cloudflare IPs (default: false).
+	// When false, Hula drops TCP connections from IPs outside the Cloudflare ranges.
+	// Set true for debugging or mixed-mode setups.
+	AllowNonCFIPs bool `yaml:"allow_non_cf_ips,omitempty"`
 }
 
 // ProvisionOrLoadCert loads an existing origin CA cert from the cache directory,

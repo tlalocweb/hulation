@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/tlalocweb/hulation/app"
 	"sync"
 )
 
@@ -80,7 +82,16 @@ func (n *NetHTTPCtx) Param(name string) string {
 }
 
 func (n *NetHTTPCtx) IP() string {
-	// Check standard proxy headers
+	// Trust CF-Connecting-IP only if RemoteAddr is a verified Cloudflare IP
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges != nil {
+		if cfip := n.r.Header.Get("CF-Connecting-IP"); cfip != "" {
+			if cfRanges.ContainsString(n.r.RemoteAddr) {
+				return strings.TrimSpace(cfip)
+			}
+		}
+	}
+	// Standard proxy headers
 	if xff := n.r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.IndexByte(xff, ','); i > 0 {
 			return strings.TrimSpace(xff[:i])

@@ -222,10 +222,21 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 			return fmt.Errorf("accept error: %w", err)
 		}
 		go func(c net.Conn) {
+			remoteHost, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+
+			// Cloudflare-only enforcement — drop non-CF IPs when using Origin CA
+			cfConf := app.GetConfig()
+			if cfConf.IsCloudflareMode() && !cfConf.AllowNonCFIPs() {
+				if !cfConf.GetCloudflareIPs().ContainsString(remoteHost) {
+					log.Securityf("rejected non-Cloudflare IP %s", remoteHost)
+					c.Close()
+					return
+				}
+			}
+
 			// Pre-TLS bad actor check — block known bad IPs before wasting CPU on handshake
 			if badactor.IsEnabled() {
-				host, _, _ := net.SplitHostPort(c.RemoteAddr().String())
-				if block, _ := badactor.GetStore().CheckKnownOnly(host); block {
+				if block, _ := badactor.GetStore().CheckKnownOnly(remoteHost); block {
 					c.Close()
 					return
 				}
@@ -317,11 +328,12 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 	log.Debugf("CORS AllowCredentials: %t", corsconfig.AllowCredentials)
 	log.Debugf("CORS AllowMethods: %s", corsconfig.AllowMethods)
 
-	// Bad actor check — must be first middleware
+	// Bad actor check — uses real client IP (CF-Connecting-IP when behind Cloudflare)
 	if badactor.IsEnabled() {
 		l.FiberApp.Use(func(c *fiber.Ctx) error {
+			ctx := handler.NewFiberCtx(c)
 			ba := badactor.GetStore()
-			if block, _ := ba.CheckAndBlock(c.IP(), c.Get("User-Agent"), c.Method(), c.Path(), string(c.Request().URI().QueryString()), c.Hostname()); block {
+			if block, _ := ba.CheckAndBlock(ctx.IP(), c.Get("User-Agent"), c.Method(), c.Path(), string(c.Request().URI().QueryString()), c.Hostname()); block {
 				return nil // drop connection — no response
 			}
 			return c.Next()
@@ -504,7 +516,11 @@ func reloadConfig(oldConf *config.Config) {
 
 	// --- Re-init bad actor system ---
 	if newConf.BadActors != nil && !newConf.BadActors.Disable {
-		if err := badactor.Reinit(newConf.BadActors, model.GetDB(), newConf.Servers); err != nil {
+		var newCFCIDRs []*net.IPNet
+		if newConf.IsCloudflareMode() {
+			newCFCIDRs = newConf.GetCloudflareIPs().Ranges()
+		}
+		if err := badactor.Reinit(newConf.BadActors, model.GetDB(), newConf.Servers, newCFCIDRs); err != nil {
 			log.Errorf("reload: failed to reinit bad actor system: %s", err)
 		} else {
 			log.Infof("reload: bad actor system reloaded")
@@ -568,7 +584,11 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 
 	// Initialize bad actor detection
 	if conf.BadActors != nil && !conf.BadActors.Disable {
-		if err := badactor.Init(conf.BadActors, model.GetDB(), conf.Servers); err != nil {
+		var cfCIDRs []*net.IPNet
+		if conf.IsCloudflareMode() {
+			cfCIDRs = conf.GetCloudflareIPs().Ranges()
+		}
+		if err := badactor.Init(conf.BadActors, model.GetDB(), conf.Servers, cfCIDRs); err != nil {
 			log.Errorf("Failed to initialize bad actor detection: %s", err.Error())
 			// Non-fatal — continue without bad actor protection
 		}

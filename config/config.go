@@ -815,6 +815,25 @@ type Config struct {
 	listenOn string
 	// Server struct for Hula server itself
 	hulaServer *Server
+	// Cloudflare IP ranges — populated when any server uses cloudflare_origin_ca
+	cloudflareIPs *CloudflareIPRanges
+	// true if any server has allow_non_cf_ips: true
+	allowNonCFIPs bool
+}
+
+// IsCloudflareMode returns true if any server uses Cloudflare Origin CA.
+func (cfg *Config) IsCloudflareMode() bool {
+	return cfg.cloudflareIPs != nil
+}
+
+// GetCloudflareIPs returns the loaded Cloudflare IP ranges, or nil if not in Cloudflare mode.
+func (cfg *Config) GetCloudflareIPs() *CloudflareIPRanges {
+	return cfg.cloudflareIPs
+}
+
+// AllowNonCFIPs returns true if non-Cloudflare IPs should be allowed through.
+func (cfg *Config) AllowNonCFIPs() bool {
+	return cfg.allowNonCFIPs
 }
 
 type Proxy struct {
@@ -1397,6 +1416,27 @@ func LoadConfig(filename string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
 		}
+	}
+
+	// If any server uses Cloudflare Origin CA, load Cloudflare IP ranges
+	var cfCacheDir string
+	for _, s := range cfg.Servers {
+		if s.SSL != nil && s.SSL.IsCloudflareOriginCA() {
+			if s.SSL.CloudflareOriginCA.AllowNonCFIPs {
+				cfg.allowNonCFIPs = true
+			}
+			if cfCacheDir == "" {
+				cfCacheDir = s.SSL.CloudflareOriginCA.CacheDir
+			}
+		}
+	}
+	if cfCacheDir != "" {
+		cfCacheDir, _ = SubstConfVars(cfCacheDir, map[string]string{"confdir": confDir})
+		cfIPs, cfErr := LoadCloudflareIPs(cfCacheDir)
+		if cfErr != nil {
+			return nil, fmt.Errorf("cloudflare IP ranges: %w", cfErr)
+		}
+		cfg.cloudflareIPs = cfIPs
 	}
 
 	// Final pass: substitute {{env:*}} and other mustache vars in all string fields.
