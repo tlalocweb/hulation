@@ -11,11 +11,13 @@ echo "Building hula version ${hulaversion} built on ${hulabuilddate}"
 # Parse flags
 ACTION=""
 TAG_LATEST=false
+CLEAN_OLD=false
 for arg in "$@"; do
     case "${arg}" in
         --local)  ACTION="local" ;;
         --push)   ACTION="push" ;;
         --latest) TAG_LATEST=true ;;
+        --clean)  CLEAN_OLD=true ;;
         --help)   ACTION="help" ;;
         *)
             echo "Unknown option: ${arg}"
@@ -33,6 +35,19 @@ case "${ACTION}" in
     local)
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
         BUILD_CONTEXT="${SCRIPT_DIR}/.."
+
+        # Clean old hula images if requested
+        if [ "${CLEAN_OLD}" = true ]; then
+            echo "Cleaning old hula images (keeping :latest)..."
+            OLD_IMAGES=$(docker images "${IMAGE}" --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -v ':latest ' | awk '{print $1}')
+            if [ -n "${OLD_IMAGES}" ]; then
+                echo "${OLD_IMAGES}" | xargs docker rmi 2>/dev/null || true
+                docker image prune -f >/dev/null 2>&1 || true
+                echo "Old images removed"
+            else
+                echo "No old images to remove"
+            fi
+        fi
 
         # Install .dockerignore at build context root to exclude .bin, .gopath, .cache, etc.
         cp "${SCRIPT_DIR}/.dockerignore" "${BUILD_CONTEXT}/.dockerignore"
@@ -116,15 +131,17 @@ case "${ACTION}" in
             --push "${BUILD_CONTEXT}"
         ;;
     *)
-        echo "Usage: $0 <--local|--push> [--latest]"
+        echo "Usage: $0 <--local|--push> [--latest] [--clean]"
         echo ""
         echo "  --local    Build for local platform only, loads into docker"
         echo "  --push     Build multi-platform (amd64+arm64) and push to registry"
         echo "  --latest   Also tag the image as :latest"
+        echo "  --clean    Remove old local hula images before building (keeps :latest)"
         echo ""
         echo "Examples:"
         echo "  $0 --local                Build with version tag only"
         echo "  $0 --local --latest       Build and also tag as :latest"
+        echo "  $0 --local --latest --clean  Clean old images, then build"
         echo "  $0 --push --latest        Build multi-platform, push with :latest"
         echo ""
         echo "Environment variables:"

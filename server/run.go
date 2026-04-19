@@ -228,7 +228,12 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 			cfConf := app.GetConfig()
 			if cfConf.IsCloudflareMode() && !cfConf.AllowNonCFIPs() {
 				if !cfConf.GetCloudflareIPs().ContainsString(remoteHost) {
-					log.Securityf("rejected non-Cloudflare IP %s", remoteHost)
+					ipInfoStr := badactor.LookupAndFormatIPInfo(remoteHost)
+					if ipInfoStr != "" {
+						log.Securityf("rejected non-Cloudflare IP %s (%s)", remoteHost, ipInfoStr)
+					} else {
+						log.Securityf("rejected non-Cloudflare IP %s", remoteHost)
+					}
 					c.Close()
 					return
 				}

@@ -101,6 +101,9 @@ func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server, cid
 		s.loadFromDB()
 	}
 
+	// Initialize IP info cache (geo/ASN lookups)
+	InitIPInfoCache(db)
+
 	// Start eviction goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -247,7 +250,8 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	})
 	s.tree.Store(txn.Commit())
 
-	// Record to ClickHouse (async)
+	// Record to ClickHouse and enrich with IP info (async)
+	LookupIPInfoAsync(ip)
 	go func() {
 		for _, m := range matches {
 			if err := InsertBadActorRecord(s.db, ip, userAgent, method, urlPath, host, m.Reason, m.SigName, m.Category, m.Score); err != nil {
@@ -257,11 +261,12 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	}()
 
 	if newScore >= s.blockThreshold {
+		ipInfoStr := FormatIPInfoCached(ip)
 		if s.cfg.DryRun {
-			baLog.Warnf("[DRY RUN] would block %s (score=%d, reason=%s, sig=%s)", ip, newScore, topReason, topSigName)
+			baLog.Warnf("[DRY RUN] would block %s (score=%d, reason=%s, sig=%s) %s", ip, newScore, topReason, topSigName, ipInfoStr)
 			return false, ""
 		}
-		baLog.Infof("BLOCKED %s (score=%d, reason=%s, sig=%s, category=%s)", ip, newScore, topReason, topSigName, topCategory)
+		baLog.Infof("BLOCKED %s (score=%d, reason=%s, sig=%s, category=%s) %s", ip, newScore, topReason, topSigName, topCategory, ipInfoStr)
 		return true, topReason
 	}
 
