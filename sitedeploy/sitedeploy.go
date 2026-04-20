@@ -176,6 +176,11 @@ func (bm *BuildManager) Close() error {
 	return nil
 }
 
+// DockerClient returns the underlying Docker client for sharing with other managers.
+func (bm *BuildManager) DockerClient() *client.Client {
+	return bm.cli
+}
+
 // GetBuild returns the build state for a given build ID.
 func (bm *BuildManager) GetBuild(buildID string) *BuildState {
 	bm.mu.Lock()
@@ -346,7 +351,7 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 
 	// Send command list to hulabuild via stdin
 	commandListText := profile.Commands + "\n---\n"
-	conn, stdout, err := builder.startContainer(ctx, commandListText, gad.BuildEnv)
+	conn, stdout, err := builder.startContainer(ctx, commandListText, gad.BuildEnv, nil)
 	if err != nil {
 		bs.fail(err)
 		return
@@ -529,6 +534,76 @@ func siteNeedsBuild(deployDir string) bool {
 	return len(entries) == 0
 }
 
+// ResolveSiteRoots clones/pulls repos and determines whether each server uses
+// staging or production mode. For staging profiles, it sets server.Root to
+// the staging directory. This must be called BEFORE listeners start so that
+// Fiber's Static() middleware picks up the correct path.
+func (bm *BuildManager) ResolveSiteRoots(servers []*config.Server) {
+	for _, s := range servers {
+		if s.GitAutoDeploy == nil {
+			continue
+		}
+		gad := s.GitAutoDeploy
+
+		repoDir, err := CloneOrPull(gad)
+		if err != nil {
+			log.Errorf("sitedeploy: resolve roots: clone/pull failed for %s: %s", s.ID, err)
+			continue
+		}
+
+		siteBuildPath := filepath.Join(repoDir, ".hula", "sitebuild.yaml")
+		data, err := os.ReadFile(siteBuildPath)
+		if err != nil {
+			log.Debugf("sitedeploy: resolve roots: no sitebuild.yaml for %s: %s", s.ID, err)
+			continue
+		}
+
+		siteCfg, err := ParseSiteBuildConfig(data)
+		if err != nil {
+			log.Errorf("sitedeploy: resolve roots: parse error for %s: %s", s.ID, err)
+			continue
+		}
+
+		profile, err := siteCfg.GetProfile(gad.HulaBuild)
+		if err != nil {
+			log.Errorf("sitedeploy: resolve roots: profile error for %s: %s", s.ID, err)
+			continue
+		}
+
+		if profile.IsStaging() {
+			if err := os.MkdirAll(gad.StagingDir, 0o755); err != nil {
+				log.Errorf("sitedeploy: resolve roots: mkdir staging dir for %s: %s", s.ID, err)
+				continue
+			}
+			s.Root = gad.StagingDir
+			log.Infof("sitedeploy: server %s using staging mode, serving from %s", s.ID, gad.StagingDir)
+		}
+	}
+}
+
+// isStagingProfile returns true if the server's resolved profile is a staging profile.
+// It reads and parses the sitebuild.yaml from the cloned repo.
+func isStagingProfile(s *config.Server) bool {
+	gad := s.GitAutoDeploy
+	if gad == nil {
+		return false
+	}
+	siteBuildPath := filepath.Join(gad.DataDir, ".hula", "sitebuild.yaml")
+	data, err := os.ReadFile(siteBuildPath)
+	if err != nil {
+		return false
+	}
+	siteCfg, err := ParseSiteBuildConfig(data)
+	if err != nil {
+		return false
+	}
+	profile, err := siteCfg.GetProfile(gad.HulaBuild)
+	if err != nil {
+		return false
+	}
+	return profile.IsStaging()
+}
+
 // StartupBuildAll processes all servers with root_git_autodeploy sequentially.
 // For each server (unless no_pull_on_start is set), it clones/pulls the repo
 // and builds the site if it hasn't been built yet or if updates are available.
@@ -536,6 +611,12 @@ func siteNeedsBuild(deployDir string) bool {
 func (bm *BuildManager) StartupBuildAll(servers []*config.Server) {
 	for _, s := range servers {
 		if s.GitAutoDeploy == nil || s.GitAutoDeploy.NoPullOnStart {
+			continue
+		}
+
+		// Skip staging servers — they are handled by StagingManager
+		if isStagingProfile(s) {
+			log.Infof("sitedeploy: skipping production build for staging server %s", s.ID)
 			continue
 		}
 

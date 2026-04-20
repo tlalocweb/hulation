@@ -359,6 +359,10 @@ type GitAutoDeployConfig struct {
 	// Where the built site is deployed and served from.
 	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
 	DeployDir string `yaml:"deploy_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/site"`
+	// Where the staging site is served from (host-side volume mount).
+	// Only used when the resolved build profile is a staging profile.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	StagingDir string `yaml:"staging_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/staging-site"`
 	// Environment variables to pass into the builder container.
 	// Format: KEY=VALUE. Supports {{env:*}} substitution.
 	// Useful for passing secrets to static site generators at build time,
@@ -1139,10 +1143,12 @@ func LoadConfig(filename string) (*Config, error) {
 				SubstConfVarsForAllStrings(s.SSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
 				cfca := s.SSL.CloudflareOriginCA
 				if cfca.APIToken == "" && s.ID != "" {
-					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + s.ID)
+					envID := strings.ReplaceAll(s.ID, "-", "_")
+					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + envID)
 				}
 				if cfca.ZoneID == "" && s.ID != "" {
-					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + s.ID)
+					envID := strings.ReplaceAll(s.ID, "-", "_")
+					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + envID)
 				}
 			}
 			if err := s.SSL.Validate(); err != nil {
@@ -1371,6 +1377,8 @@ func LoadConfig(filename string) (*Config, error) {
 				fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
 			gad.DeployDir = SubstConfVarsLogErrorf(gad.DeployDir, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.deploy_dir", s.Host))
+			gad.StagingDir = SubstConfVarsLogErrorf(gad.StagingDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.staging_dir", s.Host))
 			// Set server Root from DeployDir so static file serving works
 			s.Root = gad.DeployDir
 			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s deploy_dir=%s",

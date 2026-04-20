@@ -102,3 +102,41 @@ func ValidateCommandList(commands []Command) error {
 	}
 	return nil
 }
+
+// ValidateCommandListForStaging checks structural rules for a staging command list.
+// Staging profiles require WORKDIR but do NOT require FINALIZE.
+func ValidateCommandListForStaging(commands []Command) error {
+	if len(commands) == 0 {
+		return fmt.Errorf("empty command list")
+	}
+
+	hasWorkdir := false
+	for _, cmd := range commands {
+		switch cmd.Name {
+		case "WORKDIR":
+			if cmd.Args == "" {
+				return fmt.Errorf("line %d: WORKDIR requires a directory argument", cmd.Line)
+			}
+			hasWorkdir = true
+		case "FINALIZE":
+			return fmt.Errorf("line %d: FINALIZE is not allowed in staging profiles", cmd.Line)
+		case "CP":
+			if cmd.Args == "" {
+				return fmt.Errorf("line %d: CP requires arguments", cmd.Line)
+			}
+		case "RM":
+			if cmd.Args == "" {
+				return fmt.Errorf("line %d: RM requires arguments", cmd.Line)
+			}
+		case "RUN":
+			if cmd.Args == "" {
+				return fmt.Errorf("line %d: RUN requires a command", cmd.Line)
+			}
+		}
+	}
+
+	if !hasWorkdir {
+		return fmt.Errorf("command list must include a WORKDIR command")
+	}
+	return nil
+}

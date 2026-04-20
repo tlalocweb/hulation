@@ -106,7 +106,8 @@ func (bc *BuilderContainer) buildDerivedImage(ctx context.Context, baseImage, pr
 // startContainer creates and starts the builder container with hulabuild as entrypoint.
 // It returns the attached connection (for writing stdin) and the stdout reader.
 // The caller must close the connection when done.
-func (bc *BuilderContainer) startContainer(ctx context.Context, commandList string, env []string) (conn io.WriteCloser, stdout *bufio.Reader, err error) {
+// binds is an optional list of Docker bind mounts (e.g., "/host/path:/container/path").
+func (bc *BuilderContainer) startContainer(ctx context.Context, commandList string, env []string, binds []string) (conn io.WriteCloser, stdout *bufio.Reader, err error) {
 	containerName := "hula-builder-" + randomSuffix()
 
 	cfg := &container.Config{
@@ -122,6 +123,9 @@ func (bc *BuilderContainer) startContainer(ctx context.Context, commandList stri
 	}
 
 	hostCfg := &container.HostConfig{}
+	if len(binds) > 0 {
+		hostCfg.Binds = binds
+	}
 
 	resp, err := bc.cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, containerName)
 	if err != nil {

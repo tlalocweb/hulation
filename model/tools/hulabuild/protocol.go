@@ -10,13 +10,17 @@ import (
 // Protocol message constants - must match sitedeploy/protocol.go
 const (
 	// Outbound (hulabuild -> hula)
-	msgSendTarballTo       = "SEND_TARBALL_TO"
+	msgSendTarballTo        = "SEND_TARBALL_TO"
 	msgOutboundTarballReady = "OUTBOUND_TARBALL_READY"
-	msgBuildLog            = "BUILD_LOG"
-	msgBuildError          = "BUILD_ERROR"
+	msgBuildLog             = "BUILD_LOG"
+	msgBuildError           = "BUILD_ERROR"
+	msgReady                = "READY"
+	msgBuildDone            = "BUILD_DONE"
 
 	// Inbound (hula -> hulabuild)
 	msgInboundTarballReady = "INBOUND_TARBALL_READY"
+	msgExecBuild           = "EXEC_BUILD"
+	msgShutdown            = "SHUTDOWN"
 )
 
 type protocolIO struct {

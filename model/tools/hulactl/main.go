@@ -1175,6 +1175,46 @@ func main() {
 			}
 		}
 
+	case CMD_STAGING_BUILD:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl staging-build <server-id>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		client := GetHulactlClient(hulactlconfig)
+		_, result, err := client.StagingBuild(serverID)
+		if err != nil {
+			fmt.Printf("Error triggering staging build: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Staging build %s: %s\n", result.Status, result.BuildID)
+		if len(result.Logs) > 0 {
+			fmt.Printf("\nLogs:\n")
+			for _, l := range result.Logs {
+				fmt.Printf("  %s\n", l)
+			}
+		}
+		if result.Error != "" {
+			fmt.Printf("\nError: %s\n", result.Error)
+			os.Exit(1)
+		}
+
+	case CMD_STAGING_UPDATE:
+		if len(argz) < 4 {
+			fmt.Printf("Usage: hulactl staging-update <server-id> <local-file> <remote-path>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		localFile := argz[2]
+		remotePath := argz[3]
+		client := GetHulactlClient(hulactlconfig)
+		err := client.StagingUpload(serverID, localFile, remotePath)
+		if err != nil {
+			fmt.Printf("Error uploading file: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Uploaded %s to %s on server %s\n", localFile, remotePath, serverID)
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		fmt.Printf("Usage: %s <configfile> <command>\n", os.Args[0])

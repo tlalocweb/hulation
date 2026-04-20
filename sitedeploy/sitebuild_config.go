@@ -1,8 +1,10 @@
 package sitedeploy
 
 import (
+	"bytes"
 	"fmt"
 
+	"github.com/cbroglie/mustache"
 	"gopkg.in/yaml.v2"
 )
 
@@ -13,8 +15,9 @@ const (
 
 // SiteBuildConfig represents the .hula/sitebuild.yaml file in a site repository.
 type SiteBuildConfig struct {
-	BuilderImage string                  `yaml:"builder_image,omitempty"`
-	Hugo         *HugoVersionConfig      `yaml:"hugo,omitempty"`
+	Defs         map[string]string        `yaml:"defs,omitempty"`
+	BuilderImage string                   `yaml:"builder_image,omitempty"`
+	Hugo         *HugoVersionConfig       `yaml:"hugo,omitempty"`
 	Configs      map[string]*BuildProfile `yaml:"configs"`
 }
 
@@ -35,6 +38,16 @@ type BuildProfile struct {
 	DockerfilePrebuild string `yaml:"dockerfile_prebuild,omitempty"`
 	// Commands is the COMMANDLIST (WORKDIR, HUGO, CP, FINALIZE, etc.)
 	Commands string `yaml:"commands"`
+	// ServeDir is the absolute path inside the container to mount as a volume
+	// for staging mode. When set, the profile is treated as a staging profile.
+	ServeDir string `yaml:"servedir,omitempty"`
+	// BuildCommand is the command to re-run when a staging rebuild is triggered.
+	BuildCommand string `yaml:"build_command,omitempty"`
+}
+
+// IsStaging returns true if this profile is a staging profile (has a servedir configured).
+func (p *BuildProfile) IsStaging() bool {
+	return p.ServeDir != ""
 }
 
 // ParseSiteBuildConfig parses a sitebuild.yaml file.
@@ -45,6 +58,9 @@ func ParseSiteBuildConfig(data []byte) (*SiteBuildConfig, error) {
 	}
 	if cfg.BuilderImage == "" {
 		cfg.BuilderImage = DefaultBuilderImage
+	}
+	if err := cfg.ApplyDefs(); err != nil {
+		return nil, fmt.Errorf("applying defs: %w", err)
 	}
 	return &cfg, nil
 }
@@ -91,4 +107,51 @@ func availableProfiles(configs map[string]*BuildProfile) string {
 		names = append(names, name)
 	}
 	return fmt.Sprintf("%v", names)
+}
+
+// ApplyDefs substitutes defs variables into all profile string fields using mustache.
+func (c *SiteBuildConfig) ApplyDefs() error {
+	if len(c.Defs) == 0 {
+		return nil
+	}
+	for name, profile := range c.Configs {
+		var err error
+		if profile.Commands != "" {
+			profile.Commands, err = renderMustache(profile.Commands, c.Defs)
+			if err != nil {
+				return fmt.Errorf("profile %s commands: %w", name, err)
+			}
+		}
+		if profile.ServeDir != "" {
+			profile.ServeDir, err = renderMustache(profile.ServeDir, c.Defs)
+			if err != nil {
+				return fmt.Errorf("profile %s servedir: %w", name, err)
+			}
+		}
+		if profile.BuildCommand != "" {
+			profile.BuildCommand, err = renderMustache(profile.BuildCommand, c.Defs)
+			if err != nil {
+				return fmt.Errorf("profile %s build_command: %w", name, err)
+			}
+		}
+		if profile.DockerfilePrebuild != "" {
+			profile.DockerfilePrebuild, err = renderMustache(profile.DockerfilePrebuild, c.Defs)
+			if err != nil {
+				return fmt.Errorf("profile %s dockerfile_prebuild: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func renderMustache(template string, vars map[string]string) (string, error) {
+	tmpl, err := mustache.ParseString(template)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.FRender(&buf, vars); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

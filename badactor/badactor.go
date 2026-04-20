@@ -263,10 +263,10 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	if newScore >= s.blockThreshold {
 		ipInfoStr := FormatIPInfoCached(ip)
 		if s.cfg.DryRun {
-			baLog.Warnf("[DRY RUN] would block %s (score=%d, reason=%s, sig=%s) %s", ip, newScore, topReason, topSigName, ipInfoStr)
+			baLog.Warnf("[DRY RUN] would block [%s] %s (score=%d, reason=%s, sig=%s) %s", host, ip, newScore, topReason, topSigName, ipInfoStr)
 			return false, ""
 		}
-		baLog.Infof("BLOCKED %s (score=%d, reason=%s, sig=%s, category=%s) %s", ip, newScore, topReason, topSigName, topCategory, ipInfoStr)
+		baLog.Infof("BLOCKED [%s] %s (score=%d, reason=%s, sig=%s, category=%s) %s", host, ip, newScore, topReason, topSigName, topCategory, ipInfoStr)
 		return true, topReason
 	}
 

@@ -63,10 +63,14 @@ func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rec := &responseRecorder{ResponseWriter: w, status: 200}
 	h.mux.ServeHTTP(rec, r)
+	serverID := ""
+	if srv := h.listener.GetServer(r.Host); srv != nil {
+		serverID = srv.ID
+	}
 	if log.IsVerbose() && clientIP != r.RemoteAddr {
-		log.Infof("h2 %s (%s) %s %s %d %s %s", clientIP, r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+		log.Infof("h2 [%s] %s (%s) %s %s %d %s %s", serverID, clientIP, r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
 	} else {
-		log.Infof("h2 %s %s %s %d %s %s", clientIP, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+		log.Infof("h2 [%s] %s %s %s %d %s %s", serverID, clientIP, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
 	}
 }
 
@@ -225,9 +229,15 @@ func (h *H2Handler) setupRoutes() {
 	log.Infof("h2: registered all unified handler routes")
 
 	// --- Backend proxy and static file routes (per-server) ---
+	// Collect handlers by pattern to avoid duplicate ServeMux registration
+	// when multiple virtual hosts share the same path (e.g., both have /api).
+	type hostHandler struct {
+		host    string
+		handler http.Handler
+	}
+	patternHandlers := make(map[string][]hostHandler) // pattern -> handlers by host
 
 	for _, server := range h.listener.GetServers() {
-		// Register backend proxy routes
 		for _, b := range server.Backends {
 			if !b.IsReady() {
 				continue
@@ -243,33 +253,36 @@ func (h *H2Handler) setupRoutes() {
 			serverHost := server.Host
 
 			proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Host != serverHost {
-					http.NotFound(w, r)
-					return
-				}
 				if containerPath != "" && containerPath != virtualPath {
 					r.URL.Path = strings.Replace(r.URL.Path, virtualPath, containerPath, 1)
 				}
 				proxy.ServeHTTP(w, r)
 			})
 
-			h.mux.Handle(virtualPath+"/", proxyHandler)
-			h.mux.Handle(virtualPath, proxyHandler)
-			log.Infof("h2: registered proxy %s -> %s (container: %s)", virtualPath, target, b.ContainerName)
+			patternHandlers[virtualPath+"/"] = append(patternHandlers[virtualPath+"/"], hostHandler{serverHost, proxyHandler})
+			patternHandlers[virtualPath] = append(patternHandlers[virtualPath], hostHandler{serverHost, proxyHandler})
+			log.Infof("h2: registered proxy %s -> %s (container: %s) for %s", virtualPath, target, b.ContainerName, serverHost)
 		}
 
-		// Serve static files if configured
 		if server.Root != "" {
 			serverHost := server.Host
 			fileServer := http.FileServer(http.Dir(server.Root))
-			h.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				if r.Host != serverHost {
-					http.NotFound(w, r)
-					return
-				}
-				fileServer.ServeHTTP(w, r)
-			})
+			patternHandlers["/"] = append(patternHandlers["/"], hostHandler{serverHost, fileServer})
 			log.Infof("h2: serving static files from %s for %s", server.Root, serverHost)
 		}
+	}
+
+	// Register a single dispatching handler per pattern
+	for pattern, handlers := range patternHandlers {
+		handlers := handlers // capture for closure
+		h.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, hh := range handlers {
+				if r.Host == hh.host {
+					hh.handler.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		}))
 	}
 }

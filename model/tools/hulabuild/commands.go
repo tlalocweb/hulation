@@ -50,6 +50,23 @@ func (e *executor) run(name, args string) error {
 	}
 }
 
+// runBuildOnly executes a command restricted to known static site generators.
+// Used by the staging loop to prevent arbitrary command execution via EXEC_BUILD.
+func (e *executor) runBuildOnly(name, args string) error {
+	switch name {
+	case "HUGO":
+		return e.cmdStaticGen("hugo", args)
+	case "ASTRO":
+		return e.cmdStaticGen("astro", args)
+	case "GATSBY":
+		return e.cmdStaticGen("gatsby", args)
+	case "MKDOCS":
+		return e.cmdStaticGen("mkdocs", args)
+	default:
+		return fmt.Errorf("command %q not allowed in build_command (allowed: HUGO, ASTRO, GATSBY, MKDOCS)", name)
+	}
+}
+
 // cmdWorkdir sets the working directory and initiates tarball transfer.
 func (e *executor) cmdWorkdir(dir string) error {
 	if dir == "" {
@@ -371,6 +388,55 @@ func extractTarGz(tarballPath, destDir string) error {
 		}
 	}
 	return nil
+}
+
+// stagingLoop enters the staging mode loop after initial commands complete.
+// hulabuild stays alive, waiting for EXEC_BUILD commands from hula.
+func (e *executor) stagingLoop() {
+	e.proto.sendLog("Entering staging mode")
+	e.proto.send(msgReady, "")
+
+	for e.proto.reader.Scan() {
+		line := strings.TrimSpace(e.proto.reader.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		cmd := parts[0]
+		var arg string
+		if len(parts) > 1 {
+			arg = strings.TrimSpace(parts[1])
+		}
+
+		switch cmd {
+		case msgExecBuild:
+			if arg == "" {
+				e.proto.sendError("EXEC_BUILD requires a command argument")
+				continue
+			}
+			e.proto.sendLog("Staging rebuild: %s", arg)
+			// Parse as a hulabuild command (e.g., "HUGO --minify") and
+			// restrict to known static site generators only.
+			buildParts := strings.SplitN(arg, " ", 2)
+			buildCmd := strings.ToUpper(buildParts[0])
+			buildArgs := ""
+			if len(buildParts) > 1 {
+				buildArgs = strings.TrimSpace(buildParts[1])
+			}
+			err := e.runBuildOnly(buildCmd, buildArgs)
+			if err != nil {
+				e.proto.sendError("build failed: %s", err)
+			} else {
+				e.proto.sendLog("Staging rebuild complete")
+				e.proto.send(msgBuildDone, "")
+			}
+		case msgShutdown:
+			e.proto.sendLog("Shutting down staging mode")
+			return
+		default:
+			e.proto.sendLog("unknown staging command: %s", cmd)
+		}
+	}
 }
 
 // splitArgs splits a string into arguments, respecting basic quoting.

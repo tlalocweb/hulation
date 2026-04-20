@@ -71,6 +71,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// If no FINALIZE was in the commands, enter the staging loop.
+	// In staging mode, hulabuild stays alive waiting for EXEC_BUILD commands.
+	if !hadFinalize(commands) {
+		exec.stagingLoop()
+	}
+}
+
+func hadFinalize(commands []parsedCommand) bool {
+	for _, cmd := range commands {
+		if cmd.name == "FINALIZE" {
+			return true
+		}
+	}
+	return false
 }
 
 type parsedCommand struct {

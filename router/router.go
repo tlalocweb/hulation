@@ -132,6 +132,12 @@ func SetupRoutesFiber(l *config.Listener) {
 		site.Get("/build-status/:buildid", wrapWithOpa(opa, handler.BuildStatus))
 		site.Get("/builds/:serverid", wrapWithOpa(opa, handler.ListBuilds))
 
+		// Staging
+		staging := api.Group("/staging")
+		staging.Post("/build", wrapWithOpa(opa, handler.StagingBuild))
+		staging.All("/:serverid/dav/*", handler.StagingWebDAVWrapped(opa))
+		staging.All("/:serverid/dav", handler.StagingWebDAVWrapped(opa))
+
 		// Bad actor management
 		if badactor.IsEnabled() {
 			ba := api.Group("/badactor")

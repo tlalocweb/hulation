@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -119,6 +120,28 @@ func (l *singleConnListener) Addr() net.Addr {
 // FiberListenWithListener starts a TLS server that dispatches based on ALPN:
 //   - h2 connections go to a net/http handler (HTTP/2)
 //   - http/1.1 connections go to the Fiber app (fasthttp)
+// certMatchesSNI checks whether a TLS certificate covers the given SNI hostname
+// by matching against the certificate's DNS SANs and Common Name.
+func certMatchesSNI(cert *tls.Certificate, sni string) bool {
+	if cert.Leaf == nil && len(cert.Certificate) > 0 {
+		// Parse the leaf certificate if not already parsed
+		parsed, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return false
+		}
+		cert.Leaf = parsed
+	}
+	if cert.Leaf == nil {
+		return false
+	}
+	for _, name := range cert.Leaf.DNSNames {
+		if name == sni {
+			return true
+		}
+	}
+	return cert.Leaf.Subject.CommonName == sni
+}
+
 func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *tls.Certificate, hulaNames map[string]bool) error {
 	tlsHandler := &fiber.TLSHandler{}
 
@@ -184,7 +207,13 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 			log.Debugf("ACME: no cert for SNI %q: %s", sni, err)
 		}
 
-		// Tier 3: Static virtual host certs
+		// Tier 3: Static virtual host certs — match SNI against certificate SANs
+		for i := range staticCerts {
+			if certMatchesSNI(&staticCerts[i], sni) {
+				return &staticCerts[i], nil
+			}
+		}
+		// Fallback: if no SNI match, return first static cert
 		if len(staticCerts) > 0 {
 			return &staticCerts[0], nil
 		}
@@ -648,7 +677,18 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 			defer buildMgr.Close()
 			log.Infof("Site deploy build manager initialized")
 
-			// Pull and build any sites that need it on startup (sequentially)
+			// Resolve site roots before listeners start (sets s.Root for staging servers)
+			buildMgr.ResolveSiteRoots(conf.Servers)
+
+			// Initialize staging manager
+			stagingMgr := sitedeploy.NewStagingManager(buildMgr.DockerClient())
+			sitedeploy.SetGlobalStagingManager(stagingMgr)
+			defer stagingMgr.Close()
+
+			// Start staging containers for servers with staging profiles
+			stagingMgr.StartupStaging(conf.Servers)
+
+			// Pull and build production-only sites on startup (sequentially)
 			buildMgr.StartupBuildAll(conf.Servers)
 		}
 	}

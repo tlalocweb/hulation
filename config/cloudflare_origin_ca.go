@@ -32,10 +32,13 @@ const (
 // the CSR to Cloudflare, and caches the signed certificate on disk.
 //
 // APIToken and ZoneID can be set explicitly (supports {{env:VAR}} substitution),
-// or left empty to auto-resolve from environment variables keyed by the server's id:
+// or left empty to auto-resolve from environment variables keyed by the server's id
+// (dashes in the id are replaced with underscores for shell compatibility):
 //
 //	CLOUDFLARE_API_TOKEN_{servers.id}
 //	CLOUDFLARE_ZONE_ID_{servers.id}
+//
+// Example: server id "tlaloc-staging" resolves to CLOUDFLARE_API_TOKEN_tlaloc_staging.
 //
 // This allows multiple virtual hosts to use different Cloudflare zones and tokens.
 type CloudflareOriginCAConfig struct {

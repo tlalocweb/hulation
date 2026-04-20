@@ -74,6 +74,12 @@ const (
 	CMD_BUILDS                = "builds"
 	CMD_BUILDS_HELP           = "List recent builds for a server"
 	CMD_BUILDS_USAGE          = "builds <server-id>"
+	CMD_STAGING_BUILD         = "staging-build"
+	CMD_STAGING_BUILD_HELP    = "Trigger a rebuild in the staging container"
+	CMD_STAGING_BUILD_USAGE   = "staging-build <server-id>"
+	CMD_STAGING_UPDATE        = "staging-update"
+	CMD_STAGING_UPDATE_HELP   = "Upload a file to the staging site via WebDAV"
+	CMD_STAGING_UPDATE_USAGE  = "staging-update <server-id> <local-file> <remote-path>"
 )
 
 var commands []Command
@@ -104,6 +110,8 @@ func init() {
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
+		Command{CMD_STAGING_BUILD, CMD_STAGING_BUILD_HELP, CMD_STAGING_BUILD_USAGE},
+		Command{CMD_STAGING_UPDATE, CMD_STAGING_UPDATE_HELP, CMD_STAGING_UPDATE_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

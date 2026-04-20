@@ -28,6 +28,13 @@ const (
 	// MsgBuildError indicates a fatal build error.
 	// Format: BUILD_ERROR <message>
 	MsgBuildError = "BUILD_ERROR"
+
+	// MsgReady indicates hulabuild has entered the staging loop and is
+	// ready to receive EXEC_BUILD commands.
+	MsgReady = "READY"
+
+	// MsgBuildDone indicates a staging rebuild completed successfully.
+	MsgBuildDone = "BUILD_DONE"
 )
 
 // Messages sent from hula -> hulabuild (on stdin)
@@ -35,6 +42,14 @@ const (
 	// MsgInboundTarballReady tells hulabuild that the source tarball has been
 	// copied into the container and is ready to be extracted.
 	MsgInboundTarballReady = "INBOUND_TARBALL_READY"
+
+	// MsgExecBuild tells hulabuild to run a build command in the site directory.
+	// Used in staging mode for rebuilds.
+	// Format: EXEC_BUILD <command>
+	MsgExecBuild = "EXEC_BUILD"
+
+	// MsgShutdown tells hulabuild to exit gracefully.
+	MsgShutdown = "SHUTDOWN"
 )
 
 // ParseProtocolMessage parses a protocol message line into its command and argument.
