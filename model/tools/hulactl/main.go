@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -158,6 +159,7 @@ type HulactlConfig struct {
 	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
 	HostId             string `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
 	Insecure           bool   `yaml:"insecure" flag:"insecure" usage:"skip TLS certificate verification"`
+	Dangerous          bool   `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
 }
 
 func doAltGetBody(config *HulactlConfig) bool {
@@ -1214,6 +1216,67 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Uploaded %s to %s on server %s\n", localFile, remotePath, serverID)
+
+	case CMD_STAGING_MOUNT:
+		if len(argz) < 3 {
+			fmt.Printf("Usage: hulactl staging-mount <server-id> <folder-mount-point>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		localDir := argz[2]
+
+		absDir, err := filepath.Abs(localDir)
+		if err != nil {
+			fmt.Printf("Error resolving path: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		hulaclient := GetHulactlClient(hulactlconfig)
+
+		// Verify auth before starting long-running process
+		_, err = hulaclient.StatusAuthOK()
+		if err != nil {
+			fmt.Printf("Authentication failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		// Signal handling for clean shutdown
+		ctx, cancel := context.WithCancel(context.Background())
+		sigchan := make(chan os.Signal, 1)
+		signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			sig := <-sigchan
+			fmt.Printf("\nReceived %s, shutting down...\n", sig)
+			cancel()
+		}()
+
+		fmt.Printf("Mounting server %s at %s...\n", serverID, absDir)
+
+		mounter, err := client.NewStagingMounter(ctx, hulaclient, client.StagingMountOptions{
+			ServerID:    serverID,
+			LocalDir:    absDir,
+			Dangerous:   hulactlconfig.Dangerous,
+			Output:      fmt.Printf,
+			ConfirmFunc: askForConfirmation,
+		})
+		if err != nil {
+			fmt.Printf("Error initializing mount: %s\n", err.Error())
+			os.Exit(1)
+		}
+		defer mounter.Close()
+
+		if err := mounter.InitialSync(); err != nil {
+			fmt.Printf("Error during initial sync: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		fmt.Printf("Watching %s for changes (CTRL-C to stop)...\n", absDir)
+
+		if err := mounter.Watch(); err != nil && ctx.Err() == nil {
+			fmt.Printf("Error during watch: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Mount stopped.\n")
 
 	default:
 		fmt.Printf("Unknown command: %s\n", command)

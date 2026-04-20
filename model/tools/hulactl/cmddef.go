@@ -80,6 +80,9 @@ const (
 	CMD_STAGING_UPDATE        = "staging-update"
 	CMD_STAGING_UPDATE_HELP   = "Upload a file to the staging site via WebDAV"
 	CMD_STAGING_UPDATE_USAGE  = "staging-update <server-id> <local-file> <remote-path>"
+	CMD_STAGING_MOUNT         = "staging-mount"
+	CMD_STAGING_MOUNT_HELP    = "Mount a local folder synced to a staging site via WebDAV"
+	CMD_STAGING_MOUNT_USAGE   = "staging-mount <server-id> <folder-mount-point>\nSyncs local folder with remote staging directory. Runs until CTRL-C."
 )
 
 var commands []Command
@@ -112,6 +115,7 @@ func init() {
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
 		Command{CMD_STAGING_BUILD, CMD_STAGING_BUILD_HELP, CMD_STAGING_BUILD_USAGE},
 		Command{CMD_STAGING_UPDATE, CMD_STAGING_UPDATE_HELP, CMD_STAGING_UPDATE_USAGE},
+		Command{CMD_STAGING_MOUNT, CMD_STAGING_MOUNT_HELP, CMD_STAGING_MOUNT_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

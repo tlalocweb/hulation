@@ -79,6 +79,10 @@ func (c *Client) GetToken() string {
 	return c.token
 }
 
+func (c *Client) GetHTTPClient() *http.Client {
+	return c.httpClient
+}
+
 type ClientError struct {
 	StatusCode int
 	Body       string
