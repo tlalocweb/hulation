@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+
+	"golang.org/x/crypto/acme/autocert"
 	"net"
 	"net/http"
 	"os"
@@ -142,7 +144,7 @@ func certMatchesSNI(cert *tls.Certificate, sni string) bool {
 	return cert.Leaf.Subject.CommonName == sni
 }
 
-func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *tls.Certificate, hulaNames map[string]bool) error {
+func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *tls.Certificate, hulaNames map[string]bool, hulaACMEMgr *autocert.Manager) error {
 	tlsHandler := &fiber.TLSHandler{}
 
 	// Compute effective TLS version from all SSL configs on this listener.
@@ -195,6 +197,13 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 		if hulaNames[sni] || sni == "" {
 			if hulaCert != nil {
 				return hulaCert, nil
+			}
+			if hulaACMEMgr != nil {
+				cert, err := hulaACMEMgr.GetCertificate(hello)
+				if err == nil {
+					return cert, nil
+				}
+				log.Debugf("hula ACME: no cert for SNI %q: %s", sni, err)
 			}
 		}
 
@@ -303,7 +312,7 @@ func FiberListenWithListener(l *config.Listener, fiberapp *fiber.App, hulaCert *
 
 // Starts up a fiber server on a specific port / address and then adds all the routes in for that
 // port / address that apply.
-func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *listenerErr, hulaCert *tls.Certificate, hulaNames map[string]bool) (err error) {
+func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *listenerErr, hulaCert *tls.Certificate, hulaNames map[string]bool, hulaACMEMgr *autocert.Manager) (err error) {
 	defer func() {
 		errchan <- &listenerErr{
 			listener: l,
@@ -478,7 +487,7 @@ func RunListenerFiber(l *config.Listener, wg *sync.WaitGroup, errchan chan *list
 			}()
 		}
 
-		err = FiberListenWithListener(l, l.FiberApp, hulaCert, hulaNames)
+		err = FiberListenWithListener(l, l.FiberApp, hulaCert, hulaNames, hulaACMEMgr)
 		if err != nil {
 			log.Fatalf("Error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
 			err = fmt.Errorf("error listening (tls) on port %s: %s", l.GetListenOn(), err.Error())
@@ -700,16 +709,21 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 	}
 
 	var hulaCert *tls.Certificate
+	var hulaACMEMgr *autocert.Manager
 	if conf.HulaSSL != nil && !conf.HulaSSL.NoConfig() {
 		if conf.HulaSSL.IsACME() {
-			// ACME for hula handled in GetCertificate callback (hulaCert stays nil)
+			hulaACMEMgr = conf.GetHulaACMEManager()
 			log.Infof("hula TLS: using ACME for hula identity")
-		} else {
+		} else if conf.HulaSSL.GetTLSCert() != nil {
 			hulaCert = conf.HulaSSL.GetTLSCert()
-			log.Infof("hula TLS: using configured cert for hula identity")
+			if conf.HulaSSL.IsCloudflareOriginCA() {
+				log.Infof("hula TLS: using Cloudflare Origin CA cert for hula identity")
+			} else {
+				log.Infof("hula TLS: using configured cert for hula identity")
+			}
 		}
 	}
-	if hulaCert == nil && (conf.HulaSSL == nil || !conf.HulaSSL.IsACME()) {
+	if hulaCert == nil && hulaACMEMgr == nil {
 		hosts := make([]string, 0, len(hulaNames))
 		for h := range hulaNames {
 			hosts = append(hosts, h)
@@ -730,7 +744,7 @@ func Run(conf *config.Config) (exitcode int) { // Initialize standard Go html te
 		log.Debugf("starting listener goroutine: %s", l.GetListenOn())
 		waitForServers.Add(1)
 		runcnt++
-		go RunListenerFiber(l, waitForServers, errchan, hulaCert, hulaNames)
+		go RunListenerFiber(l, waitForServers, errchan, hulaCert, hulaNames, hulaACMEMgr)
 	}
 
 	// Signal handling for graceful shutdown and config reload

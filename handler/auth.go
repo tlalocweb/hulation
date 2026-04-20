@@ -72,16 +72,31 @@ func StatusAuthOK(ctx RequestCtx) error {
 		return ctx.Status(http.StatusUnauthorized).SendString("No jwt or perms")
 	}
 
-	perms, err := model.GetUserById(model.GetDB(), permsi.(*model.UserPermissions).UserID)
+	userID := permsi.(*model.UserPermissions).UserID
+	if userID == "" {
+		return ctx.Status(http.StatusUnauthorized).SendString("No user id in perms")
+	}
+
+	// The admin user is configured in the YAML, not stored in the users DB table.
+	// If this is the admin, return the known info without a DB lookup.
+	if userID == app.GetConfig().Admin.Username {
+		resp, err := json.Marshal(&StatusAuthOKResp{
+			Userid: userID,
+			Email:  "",
+			Jwt:    jwt.(string),
+		})
+		if err != nil {
+			return ctx.Status(http.StatusInternalServerError).SendString("error marshalling response: " + err.Error())
+		}
+		ctx.SetContentType("application/json")
+		return ctx.Status(200).SendBytes(resp)
+	}
+
+	user, err := model.GetUserById(model.GetDB(), userID)
 	if err != nil {
 		return ctx.Status(http.StatusInternalServerError).SendString("error getting user by id: " + err.Error())
 	}
-	if perms == nil || perms.ID == "" {
-		return ctx.Status(http.StatusUnauthorized).SendString("No id")
-	}
-
-	user, err := model.GetUserById(model.GetDB(), perms.ID)
-	if err != nil {
+	if user == nil || user.ID == "" {
 		return ctx.Status(http.StatusUnauthorized).SendString("No user by id")
 	}
 

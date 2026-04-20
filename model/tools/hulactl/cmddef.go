@@ -16,8 +16,8 @@ const (
 	CMD_GENERATEHASH_HELP  = "Generate a hash from a password"
 	CMD_GENERATEHASH_USAGE = "generatehash"
 	CMD_AUTH               = "auth"
-	CMD_AUTH_HELP          = "Authenticate and store credentials in hulactl.yaml"
-	CMD_AUTH_USAGE         = "auth"
+	CMD_AUTH_HELP          = "Authenticate against a hula server and store credentials"
+	CMD_AUTH_USAGE         = "auth [URL]\nURL can be a full URL or just a hostname (https:// is assumed)\nExamples: auth hula.example.com, auth https://hula.example.com:8443"
 	CMD_CREATEFORM         = "createform"
 	CMD_CREATEFORM_HELP    = "Create a new form"
 	CMD_MODIFYFORM         = "modifyform"
@@ -82,7 +82,7 @@ const (
 	CMD_STAGING_UPDATE_USAGE  = "staging-update <server-id> <local-file> <remote-path>"
 	CMD_STAGING_MOUNT         = "staging-mount"
 	CMD_STAGING_MOUNT_HELP    = "Mount a local folder synced to a staging site via WebDAV"
-	CMD_STAGING_MOUNT_USAGE   = "staging-mount <server-id> <folder-mount-point>\nSyncs local folder with remote staging directory. Runs until CTRL-C."
+	CMD_STAGING_MOUNT_USAGE   = "staging-mount <server-id> <folder-mount-point>\nSyncs local folder with remote staging directory. Runs until CTRL-C.\nFlags:\n  --autobuild  trigger a staging build automatically after changes are synced\n  --dangerous  allow syncing executables and security-sensitive files"
 )
 
 var commands []Command

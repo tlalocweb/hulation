@@ -9,28 +9,42 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emersion/go-webdav"
 	"github.com/fsnotify/fsnotify"
 )
 
+// buildDebounceDelay is how long we wait after the last file sync before
+// triggering an auto-build. Additional syncs during this window reset the timer.
+const buildDebounceDelay = 2 * time.Second
+
 // StagingMountOptions configures a staging mount session.
 type StagingMountOptions struct {
 	ServerID    string
 	LocalDir    string                            // absolute path to local mount point
 	Dangerous   bool                              // allow executables and security-sensitive files
+	AutoBuild   bool                              // trigger a staging build after files are synced
 	Output      func(string, ...any) (int, error) // user-facing output (e.g., fmt.Printf)
 	ConfirmFunc func() bool                       // ask user to confirm (yes/no)
 }
 
 // StagingMounter syncs a local directory with a remote staging folder via WebDAV.
 type StagingMounter struct {
-	opts      StagingMountOptions
-	davClient *webdav.Client
-	watcher   *fsnotify.Watcher
-	ctx       context.Context
-	cancel    context.CancelFunc
+	opts         StagingMountOptions
+	client       *Client        // hula API client, used for triggering auto-builds
+	davClient    *webdav.Client
+	davURLPrefix string // URL path prefix of the WebDAV endpoint (e.g., "/api/staging/foo/dav")
+	watcher      *fsnotify.Watcher
+	ctx          context.Context
+	cancel       context.CancelFunc
+
+	// Auto-build state (protected by buildMu)
+	buildMu      sync.Mutex
+	buildRunning bool        // a build is currently executing
+	buildPending bool        // files have changed; a build is needed
+	buildTimer   *time.Timer // debounce timer; fires triggerBuild
 }
 
 // bearerHTTPClient wraps an http.Client to inject a Bearer token on every request.
@@ -47,7 +61,8 @@ func (b *bearerHTTPClient) Do(req *http.Request) (*http.Response, error) {
 
 // NewStagingMounter creates a new StagingMounter.
 func NewStagingMounter(ctx context.Context, c *Client, opts StagingMountOptions) (*StagingMounter, error) {
-	davEndpoint := c.GetAPIUrl() + "/api/staging/" + opts.ServerID + "/dav"
+	davURLPrefix := "/api/staging/" + opts.ServerID + "/dav"
+	davEndpoint := c.GetAPIUrl() + davURLPrefix
 
 	authHTTP := &bearerHTTPClient{
 		inner: c.GetHTTPClient(),
@@ -62,11 +77,32 @@ func NewStagingMounter(ctx context.Context, c *Client, opts StagingMountOptions)
 	innerCtx, cancel := context.WithCancel(ctx)
 
 	return &StagingMounter{
-		opts:      opts,
-		davClient: davClient,
-		ctx:       innerCtx,
-		cancel:    cancel,
+		opts:         opts,
+		client:       c,
+		davClient:    davClient,
+		davURLPrefix: davURLPrefix,
+		ctx:          innerCtx,
+		cancel:       cancel,
 	}, nil
+}
+
+// remotePath converts a relative path (with or without leading slash) to the
+// form the WebDAV client expects: a relative path that will be joined with
+// the endpoint URL path. An empty path means the WebDAV root.
+func (m *StagingMounter) remotePath(rel string) string {
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "" {
+		return "."
+	}
+	return rel
+}
+
+// stripDAVPrefix strips the WebDAV endpoint URL prefix from paths returned
+// by the server (e.g., PROPFIND responses).
+func (m *StagingMounter) stripDAVPrefix(p string) string {
+	p = strings.TrimPrefix(p, m.davURLPrefix)
+	p = strings.TrimPrefix(p, "/")
+	return p
 }
 
 // Close shuts down the mounter and releases resources.
@@ -75,6 +111,83 @@ func (m *StagingMounter) Close() {
 	if m.watcher != nil {
 		m.watcher.Close()
 	}
+	m.buildMu.Lock()
+	if m.buildTimer != nil {
+		m.buildTimer.Stop()
+	}
+	m.buildMu.Unlock()
+}
+
+// ---------- Auto-build ----------
+
+// scheduleBuild marks a build as pending and resets the build debounce timer.
+// Called from processPending when AutoBuild is enabled and files were synced.
+func (m *StagingMounter) scheduleBuild() {
+	if !m.opts.AutoBuild {
+		return
+	}
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	m.buildPending = true
+	if m.buildTimer == nil {
+		m.buildTimer = time.AfterFunc(buildDebounceDelay, m.triggerBuild)
+	} else {
+		m.buildTimer.Reset(buildDebounceDelay)
+	}
+}
+
+// triggerBuild fires when the build-debounce timer elapses. Starts a build if
+// one isn't already running. If a build is running, the buildPending flag
+// ensures another build is scheduled after it completes.
+func (m *StagingMounter) triggerBuild() {
+	m.buildMu.Lock()
+	if m.buildRunning {
+		// A build is already in flight; leave buildPending so we re-trigger after
+		m.buildMu.Unlock()
+		return
+	}
+	if !m.buildPending {
+		m.buildMu.Unlock()
+		return
+	}
+	m.buildRunning = true
+	m.buildPending = false
+	m.buildMu.Unlock()
+
+	m.opts.Output("  Auto-build: triggering build...\n")
+	go func() {
+		_, result, err := m.client.StagingBuild(m.opts.ServerID)
+
+		// Special case: server returned 409 — a build is already running server-side.
+		// Mark as still pending and re-arm the debounce timer.
+		if cerr, ok := err.(*ClientError); ok && cerr.StatusCode == http.StatusConflict {
+			m.opts.Output("  Auto-build: server busy, will retry\n")
+			m.buildMu.Lock()
+			m.buildRunning = false
+			m.buildPending = true
+			m.buildMu.Unlock()
+			m.scheduleBuild()
+			return
+		}
+
+		m.buildMu.Lock()
+		m.buildRunning = false
+		pending := m.buildPending
+		m.buildMu.Unlock()
+
+		if err != nil {
+			m.opts.Output("  Auto-build: failed: %s\n", err)
+		} else if result != nil && result.Error != "" {
+			m.opts.Output("  Auto-build: error: %s\n", result.Error)
+		} else {
+			m.opts.Output("  Auto-build: complete\n")
+		}
+
+		// If files changed while the build was running, schedule another
+		if pending {
+			m.scheduleBuild()
+		}
+	}()
 }
 
 // ---------- Security filter ----------
@@ -196,7 +309,7 @@ func (m *StagingMounter) InitialSync() error {
 func (m *StagingMounter) syncFromRemote() error {
 	m.opts.Output("Downloading files from remote staging...\n")
 
-	remoteFiles, err := m.davClient.ReadDir(m.ctx, "/", true)
+	remoteFiles, err := m.davClient.ReadDir(m.ctx, m.remotePath(""), true)
 	if err != nil {
 		return fmt.Errorf("listing remote files: %w", err)
 	}
@@ -205,6 +318,10 @@ func (m *StagingMounter) syncFromRemote() error {
 	var files []webdav.FileInfo
 	var dirs []webdav.FileInfo
 	for _, fi := range remoteFiles {
+		relPath := m.stripDAVPrefix(fi.Path)
+		if relPath == "" {
+			continue // skip the root itself
+		}
 		if fi.IsDir {
 			dirs = append(dirs, fi)
 		} else {
@@ -214,14 +331,15 @@ func (m *StagingMounter) syncFromRemote() error {
 
 	// Create directories first
 	for _, d := range dirs {
-		localPath := filepath.Join(m.opts.LocalDir, filepath.FromSlash(d.Path))
+		relPath := m.stripDAVPrefix(d.Path)
+		localPath := filepath.Join(m.opts.LocalDir, filepath.FromSlash(relPath))
 		os.MkdirAll(localPath, 0o755)
 	}
 
 	// Download files
 	skipped := 0
 	for i, fi := range files {
-		relPath := strings.TrimPrefix(fi.Path, "/")
+		relPath := m.stripDAVPrefix(fi.Path)
 		if isTempFile(relPath) {
 			continue
 		}
@@ -235,7 +353,7 @@ func (m *StagingMounter) syncFromRemote() error {
 			continue
 		}
 
-		if err := m.downloadFile(fi.Path, localPath, fi.ModTime); err != nil {
+		if err := m.downloadFile(relPath, localPath, fi.ModTime); err != nil {
 			m.opts.Output("  Error downloading %s: %s\n", relPath, err)
 			continue
 		}
@@ -266,13 +384,13 @@ func (m *StagingMounter) syncBidirectional() error {
 	}
 
 	// Build remote file map
-	remoteList, err := m.davClient.ReadDir(m.ctx, "/", true)
+	remoteList, err := m.davClient.ReadDir(m.ctx, m.remotePath(""), true)
 	if err != nil {
 		return fmt.Errorf("listing remote files: %w", err)
 	}
 	remoteFiles := make(map[string]webdav.FileInfo)
 	for _, fi := range remoteList {
-		relPath := strings.TrimPrefix(fi.Path, "/")
+		relPath := m.stripDAVPrefix(fi.Path)
 		if relPath == "" || isTempFile(relPath) {
 			continue
 		}
@@ -313,13 +431,12 @@ func (m *StagingMounter) syncBidirectional() error {
 			continue
 		}
 
-		remotePath := "/" + relPath
 		localPath := filepath.Join(m.opts.LocalDir, filepath.FromSlash(relPath))
 
 		if remoteInfo, ok := remoteFiles[relPath]; ok {
 			// Both exist — upload if local differs
 			if localInfo.Size() != remoteInfo.Size || localInfo.ModTime().After(remoteInfo.ModTime) {
-				if err := m.uploadFile(localPath, remotePath); err != nil {
+				if err := m.uploadFile(localPath, relPath); err != nil {
 					m.opts.Output("  Error uploading %s: %s\n", relPath, err)
 					continue
 				}
@@ -328,11 +445,11 @@ func (m *StagingMounter) syncBidirectional() error {
 			}
 		} else {
 			// Local only — upload to remote
-			if err := m.ensureRemoteDir(path.Dir(remotePath)); err != nil {
+			if err := m.ensureRemoteDir(path.Dir(relPath)); err != nil {
 				m.opts.Output("  Error creating remote dir for %s: %s\n", relPath, err)
 				continue
 			}
-			if err := m.uploadFile(localPath, remotePath); err != nil {
+			if err := m.uploadFile(localPath, relPath); err != nil {
 				m.opts.Output("  Error uploading %s: %s\n", relPath, err)
 				continue
 			}
@@ -359,10 +476,9 @@ func (m *StagingMounter) syncBidirectional() error {
 		}
 
 		localPath := filepath.Join(m.opts.LocalDir, filepath.FromSlash(relPath))
-		remotePath := "/" + relPath
 
 		os.MkdirAll(filepath.Dir(localPath), 0o755)
-		if err := m.downloadFile(remotePath, localPath, remoteInfo.ModTime); err != nil {
+		if err := m.downloadFile(relPath, localPath, remoteInfo.ModTime); err != nil {
 			m.opts.Output("  Error downloading %s: %s\n", relPath, err)
 			continue
 		}
@@ -376,8 +492,7 @@ func (m *StagingMounter) syncBidirectional() error {
 			continue
 		}
 		if _, ok := remoteFiles[relPath]; !ok {
-			remotePath := "/" + relPath
-			m.ensureRemoteDir(remotePath)
+			m.ensureRemoteDir(relPath)
 		}
 	}
 
@@ -481,10 +596,12 @@ func (m *StagingMounter) Watch() error {
 }
 
 // processPending syncs all accumulated file changes to the remote.
+// If any files were actually synced (uploaded, deleted, or dirs created) and
+// AutoBuild is enabled, a build is scheduled with debounce.
 func (m *StagingMounter) processPending(pending map[string]fsnotify.Op) {
+	synced := false
 	for relPath, op := range pending {
 		localPath := filepath.Join(m.opts.LocalDir, filepath.FromSlash(relPath))
-		remotePath := "/" + relPath
 
 		// Check if the file still exists (could have been deleted)
 		info, statErr := os.Stat(localPath)
@@ -492,10 +609,11 @@ func (m *StagingMounter) processPending(pending map[string]fsnotify.Op) {
 		if op.Has(fsnotify.Remove) || op.Has(fsnotify.Rename) {
 			if statErr != nil {
 				// File is gone — delete on remote
-				if err := m.davClient.RemoveAll(m.ctx, remotePath); err != nil {
+				if err := m.davClient.RemoveAll(m.ctx, m.remotePath(relPath)); err != nil {
 					m.opts.Output("  Error deleting remote %s: %s\n", relPath, err)
 				} else {
 					m.opts.Output("  Deleted remote: %s\n", relPath)
+					synced = true
 				}
 				continue
 			}
@@ -507,8 +625,9 @@ func (m *StagingMounter) processPending(pending map[string]fsnotify.Op) {
 
 		if info.IsDir() {
 			if op.Has(fsnotify.Create) {
-				m.ensureRemoteDir(remotePath)
+				m.ensureRemoteDir(relPath)
 				m.opts.Output("  Created dir: %s\n", relPath)
+				synced = true
 			}
 			continue
 		}
@@ -519,29 +638,36 @@ func (m *StagingMounter) processPending(pending map[string]fsnotify.Op) {
 			continue
 		}
 
-		if err := m.ensureRemoteDir(path.Dir(remotePath)); err != nil {
+		if err := m.ensureRemoteDir(path.Dir(relPath)); err != nil {
 			m.opts.Output("  Error creating remote dir for %s: %s\n", relPath, err)
 			continue
 		}
-		if err := m.uploadFile(localPath, remotePath); err != nil {
+		if err := m.uploadFile(localPath, relPath); err != nil {
 			m.opts.Output("  Error syncing %s: %s\n", relPath, err)
 			continue
 		}
 		m.opts.Output("  Synced: %s (%s)\n", relPath, formatSize(info.Size()))
+		synced = true
+	}
+
+	if synced {
+		m.scheduleBuild()
 	}
 }
 
 // ---------- Helpers ----------
 
 // uploadFile uploads a local file to the remote WebDAV path.
-func (m *StagingMounter) uploadFile(localPath, remotePath string) error {
+// remoteRel is a relative path (with or without leading slash) that will be
+// joined with the WebDAV endpoint URL.
+func (m *StagingMounter) uploadFile(localPath, remoteRel string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	wc, err := m.davClient.Create(m.ctx, remotePath)
+	wc, err := m.davClient.Create(m.ctx, m.remotePath(remoteRel))
 	if err != nil {
 		return fmt.Errorf("creating remote file: %w", err)
 	}
@@ -553,10 +679,10 @@ func (m *StagingMounter) uploadFile(localPath, remotePath string) error {
 }
 
 // downloadFile downloads a remote file to a local path and sets its modification time.
-func (m *StagingMounter) downloadFile(remotePath, localPath string, modTime time.Time) error {
+func (m *StagingMounter) downloadFile(remoteRel, localPath string, modTime time.Time) error {
 	os.MkdirAll(filepath.Dir(localPath), 0o755)
 
-	rc, err := m.davClient.Open(m.ctx, remotePath)
+	rc, err := m.davClient.Open(m.ctx, m.remotePath(remoteRel))
 	if err != nil {
 		return fmt.Errorf("opening remote file: %w", err)
 	}
@@ -578,28 +704,30 @@ func (m *StagingMounter) downloadFile(remotePath, localPath string, modTime time
 	return nil
 }
 
-// ensureRemoteDir creates all parent directories on the remote for the given path.
-func (m *StagingMounter) ensureRemoteDir(remotePath string) error {
-	if remotePath == "/" || remotePath == "" || remotePath == "." {
+// ensureRemoteDir creates all parent directories on the remote for the given
+// relative path. Paths like "/", ".", or "" are treated as the root (no-op).
+func (m *StagingMounter) ensureRemoteDir(remoteRel string) error {
+	remoteRel = strings.TrimPrefix(remoteRel, "/")
+	if remoteRel == "" || remoteRel == "." {
 		return nil
 	}
 
 	// Check if it already exists
-	_, err := m.davClient.Stat(m.ctx, remotePath)
+	_, err := m.davClient.Stat(m.ctx, m.remotePath(remoteRel))
 	if err == nil {
 		return nil // already exists
 	}
 
 	// Create parent first
-	parent := path.Dir(remotePath)
-	if parent != remotePath {
+	parent := path.Dir(remoteRel)
+	if parent != remoteRel && parent != "." {
 		if err := m.ensureRemoteDir(parent); err != nil {
 			return err
 		}
 	}
 
 	// Create this directory (ignore error if it already exists)
-	m.davClient.Mkdir(m.ctx, remotePath)
+	m.davClient.Mkdir(m.ctx, m.remotePath(remoteRel))
 	return nil
 }
 

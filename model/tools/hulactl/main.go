@@ -146,20 +146,78 @@ func defaultConfigFilePath() string {
 
 var hulactlconfigfile string
 
+// ServerEntry holds per-server config within hulactl.yaml.
+type ServerEntry struct {
+	URL      string `yaml:"url"`
+	Token    string `yaml:"token,omitempty"`
+	Insecure bool   `yaml:"insecure,omitempty"`
+}
+
 type HulactlConfig struct {
-	LogLevel           string `yaml:"loglevel" flag:"loglevel" usage:"sets log level to info, warn, error, fatal, panic, debug, trace, none" default:"warn" env:"HULACTL_LOGLEVEL"`
-	HulationApiUrl     string `yaml:"hulaurl" flag:"hulaapi" usage:"url to hulation api" default:"http://localhost:8080" test:"~http[s]?\\:\\/\\/[^\\/]+.*" env:"HULA_API_URL"`
-	HulationConfigPath string `yaml:"hulaconf" flag:"hulaconf" usage:"path to hulation config file" default:"/etc/hulation/hulation.yaml" env:"HULA_CONF"`
-	DontSaveAuth       bool   `flag:"nosaveauth" usage:"do not save the auth token to the config file"`
-	Token              string `yaml:"token" flag:"token" usage:"authorization"`
-	DebugMode          bool   `yaml:"debug" flag:"debug" usage:"debug mode"`
-	ANSIColors         bool   `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
-	GetBodyFromFile    string `flag:"bodyfile" usage:"get body from file"`
-	GetBodyFromStdin   bool   `flag:"bodystdin" usage:"get body from stdin"`
-	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
-	HostId             string `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
-	Insecure           bool   `yaml:"insecure" flag:"insecure" usage:"skip TLS certificate verification"`
-	Dangerous          bool   `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
+	LogLevel           string                  `yaml:"loglevel" flag:"loglevel" usage:"sets log level to info, warn, error, fatal, panic, debug, trace, none" default:"warn" env:"HULACTL_LOGLEVEL"`
+	HulationConfigPath string                  `yaml:"hulaconf" flag:"hulaconf" usage:"path to hulation config file" default:"/etc/hulation/hulation.yaml" env:"HULA_CONF"`
+	DontSaveAuth       bool                    `flag:"nosaveauth" usage:"do not save the auth token to the config file"`
+	DebugMode          bool                    `yaml:"debug" flag:"debug" usage:"debug mode"`
+	ANSIColors         bool                    `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
+	GetBodyFromFile    string                  `flag:"bodyfile" usage:"get body from file"`
+	GetBodyFromStdin   bool                    `flag:"bodystdin" usage:"get body from stdin"`
+	GetInteractive     bool                    `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
+	HostId             string                  `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
+	Dangerous          bool                    `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
+	AutoBuild          bool                    `flag:"autobuild" usage:"automatically trigger a staging build after changes are synced (staging-mount only)"`
+	// Multi-server config
+	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
+	// Runtime: which server to use for this invocation (not persisted)
+	Host string `yaml:"-" flag:"host" usage:"hula server URL or FQDN" env:"HULACTL_HOST"`
+}
+
+// normalizeHost ensures a URL has https:// and extracts the FQDN key.
+// "hula.example.com" → ("https://hula.example.com", "hula.example.com")
+// "https://hula.example.com:8443" → ("https://hula.example.com:8443", "hula.example.com:8443")
+func normalizeHost(input string) (fullURL, key string) {
+	input = strings.TrimSpace(input)
+	if strings.HasPrefix(input, "https://") {
+		fullURL = input
+		key = strings.TrimPrefix(input, "https://")
+	} else if strings.HasPrefix(input, "http://") {
+		fullURL = input
+		key = strings.TrimPrefix(input, "http://")
+	} else {
+		fullURL = "https://" + input
+		key = input
+	}
+	key = strings.TrimSuffix(key, "/")
+	return
+}
+
+// resolveServer picks the server to use for this invocation.
+// Returns url, token, insecure, or an error if ambiguous.
+func resolveServer(cfg *HulactlConfig) (url, token string, insecure bool, err error) {
+	// If --host or HULACTL_HOST is set, look it up
+	if cfg.Host != "" {
+		_, key := normalizeHost(cfg.Host)
+		if cfg.Servers != nil {
+			if entry, ok := cfg.Servers[key]; ok {
+				return entry.URL, entry.Token, entry.Insecure, nil
+			}
+		}
+		// Not found — the user may be about to auth, return the URL with no token
+		fullURL, _ := normalizeHost(cfg.Host)
+		return fullURL, "", false, nil
+	}
+
+	// No --host: use the only server, or error if ambiguous
+	if len(cfg.Servers) == 1 {
+		for _, entry := range cfg.Servers {
+			return entry.URL, entry.Token, entry.Insecure, nil
+		}
+	}
+	if len(cfg.Servers) > 1 {
+		err = fmt.Errorf("multiple servers configured — use --host <url> or set HULACTL_HOST to select one")
+		return
+	}
+	err = fmt.Errorf("no servers configured — run 'hulactl auth <url>' first")
+	return
 }
 
 func doAltGetBody(config *HulactlConfig) bool {
@@ -309,8 +367,13 @@ func GetHulationServerConfigOrExit(confpath string) (hulationconf *config.Config
 }
 
 func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
-	c = client.NewClient(hulactlconfig.HulationApiUrl, hulactlconfig.Token)
-	if hulactlconfig.Insecure {
+	url, token, insecure, err := resolveServer(hulactlconfig)
+	if err != nil {
+		fmt.Printf("Error: %s\n", err)
+		os.Exit(1)
+	}
+	c = client.NewClient(url, token)
+	if insecure {
 		c.SetInsecure(true)
 	}
 	if hulactlconfig.DebugMode {
@@ -409,7 +472,35 @@ func main() {
 			fmt.Printf("ERROR: Hash verification failed.\n")
 		}
 	case CMD_AUTH:
-		fmt.Printf("Generate Authorization header bearer token:\n")
+		// Determine which server to auth against
+		// Usage: hulactl auth [URL]
+		var authURL, authKey string
+		if len(argz) >= 2 {
+			// URL provided as argument
+			authURL, authKey = normalizeHost(argz[1])
+		} else if hulactlconfig.Host != "" {
+			// --host flag or HULACTL_HOST env
+			authURL, authKey = normalizeHost(hulactlconfig.Host)
+		} else if len(hulactlconfig.Servers) == 1 {
+			// Single server — use it
+			for _, entry := range hulactlconfig.Servers {
+				authURL = entry.URL
+			}
+			_, authKey = normalizeHost(authURL)
+		} else if len(hulactlconfig.Servers) > 1 {
+			fmt.Printf("Multiple servers configured. Specify which one:\n")
+			fmt.Printf("  hulactl auth <url>\n")
+			for key := range hulactlconfig.Servers {
+				fmt.Printf("    %s\n", key)
+			}
+			os.Exit(1)
+		} else {
+			fmt.Printf("Usage: hulactl auth <url>\n")
+			fmt.Printf("Example: hulactl auth hula.example.com\n")
+			os.Exit(1)
+		}
+
+		fmt.Printf("Authenticating against %s\n", authURL)
 		l, err := readline.NewEx(&readline.Config{})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
@@ -432,13 +523,20 @@ func main() {
 			os.Exit(1)
 		}
 		password = string(pass)
-		// make request against the server using /login
-		// client := client.NewClient(hulactlconfig.HulationApiUrl, "")
-		// if hulactlconfig.DebugMode {
-		// 	client.Noisy = true
-		// 	client.NoisyErr = true
-		// }
-		hulaclient := GetHulactlClient(hulactlconfig)
+
+		// Create a client targeting the auth URL directly
+		hulaclient := client.NewClient(authURL, "")
+		if hulactlconfig.DebugMode {
+			hulaclient.Noisy = true
+			hulaclient.NoisyErr = true
+		}
+		// Check if this server was previously configured as insecure
+		if hulactlconfig.Servers != nil {
+			if entry, ok := hulactlconfig.Servers[authKey]; ok && entry.Insecure {
+				hulaclient.SetInsecure(true)
+			}
+		}
+
 		authResp, token, err := hulaclient.Auth(identity, password)
 		if err != nil {
 			fmt.Printf("Error: %s\n", err.Error())
@@ -471,11 +569,10 @@ func main() {
 
 		fmt.Printf("Token: %s\n", token)
 		if !hulactlconfig.DontSaveAuth {
-			// check if a file exists
+			// Ensure config file exists
 			_, err = os.Stat(hulactlconfigfile)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// create parent directory and file
 					if dir := filepath.Dir(hulactlconfigfile); dir != "." {
 						os.MkdirAll(dir, 0700)
 					}
@@ -489,32 +586,22 @@ func main() {
 					os.Exit(1)
 				}
 			}
-			// save the token and API URL to the config file
-			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"token"}, &yaml.Node{
+			// Save under servers.<key>
+			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"servers", authKey, "url"}, &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: authURL,
+			})
+			if err != nil {
+				fmt.Printf("Error saving URL to config file: %s\n", err.Error())
+			}
+			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"servers", authKey, "token"}, &yaml.Node{
 				Kind:  yaml.ScalarNode,
 				Value: token,
 			})
 			if err != nil {
-				fmt.Printf("Error saving token to config file (%s): %s\n", hulactlconfigfile, err.Error())
+				fmt.Printf("Error saving token to config file: %s\n", err.Error())
 			} else {
-				fmt.Printf("Token saved to config file (%s)\n", hulactlconfigfile)
-			}
-			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"hulaurl"}, &yaml.Node{
-				Kind:  yaml.ScalarNode,
-				Value: hulactlconfig.HulationApiUrl,
-			})
-			if err != nil {
-				fmt.Printf("Error saving API URL to config file: %s\n", err.Error())
-			}
-			if hulactlconfig.Insecure {
-				err = utils.ModifyYamlFile(hulactlconfigfile, []string{"insecure"}, &yaml.Node{
-					Kind:  yaml.ScalarNode,
-					Tag:   "!!bool",
-					Value: "true",
-				})
-				if err != nil {
-					fmt.Printf("Error saving insecure flag to config file: %s\n", err.Error())
-				}
+				fmt.Printf("Credentials saved for %s in %s\n", authKey, hulactlconfigfile)
 			}
 		}
 
@@ -1256,6 +1343,7 @@ func main() {
 			ServerID:    serverID,
 			LocalDir:    absDir,
 			Dangerous:   hulactlconfig.Dangerous,
+			AutoBuild:   hulactlconfig.AutoBuild,
 			Output:      fmt.Printf,
 			ConfirmFunc: askForConfirmation,
 		})

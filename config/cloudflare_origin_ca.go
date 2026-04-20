@@ -48,8 +48,8 @@ type CloudflareOriginCAConfig struct {
 	// Cloudflare zone ID for the domain.
 	// If empty, resolved from env var CLOUDFLARE_ZONE_ID_{servers.id}
 	ZoneID string `yaml:"zone_id,omitempty"`
-	// Directory to cache cert + key files (default: "certs")
-	CacheDir string `yaml:"cache_dir,omitempty" default:"certs"`
+	// Directory to cache cert + key files (default: /var/hula/certs)
+	CacheDir string `yaml:"cache_dir,omitempty" default:"/var/hula/certs"`
 	// Key type: "ecdsa" (P-256, default) or "rsa" (2048-bit)
 	KeyType string `yaml:"key_type,omitempty" default:"ecdsa"`
 	// Requested certificate validity in days: 7, 30, 90, 365, 730, 1095, or 5475 (default: 5475)

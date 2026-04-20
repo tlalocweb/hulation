@@ -430,6 +430,21 @@ categories:
         pattern: "(?i)/wp-json/wp/v2/users"
         score: 20
         reason: "WordPress user enumeration"
+      - name: wp_wlwmanifest
+        type: url
+        pattern: "(?i)/wp-includes/wlwmanifest\\.xml"
+        score: 30
+        reason: "WordPress wlwmanifest scanner probe"
+      - name: wp_includes
+        type: url
+        pattern: "(?i)/wp-includes/"
+        score: 20
+        reason: "WordPress wp-includes probe"
+      - name: wp_content
+        type: url
+        pattern: "(?i)/wp-content/"
+        score: 20
+        reason: "WordPress wp-content probe"
       - name: phpunit_rce
         type: url
         pattern: "(?i)/vendor/phpunit/"

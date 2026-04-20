@@ -214,6 +214,22 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("GET /api/site/build-status/{buildid}", wrapOpa(handler.BuildStatus))
 	h.mux.Handle("GET /api/site/builds/{serverid}", wrapOpa(handler.ListBuilds))
 
+	// Staging
+	h.mux.Handle("POST /api/staging/build", wrapOpa(handler.StagingBuild))
+	// WebDAV: register without method so all WebDAV methods (PROPFIND, MKCOL, COPY, MOVE, etc.) match.
+	// The handler does its own Bearer token auth since http.ServeMux method patterns
+	// don't support non-standard HTTP methods.
+	verifyToken := func(token string) (bool, bool, error) {
+		valid, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+		if err != nil || !valid {
+			return false, false, err
+		}
+		return true, perms.HasCap("admin"), nil
+	}
+	stagingDAV := handler.StagingWebDAVNetHTTP(verifyToken)
+	h.mux.Handle("/api/staging/{serverid}/dav", stagingDAV)
+	h.mux.Handle("/api/staging/{serverid}/dav/", stagingDAV)
+
 	// Bad actor admin API
 	if badactor.IsEnabled() {
 		h.mux.Handle("GET /api/badactor/list", wrapOpa(badactor.ListBadActors))

@@ -53,6 +53,147 @@ dbconfig:
 
 Database connection can also be set via environment variables: `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`.
 
+## TLS / SSL Configuration
+
+Hulation supports three TLS modes for both per-server SSL and `hula_ssl` (the admin/API identity). Only one mode can be active per SSL block.
+
+### ACME (Let's Encrypt)
+
+Automatically provisions and renews certificates via Let's Encrypt.
+
+**Per-server:**
+
+```yaml
+servers:
+  - host: example.com
+    ssl:
+      acme:
+        email: admin@example.com
+        cache_dir: /var/hula/certs   # default: /var/hula/certs
+        http_port: 80                # default: 80
+        domains:                     # default: derived from host + aliases
+          - example.com
+          - www.example.com
+```
+
+**Hula admin identity:**
+
+```yaml
+hula_host: hula.example.com
+hula_ssl:
+    acme:
+        email: admin@example.com
+```
+
+Requires `hula_host` to be set to an actual hostname (not `localhost`). Port 80 must be reachable for HTTP-01 challenges.
+
+### Cloudflare Origin CA
+
+Provisions certificates via the Cloudflare Origin CA API. These certificates are only trusted by Cloudflare's edge servers -- all traffic must pass through Cloudflare's proxy. Non-Cloudflare IPs are dropped at the TCP level before TLS handshake.
+
+**Per-server:**
+
+```yaml
+servers:
+  - host: www.example.com
+    id: mysite
+    ssl:
+      cloudflare_origin_ca:
+        cache_dir: /var/hula/certs   # default: /var/hula/certs
+        key_type: ecdsa              # default: ecdsa (or rsa)
+        validity_days: 5475          # default: 5475 (15 years)
+```
+
+API token and zone ID are resolved from environment variables keyed by the server ID (dashes replaced with underscores):
+
+```bash
+CLOUDFLARE_API_TOKEN_mysite=cfat_...
+CLOUDFLARE_ZONE_ID_mysite=73453a...
+```
+
+Or set explicitly in YAML:
+
+```yaml
+ssl:
+  cloudflare_origin_ca:
+    api_token: "cfat_..."
+    zone_id: "73453a..."
+```
+
+**Hula admin identity:**
+
+```yaml
+hula_host: hula.example.com
+hula_ssl:
+    cloudflare_origin_ca: {}
+```
+
+Uses env vars `CLOUDFLARE_API_TOKEN_hula` and `CLOUDFLARE_ZONE_ID_hula`. All defaults (`cache_dir`, `key_type`, `validity_days`) apply automatically. Requires `hula_host` to be set to an actual hostname.
+
+**Cloudflare DNS setup:**
+
+- Each hostname must have an **A record** (not CNAME) pointing to your origin server's IP, with the orange cloud (proxy) enabled
+- CNAME records between two proxied hostnames in the same zone will fail with Cloudflare error 1016 -- Cloudflare cannot resolve the origin through a proxied CNAME
+- All three fields (`cache_dir`, `key_type`, `validity_days`) have defaults and can be omitted
+
+**Multiple virtual hosts:**
+
+When multiple servers share the same Cloudflare zone, each needs its own env vars:
+
+```bash
+# Server id: mysite
+CLOUDFLARE_API_TOKEN_mysite=cfat_...
+CLOUDFLARE_ZONE_ID_mysite=73453a...
+
+# Server id: staging-site (dashes become underscores)
+CLOUDFLARE_API_TOKEN_staging_site=cfat_...
+CLOUDFLARE_ZONE_ID_staging_site=73453a...
+
+# Hula admin identity
+CLOUDFLARE_API_TOKEN_hula=cfat_...
+CLOUDFLARE_ZONE_ID_hula=73453a...
+```
+
+The API token and zone ID can be the same across all entries if they share the same Cloudflare zone and token.
+
+**SNI-based certificate selection:**
+
+When multiple Origin CA certificates are loaded (e.g., `www.example.com` and `staging.example.com`), hula matches the TLS SNI (Server Name Indication) against each certificate's DNS SANs to select the correct one.
+
+### Static Certificate
+
+Use your own certificate and key files:
+
+```yaml
+ssl:
+  cert: /path/to/cert.pem
+  key: /path/to/key.pem
+```
+
+Or inline:
+
+```yaml
+ssl:
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    ...
+  key: |
+    -----BEGIN PRIVATE KEY-----
+    ...
+```
+
+### TLS Version Controls
+
+Any SSL block can include TLS version constraints:
+
+```yaml
+ssl:
+  cloudflare_origin_ca: {}
+  tls:
+    min_version: "1.2"   # default: 1.2
+    max_version: "1.3"   # default: no limit
+```
+
 ## Docker Compose
 
 ### Full Stack (Hulation + ClickHouse)
@@ -258,9 +399,31 @@ configs:
     commands: |
       WORKDIR /builder
       HUGO --minify
-      CP -r public/* site/
-      FINALIZE /site
+      FINALIZE /builder/site/public
 ```
+
+**Example with defs (variable substitution) and staging:**
+
+```yaml
+defs:
+  WORKDIR: /builder
+
+configs:
+  production:
+    commands: |
+      WORKDIR {{WORKDIR}}
+      HUGO --minify
+      FINALIZE {{WORKDIR}}/site/public
+
+  staging:
+    servedir: "{{WORKDIR}}/site/public"
+    build_command: |
+      HUGO
+    commands: |
+      WORKDIR {{WORKDIR}}
+```
+
+The `defs` section defines variables that are substituted (using mustache syntax `{{VAR}}`) into all profile fields (`commands`, `servedir`, `build_command`, `dockerfile_prebuild`) before use.
 
 **Full example with multiple profiles:**
 
@@ -272,30 +435,28 @@ builder_image: ubuntu22.04
 hugo:
   at_least: 0.147.0
 
+defs:
+  WORKDIR: /builder
+
 configs:
   production:
     commands: |
-      WORKDIR /builder
+      WORKDIR {{WORKDIR}}
       HUGO --minify
-      CP -r public/* site/
-      CP -r extra_assets site/extra
-      RM -rf site/extra/drafts
-      FINALIZE /site
+      FINALIZE {{WORKDIR}}/site/public
 
   staging:
-    # Override Hugo version for this profile
-    hugo:
-      at_least: 0.160.0
+    servedir: "{{WORKDIR}}/site/public"
+    build_command: |
+      HUGO
     # Install extra tools before the build
     dockerfile_prebuild: |
       RUN apt-get update && apt-get install -y imagemagick
     commands: |
-      WORKDIR /site
-      HUGO
-      CP -r public/* site/
-      RUN convert site/images/hero.png -resize 1200x site/images/hero-opt.png
-      FINALIZE /site
+      WORKDIR {{WORKDIR}}
 ```
+
+**Staging profiles** are identified by the presence of `servedir`. See [Staging Mode](#staging-mode) below for details.
 
 **Builder images:**
 
@@ -332,6 +493,88 @@ HUGO --minify           # Runs hugo in /builder/site/, output goes to /builder/s
 CP -r public/* site/    # Copies built files (relative to /builder/site/)
 FINALIZE /site          # Tarballs /site, sends it back to hula for deployment
 ```
+
+### Staging Mode
+
+Staging mode provides a live development workflow where the built site is served directly from a Docker volume mount. Unlike production builds (which are ephemeral -- build, extract, destroy), staging containers are long-lived. The builder container stays running after the initial build, and changes are visible immediately without extracting tarballs.
+
+**How it works:**
+
+1. Hula starts a long-lived builder container with `hulabuild` as entrypoint
+2. The `servedir` path inside the container is volume-mounted to a host directory
+3. After the initial `commands` execute (WORKDIR transfers source, etc.), `hulabuild` enters a staging loop
+4. Hugo (or another generator) runs and outputs to the `servedir` -- visible immediately since it's a volume mount
+5. Rebuilds are triggered via `POST /api/staging/build` or `hulactl staging-build`, which sends an `EXEC_BUILD` command through the stdin/stdout protocol
+6. A WebDAV server at `/api/staging/{server-id}/dav/` provides file management for the staging site
+
+**Configuration:**
+
+In `config.yaml`, set `hula_build: staging` to select the staging profile:
+
+```yaml
+servers:
+  - host: staging.example.com
+    id: staging-site
+    ssl:
+      cloudflare_origin_ca: {}
+    root_git_autodeploy:
+      repo: https://github.com/yourorg/yoursite
+      creds:
+        username: x-access-token
+        password: "{{env:GITHUB_AUTH_TOKEN}}"
+      ref:
+        branch: main
+      hula_build: staging
+```
+
+In `.hula/sitebuild.yaml`, the staging profile uses `servedir` and `build_command`:
+
+```yaml
+defs:
+  WORKDIR: /builder
+
+configs:
+  production:
+    commands: |
+      WORKDIR {{WORKDIR}}
+      HUGO --minify
+      FINALIZE {{WORKDIR}}/site/public
+
+  staging:
+    servedir: "{{WORKDIR}}/site/public"
+    build_command: |
+      HUGO
+    commands: |
+      WORKDIR {{WORKDIR}}
+```
+
+| Field | Description |
+|-------|-------------|
+| `servedir` | Absolute path inside the container to volume-mount for serving. Identifies the profile as staging. |
+| `build_command` | The command to re-run on rebuild triggers. Must be a known generator (`HUGO`, `ASTRO`, `GATSBY`, `MKDOCS`). Arbitrary commands are not allowed for security. |
+| `commands` | Initial commands to run when the container starts. Does NOT include `FINALIZE` (staging profiles serve directly from the volume). |
+
+**Staging API endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/staging/build` | Trigger a rebuild (`{"id": "server-id"}`) |
+| ALL | `/api/staging/{server-id}/dav/*` | WebDAV file management for the staging site |
+
+**hulactl staging commands:**
+
+```bash
+# Trigger a rebuild
+hulactl staging-build <server-id>
+
+# Upload a single file via WebDAV
+hulactl staging-update <server-id> <local-file> <remote-path>
+
+# Mount a local folder synced to the staging site (watches for changes)
+hulactl staging-mount <server-id> <local-folder>
+```
+
+The `staging-mount` command syncs a local directory with the remote staging folder via WebDAV. It watches the local filesystem for changes and pushes them to the server in real-time. Security-sensitive files (executables, `.ssh`, `.env`, `*.key`, etc.) are skipped by default -- use `--dangerous` to override.
 
 ### API Endpoints
 
@@ -877,12 +1120,19 @@ docker kill --signal=HUP hula
 | `auth` | Authenticate and save JWT token |
 | `authok` | Verify authentication is working |
 | `badactors` | List bad actors with scores and blocked/flagged status |
+| `build` | Trigger a site build for a server |
+| `build-status` | Get the status of a site build |
+| `builds` | List recent builds for a server |
+| `staging-build` | Trigger a rebuild in a staging container |
+| `staging-update` | Upload a file to the staging site via WebDAV |
+| `staging-mount` | Mount a local folder synced to a staging site via WebDAV |
 | `createform` | Create a new form |
 | `modifyform` | Modify an existing form |
 | `submitform` | Submit form data |
 | `createlander` | Create a new lander |
 | `initdb` | Initialize the ClickHouse database |
 | `deletedb` | Delete the ClickHouse database |
+| `reload` | Send SIGHUP to reload config |
 
 ### Configuration
 

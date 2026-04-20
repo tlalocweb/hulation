@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/emersion/go-webdav"
@@ -54,6 +57,9 @@ func StagingBuild(ctx RequestCtx) error {
 	}
 
 	bs, err := sm.RebuildStaging(req.ID)
+	if errors.Is(err, sitedeploy.ErrBuildInProgress) {
+		return ctx.Status(http.StatusConflict).SendString("build already in progress for server " + req.ID)
+	}
 	if err != nil {
 		resp := stagingBuildResponse{
 			Status:     "failed",
@@ -104,6 +110,76 @@ func getOrCreateDAVHandler(serverID, hostDir string) *webdav.Handler {
 	return h
 }
 
+// StagingWebDAVNetHTTP returns an http.Handler that serves WebDAV requests
+// for staging containers. It does its own Bearer-token auth check (verifying
+// the token has admin capability) then delegates to the emersion/go-webdav
+// handler with the URL prefix stripped. Used by the net/http (h2) router.
+func StagingWebDAVNetHTTP(verifyToken func(token string) (bool, bool, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract serverID from the path: /api/staging/{serverID}/dav/...
+		path := r.URL.Path
+		const prefix = "/api/staging/"
+		if !strings.HasPrefix(path, prefix) {
+			http.NotFound(w, r)
+			return
+		}
+		rest := path[len(prefix):]
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			http.NotFound(w, r)
+			return
+		}
+		serverID := rest[:slash]
+		if serverID == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Auth check: Bearer token must have admin cap
+		ahdr := r.Header.Get("Authorization")
+		var token string
+		n, err := fmt.Sscanf(ahdr, "Bearer %s", &token)
+		if err != nil || n < 1 {
+			http.Error(w, "missing or invalid Authorization header", http.StatusUnauthorized)
+			return
+		}
+		valid, isAdmin, err := verifyToken(token)
+		if err != nil || !valid {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+		if !isAdmin {
+			http.Error(w, "admin required", http.StatusForbidden)
+			return
+		}
+
+		sm := sitedeploy.GetStagingManager()
+		if sm == nil {
+			http.Error(w, "staging manager not initialized", http.StatusServiceUnavailable)
+			return
+		}
+		sc := sm.GetStagingContainer(serverID)
+		if sc == nil {
+			http.Error(w, "no staging container for server: "+serverID, http.StatusNotFound)
+			return
+		}
+
+		davHandler := getOrCreateDAVHandler(serverID, sc.HostSrcDir)
+		davPrefix := "/api/staging/" + serverID + "/dav"
+		// Strip the prefix. The WebDAV LocalFileSystem requires an absolute
+		// path, so if the remaining path is empty, set it to "/".
+		r2 := *r
+		u2 := *r.URL
+		u2.Path = strings.TrimPrefix(r.URL.Path, davPrefix)
+		if u2.Path == "" {
+			u2.Path = "/"
+		}
+		u2.RawPath = ""
+		r2.URL = &u2
+		davHandler.ServeHTTP(w, &r2)
+	})
+}
+
 // StagingWebDAVFiber returns a fiber.Handler that serves WebDAV requests for
 // staging containers. It bridges the emersion/go-webdav Handler (which implements
 // net/http.Handler) into Fiber via fasthttpadaptor.
@@ -126,7 +202,7 @@ func StagingWebDAVFiber() fiber.Handler {
 			return c.Status(http.StatusNotFound).SendString("no staging container for server: " + serverID)
 		}
 
-		davHandler := getOrCreateDAVHandler(serverID, sc.HostDir)
+		davHandler := getOrCreateDAVHandler(serverID, sc.HostSrcDir)
 
 		// Strip the prefix so WebDAV sees paths relative to the root
 		prefix := "/api/staging/" + serverID + "/dav"

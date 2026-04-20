@@ -359,10 +359,15 @@ type GitAutoDeployConfig struct {
 	// Where the built site is deployed and served from.
 	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
 	DeployDir string `yaml:"deploy_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/site"`
-	// Where the staging site is served from (host-side volume mount).
+	// Where the staging site is served from (host-side volume mount for built output).
 	// Only used when the resolved build profile is a staging profile.
 	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
 	StagingDir string `yaml:"staging_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/staging-site"`
+	// Where the staging source lives on the host (bind-mounted into the builder at {WORKDIR}/site/).
+	// This is what WebDAV exposes — editable source files (hugo.toml, markdown, etc).
+	// Only used when the resolved build profile is a staging profile.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	StagingSrcDir string `yaml:"staging_src_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/staging-src"`
 	// Environment variables to pass into the builder container.
 	// Format: KEY=VALUE. Supports {{env:*}} substitution.
 	// Useful for passing secrets to static site generators at build time,
@@ -823,6 +828,9 @@ type Config struct {
 	cloudflareIPs *CloudflareIPRanges
 	// true if any server has allow_non_cf_ips: true
 	allowNonCFIPs bool
+	// ACME manager for hula's own identity (when hula_ssl uses acme)
+	hulaACMEManager *autocert.Manager
+	hulaACMEHTTPPort int
 }
 
 // IsCloudflareMode returns true if any server uses Cloudflare Origin CA.
@@ -838,6 +846,16 @@ func (cfg *Config) GetCloudflareIPs() *CloudflareIPRanges {
 // AllowNonCFIPs returns true if non-Cloudflare IPs should be allowed through.
 func (cfg *Config) AllowNonCFIPs() bool {
 	return cfg.allowNonCFIPs
+}
+
+// GetHulaACMEManager returns the ACME manager for hula's own identity, or nil.
+func (cfg *Config) GetHulaACMEManager() *autocert.Manager {
+	return cfg.hulaACMEManager
+}
+
+// GetHulaACMEHTTPPort returns the HTTP port for hula ACME challenges.
+func (cfg *Config) GetHulaACMEHTTPPort() int {
+	return cfg.hulaACMEHTTPPort
 }
 
 type Proxy struct {
@@ -948,7 +966,9 @@ func LoadConfig(filename string) (*Config, error) {
 
 	// conftagz may create empty pointer structs from default tags.
 	// Reset HulaSSL if it was not explicitly configured.
-	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" && cfg.HulaSSL.ACME != nil && cfg.HulaSSL.ACME.Email == "" {
+	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" &&
+		cfg.HulaSSL.CloudflareOriginCA == nil &&
+		(cfg.HulaSSL.ACME == nil || cfg.HulaSSL.ACME.Email == "") {
 		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
 		cfg.HulaSSL = nil
 	}
@@ -1379,6 +1399,8 @@ func LoadConfig(filename string) (*Config, error) {
 				fmt.Sprintf("server[%s].root_git_autodeploy.deploy_dir", s.Host))
 			gad.StagingDir = SubstConfVarsLogErrorf(gad.StagingDir, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.staging_dir", s.Host))
+			gad.StagingSrcDir = SubstConfVarsLogErrorf(gad.StagingSrcDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.staging_src_dir", s.Host))
 			// Set server Root from DeployDir so static file serving works
 			s.Root = gad.DeployDir
 			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s deploy_dir=%s",
@@ -1420,11 +1442,69 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}
 
-	// Load hula's own SSL cert if configured (static cert files only)
-	if cfg.HulaSSL != nil && cfg.HulaSSL.hasStaticCert() {
-		err = cfg.HulaSSL.LoadSSLConfig()
-		if err != nil {
-			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
+	// Load hula's own SSL cert if configured
+	if cfg.HulaSSL != nil {
+		if cfg.HulaSSL.hasStaticCert() {
+			err = cfg.HulaSSL.LoadSSLConfig()
+			if err != nil {
+				return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
+			}
+		}
+		// Resolve Cloudflare Origin CA env vars for hula_ssl (uses "hula" as the ID).
+		if cfg.HulaSSL.CloudflareOriginCA != nil {
+			SubstConfVarsForAllStrings(cfg.HulaSSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
+			cfca := cfg.HulaSSL.CloudflareOriginCA
+			if cfca.APIToken == "" {
+				cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_hula")
+			}
+			if cfca.ZoneID == "" {
+				cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_hula")
+			}
+			if cfg.HulaHost == "" || cfg.HulaHost == "localhost" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires hula_host to be set to an actual hostname (not localhost)")
+			}
+			if cfca.APIToken == "" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires api_token (set in YAML or env var CLOUDFLARE_API_TOKEN_hula)")
+			}
+			if cfca.ZoneID == "" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires zone_id (set in YAML or env var CLOUDFLARE_ZONE_ID_hula)")
+			}
+			hostnames := []string{cfg.HulaHost}
+			hostnames = append(hostnames, cfg.HulaAliases...)
+			cert, cerr := cfca.ProvisionOrLoadCert(hostnames)
+			if cerr != nil {
+				return nil, fmt.Errorf("cloudflare origin CA for hula_ssl: %w", cerr)
+			}
+			cfg.HulaSSL.tlsCert = cert
+		}
+		// ACME / Let's Encrypt for hula_ssl
+		if cfg.HulaSSL.IsACME() {
+			if cfg.HulaHost == "" || cfg.HulaHost == "localhost" {
+				return nil, fmt.Errorf("hula_ssl: acme requires hula_host to be set to an actual hostname (not localhost)")
+			}
+			acmeCfg := cfg.HulaSSL.ACME
+			cacheDir := acmeCfg.CacheDir
+			if cacheDir == "" {
+				cacheDir = "certs"
+			}
+			cacheDir, _ = SubstConfVars(cacheDir, map[string]string{"confdir": confDir})
+			domains := acmeCfg.Domains
+			if len(domains) == 0 {
+				domains = []string{cfg.HulaHost}
+				domains = append(domains, cfg.HulaAliases...)
+			}
+			httpPort := acmeCfg.HTTPPort
+			if httpPort == 0 {
+				httpPort = 80
+			}
+			cfg.hulaACMEManager = &autocert.Manager{
+				Prompt:     autocert.AcceptTOS,
+				Email:      acmeCfg.Email,
+				Cache:      autocert.DirCache(cacheDir),
+				HostPolicy: autocert.HostWhitelist(domains...),
+			}
+			cfg.hulaACMEHTTPPort = httpPort
+			log.Infof("hula_ssl: ACME configured for %v (cache: %s, http_port: %d)", domains, cacheDir, httpPort)
 		}
 	}
 

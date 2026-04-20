@@ -3,6 +3,7 @@ package sitedeploy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,14 +20,20 @@ import (
 	"github.com/tlalocweb/hulation/log"
 )
 
+// ErrBuildInProgress is returned by RebuildStaging when a build is already
+// running for the given server.
+var ErrBuildInProgress = errors.New("build already in progress")
+
 // StagingContainer represents a long-lived builder container in staging mode.
 type StagingContainer struct {
 	mu          sync.Mutex
 	ContainerID string
 	ServerID    string
 	ImageName   string
-	HostDir     string         // host-side path (gad.StagingDir)
-	ServeDir    string         // container-side path (profile.ServeDir)
+	HostDir     string         // host-side path for built output (gad.StagingDir) — what hula serves
+	HostSrcDir  string         // host-side path for source (gad.StagingSrcDir) — what WebDAV exposes
+	ServeDir    string         // container-side path of built output (profile.ServeDir)
+	SrcDir      string         // container-side path of source ({WorkDir}/site)
 	WorkDir     string         // from WORKDIR command in profile.Commands
 	BuildCmd    string         // profile.BuildCommand
 	conn        io.WriteCloser // stdin connection to hulabuild
@@ -105,9 +112,12 @@ func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProf
 	gad := server.GitAutoDeploy
 	ctx := context.Background()
 
-	// Create host staging directory
+	// Create host staging directories (output + source)
 	if err := os.MkdirAll(gad.StagingDir, 0o755); err != nil {
 		return fmt.Errorf("creating staging dir %s: %w", gad.StagingDir, err)
+	}
+	if err := os.MkdirAll(gad.StagingSrcDir, 0o755); err != nil {
+		return fmt.Errorf("creating staging src dir %s: %w", gad.StagingSrcDir, err)
 	}
 
 	// Extract workdir from the commands
@@ -115,17 +125,20 @@ func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProf
 	if workDir == "" {
 		workDir = "/builder"
 	}
+	srcDir := filepath.Join(workDir, "site")
 
 	sc := &StagingContainer{
-		ServerID:  server.ID,
-		ImageName: imageName,
-		HostDir:   gad.StagingDir,
-		ServeDir:  profile.ServeDir,
-		WorkDir:   workDir,
-		BuildCmd:  strings.TrimSpace(profile.BuildCommand),
+		ServerID:   server.ID,
+		ImageName:  imageName,
+		HostDir:    gad.StagingDir,
+		HostSrcDir: gad.StagingSrcDir,
+		ServeDir:   profile.ServeDir,
+		SrcDir:     srcDir,
+		WorkDir:    workDir,
+		BuildCmd:   strings.TrimSpace(profile.BuildCommand),
 	}
 
-	// Create the builder container with volume mount
+	// Create the builder container with volume mounts
 	builder := newBuilderContainer(sm.cli)
 	if err := builder.ensureImage(ctx, imageName); err != nil {
 		return err
@@ -139,13 +152,17 @@ func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProf
 		}
 	}
 
-	// Volume bind: host staging dir -> container serve dir.
-	// When hula runs inside Docker, the in-container path (gad.StagingDir) differs
-	// from the actual host path backing the Docker volume. We must resolve to the
-	// real host path so the builder container's bind mount points to the same data.
+	// Volume binds:
+	//   - hostSrcDir  -> {workDir}/site        (source files: hugo.toml, markdown, etc) — WebDAV serves this
+	//   - hostDir     -> profile.ServeDir      (built output: public/ dir) — hula serves this
+	// When hula runs inside Docker, the in-container paths differ from host paths.
+	// Resolve to the real host paths so the builder container's bind mounts point to the same data.
 	hostStagingDir := sm.resolveHostPath(ctx, gad.StagingDir)
-	sc.HostDir = gad.StagingDir // hula serves from its own container path
-	binds := []string{hostStagingDir + ":" + profile.ServeDir}
+	hostSrcDir := sm.resolveHostPath(ctx, gad.StagingSrcDir)
+	binds := []string{
+		hostSrcDir + ":" + srcDir,
+		hostStagingDir + ":" + profile.ServeDir,
+	}
 	commandListText := profile.Commands + "\n---\n"
 
 	conn, stdout, err := builder.startContainer(ctx, commandListText, gad.BuildEnv, binds)
@@ -275,7 +292,11 @@ func (sm *StagingManager) RebuildStaging(serverID string) (*BuildState, error) {
 		return nil, fmt.Errorf("no staging container for server %s", serverID)
 	}
 
-	sc.mu.Lock()
+	// Non-blocking: fail fast if a build is already in progress.
+	// Prevents API calls from queueing up behind an ongoing build.
+	if !sc.mu.TryLock() {
+		return nil, ErrBuildInProgress
+	}
 	defer sc.mu.Unlock()
 
 	if !sc.Running {
