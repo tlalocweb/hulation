@@ -15,6 +15,10 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
+	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
+	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
+	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
@@ -62,16 +66,31 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("create unified server: %w", err)
 	}
 
-	// Register core services. Additional services (auth, forms, landers,
-	// site, staging, badactor, analytics) are registered by stage 0.7
-	// as their implementations land.
+	// Register services. Additional services (auth, site, staging,
+	// badactor, analytics) are registered by stage 0.7 as their
+	// implementations land.
 	grpcSrv := srv.GetGRPCServer()
-	statusspec.RegisterStatusServiceServer(grpcSrv, statusimpl.New())
-
-	// REST gateway registrations.
 	gwMux := srv.GetGatewayMux()
-	if err := statusspec.RegisterStatusServiceHandlerServer(ctx, gwMux, statusimpl.New()); err != nil {
+
+	// Status
+	statusSvc := statusimpl.New()
+	statusspec.RegisterStatusServiceServer(grpcSrv, statusSvc)
+	if err := statusspec.RegisterStatusServiceHandlerServer(ctx, gwMux, statusSvc); err != nil {
 		return nil, fmt.Errorf("register status handler: %w", err)
+	}
+
+	// Forms
+	formsSvc := formsimpl.New()
+	formsspec.RegisterFormsServiceServer(grpcSrv, formsSvc)
+	if err := formsspec.RegisterFormsServiceHandlerServer(ctx, gwMux, formsSvc); err != nil {
+		return nil, fmt.Errorf("register forms handler: %w", err)
+	}
+
+	// Landers
+	landersSvc := landersimpl.New()
+	landersspec.RegisterLandersServiceServer(grpcSrv, landersSvc)
+	if err := landersspec.RegisterLandersServiceHandlerServer(ctx, gwMux, landersSvc); err != nil {
+		return nil, fmt.Errorf("register landers handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.

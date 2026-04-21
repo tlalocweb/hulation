@@ -507,3 +507,13 @@ func DeleteLander(db *gorm.DB, id string) (err error) {
 // func (l *Lander) UninstallRoute() (err error) {
 // 	return nil
 // }
+
+// ListLanders returns all landers in the database, newest first.
+// Used by the gRPC LandersService.ListLanders RPC.
+func ListLanders(db *gorm.DB) (ret []*Lander, err error) {
+	err = db.Model(&Lander{}).Order("created_at DESC").Find(&ret).Error
+	if err == gorm.ErrRecordNotFound {
+		err = nil
+	}
+	return
+}

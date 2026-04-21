@@ -5,11 +5,15 @@
 // source: pkg/apispec/v1/forms/forms.proto
 
 // FormsService — CRUD for forms hosted on a virtual server.
+//
+// Forms in hulation are identified by name/id; the server_id is a
+// permission-scoping param only (the underlying Form record is not
+// per-server). A caller must hold the server-scoped permission to
+// manage forms on that server.
 
 package formsspec
 
 import (
-	_ "github.com/tlalocweb/hulation/pkg/server/authware/proto"
 	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -27,123 +31,27 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// FieldDefinition describes a single input in a form's schema.
-type FieldDefinition struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// type one of: text, email, number, tel, url, textarea, select, checkbox, radio, hidden
-	Type        string `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	Required    bool   `protobuf:"varint,3,opt,name=required,proto3" json:"required,omitempty"`
-	Label       string `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
-	Placeholder string `protobuf:"bytes,5,opt,name=placeholder,proto3" json:"placeholder,omitempty"`
-	// options populate select/radio inputs.
-	Options []string `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty"`
-	// regex is an optional validation pattern.
-	Regex         string `protobuf:"bytes,7,opt,name=regex,proto3" json:"regex,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FieldDefinition) Reset() {
-	*x = FieldDefinition{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FieldDefinition) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FieldDefinition) ProtoMessage() {}
-
-func (x *FieldDefinition) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FieldDefinition.ProtoReflect.Descriptor instead.
-func (*FieldDefinition) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *FieldDefinition) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *FieldDefinition) GetType() string {
-	if x != nil {
-		return x.Type
-	}
-	return ""
-}
-
-func (x *FieldDefinition) GetRequired() bool {
-	if x != nil {
-		return x.Required
-	}
-	return false
-}
-
-func (x *FieldDefinition) GetLabel() string {
-	if x != nil {
-		return x.Label
-	}
-	return ""
-}
-
-func (x *FieldDefinition) GetPlaceholder() string {
-	if x != nil {
-		return x.Placeholder
-	}
-	return ""
-}
-
-func (x *FieldDefinition) GetOptions() []string {
-	if x != nil {
-		return x.Options
-	}
-	return nil
-}
-
-func (x *FieldDefinition) GetRegex() string {
-	if x != nil {
-		return x.Regex
-	}
-	return ""
-}
-
-// Form is the form configuration payload.
+// Form mirrors model.FormModel. `schema` is a JSON-schema string
+// (santhosh-tekuri/jsonschema format); `captcha` is one of the
+// supported captcha providers; `feedback` is a template message
+// returned on successful submission.
 type Form struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ServerId    string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	Name        string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Description string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	Fields      []*FieldDefinition     `protobuf:"bytes,5,rep,name=fields,proto3" json:"fields,omitempty"`
-	// redirect_url is where the browser is sent after a successful submission.
-	RedirectUrl string `protobuf:"bytes,6,opt,name=redirect_url,json=redirectUrl,proto3" json:"redirect_url,omitempty"`
-	// email_notify_to — comma-separated recipients for submission notifications.
-	EmailNotifyTo string                 `protobuf:"bytes,7,opt,name=email_notify_to,json=emailNotifyTo,proto3" json:"email_notify_to,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Schema        string                 `protobuf:"bytes,4,opt,name=schema,proto3" json:"schema,omitempty"`
+	Captcha       string                 `protobuf:"bytes,5,opt,name=captcha,proto3" json:"captcha,omitempty"`
+	Feedback      string                 `protobuf:"bytes,6,opt,name=feedback,proto3" json:"feedback,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Form) Reset() {
 	*x = Form{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[1]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +63,7 @@ func (x *Form) String() string {
 func (*Form) ProtoMessage() {}
 
 func (x *Form) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[1]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -168,19 +76,12 @@ func (x *Form) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Form.ProtoReflect.Descriptor instead.
 func (*Form) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{1}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Form) GetId() string {
 	if x != nil {
 		return x.Id
-	}
-	return ""
-}
-
-func (x *Form) GetServerId() string {
-	if x != nil {
-		return x.ServerId
 	}
 	return ""
 }
@@ -199,23 +100,23 @@ func (x *Form) GetDescription() string {
 	return ""
 }
 
-func (x *Form) GetFields() []*FieldDefinition {
+func (x *Form) GetSchema() string {
 	if x != nil {
-		return x.Fields
-	}
-	return nil
-}
-
-func (x *Form) GetRedirectUrl() string {
-	if x != nil {
-		return x.RedirectUrl
+		return x.Schema
 	}
 	return ""
 }
 
-func (x *Form) GetEmailNotifyTo() string {
+func (x *Form) GetCaptcha() string {
 	if x != nil {
-		return x.EmailNotifyTo
+		return x.Captcha
+	}
+	return ""
+}
+
+func (x *Form) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
 	}
 	return ""
 }
@@ -237,14 +138,18 @@ func (x *Form) GetUpdatedAt() *timestamppb.Timestamp {
 type CreateFormRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	Form          *Form                  `protobuf:"bytes,2,opt,name=form,proto3" json:"form,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Schema        string                 `protobuf:"bytes,4,opt,name=schema,proto3" json:"schema,omitempty"`
+	Captcha       string                 `protobuf:"bytes,5,opt,name=captcha,proto3" json:"captcha,omitempty"`
+	Feedback      string                 `protobuf:"bytes,6,opt,name=feedback,proto3" json:"feedback,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateFormRequest) Reset() {
 	*x = CreateFormRequest{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[2]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -256,7 +161,7 @@ func (x *CreateFormRequest) String() string {
 func (*CreateFormRequest) ProtoMessage() {}
 
 func (x *CreateFormRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[2]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -269,7 +174,7 @@ func (x *CreateFormRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFormRequest.ProtoReflect.Descriptor instead.
 func (*CreateFormRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{2}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreateFormRequest) GetServerId() string {
@@ -279,11 +184,39 @@ func (x *CreateFormRequest) GetServerId() string {
 	return ""
 }
 
-func (x *CreateFormRequest) GetForm() *Form {
+func (x *CreateFormRequest) GetName() string {
 	if x != nil {
-		return x.Form
+		return x.Name
 	}
-	return nil
+	return ""
+}
+
+func (x *CreateFormRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *CreateFormRequest) GetSchema() string {
+	if x != nil {
+		return x.Schema
+	}
+	return ""
+}
+
+func (x *CreateFormRequest) GetCaptcha() string {
+	if x != nil {
+		return x.Captcha
+	}
+	return ""
+}
+
+func (x *CreateFormRequest) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
 }
 
 type CreateFormResponse struct {
@@ -295,7 +228,7 @@ type CreateFormResponse struct {
 
 func (x *CreateFormResponse) Reset() {
 	*x = CreateFormResponse{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[3]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -307,7 +240,7 @@ func (x *CreateFormResponse) String() string {
 func (*CreateFormResponse) ProtoMessage() {}
 
 func (x *CreateFormResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[3]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -320,7 +253,7 @@ func (x *CreateFormResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFormResponse.ProtoReflect.Descriptor instead.
 func (*CreateFormResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{3}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateFormResponse) GetForm() *Form {
@@ -331,17 +264,23 @@ func (x *CreateFormResponse) GetForm() *Form {
 }
 
 type ModifyFormRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	FormId        string                 `protobuf:"bytes,2,opt,name=form_id,json=formId,proto3" json:"form_id,omitempty"`
-	Form          *Form                  `protobuf:"bytes,3,opt,name=form,proto3" json:"form,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	FormId   string                 `protobuf:"bytes,2,opt,name=form_id,json=formId,proto3" json:"form_id,omitempty"`
+	// Omitted (empty-string) fields are left unchanged, matching the
+	// existing handler's PATCH semantics.
+	Name          string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Schema        string `protobuf:"bytes,5,opt,name=schema,proto3" json:"schema,omitempty"`
+	Captcha       string `protobuf:"bytes,6,opt,name=captcha,proto3" json:"captcha,omitempty"`
+	Feedback      string `protobuf:"bytes,7,opt,name=feedback,proto3" json:"feedback,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ModifyFormRequest) Reset() {
 	*x = ModifyFormRequest{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[4]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -353,7 +292,7 @@ func (x *ModifyFormRequest) String() string {
 func (*ModifyFormRequest) ProtoMessage() {}
 
 func (x *ModifyFormRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[4]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -366,7 +305,7 @@ func (x *ModifyFormRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModifyFormRequest.ProtoReflect.Descriptor instead.
 func (*ModifyFormRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{4}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ModifyFormRequest) GetServerId() string {
@@ -383,11 +322,39 @@ func (x *ModifyFormRequest) GetFormId() string {
 	return ""
 }
 
-func (x *ModifyFormRequest) GetForm() *Form {
+func (x *ModifyFormRequest) GetName() string {
 	if x != nil {
-		return x.Form
+		return x.Name
 	}
-	return nil
+	return ""
+}
+
+func (x *ModifyFormRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ModifyFormRequest) GetSchema() string {
+	if x != nil {
+		return x.Schema
+	}
+	return ""
+}
+
+func (x *ModifyFormRequest) GetCaptcha() string {
+	if x != nil {
+		return x.Captcha
+	}
+	return ""
+}
+
+func (x *ModifyFormRequest) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
 }
 
 type ModifyFormResponse struct {
@@ -399,7 +366,7 @@ type ModifyFormResponse struct {
 
 func (x *ModifyFormResponse) Reset() {
 	*x = ModifyFormResponse{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[5]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -411,7 +378,7 @@ func (x *ModifyFormResponse) String() string {
 func (*ModifyFormResponse) ProtoMessage() {}
 
 func (x *ModifyFormResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[5]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -424,7 +391,7 @@ func (x *ModifyFormResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModifyFormResponse.ProtoReflect.Descriptor instead.
 func (*ModifyFormResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{5}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ModifyFormResponse) GetForm() *Form {
@@ -444,7 +411,7 @@ type DeleteFormRequest struct {
 
 func (x *DeleteFormRequest) Reset() {
 	*x = DeleteFormRequest{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[6]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -456,7 +423,7 @@ func (x *DeleteFormRequest) String() string {
 func (*DeleteFormRequest) ProtoMessage() {}
 
 func (x *DeleteFormRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[6]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -469,7 +436,7 @@ func (x *DeleteFormRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFormRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFormRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{6}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DeleteFormRequest) GetServerId() string {
@@ -495,7 +462,7 @@ type DeleteFormResponse struct {
 
 func (x *DeleteFormResponse) Reset() {
 	*x = DeleteFormResponse{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[7]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +474,7 @@ func (x *DeleteFormResponse) String() string {
 func (*DeleteFormResponse) ProtoMessage() {}
 
 func (x *DeleteFormResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[7]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +487,7 @@ func (x *DeleteFormResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFormResponse.ProtoReflect.Descriptor instead.
 func (*DeleteFormResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{7}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *DeleteFormResponse) GetOk() bool {
@@ -539,7 +506,7 @@ type ListFormsRequest struct {
 
 func (x *ListFormsRequest) Reset() {
 	*x = ListFormsRequest{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[8]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -551,7 +518,7 @@ func (x *ListFormsRequest) String() string {
 func (*ListFormsRequest) ProtoMessage() {}
 
 func (x *ListFormsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[8]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -564,7 +531,7 @@ func (x *ListFormsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFormsRequest.ProtoReflect.Descriptor instead.
 func (*ListFormsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{8}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListFormsRequest) GetServerId() string {
@@ -583,7 +550,7 @@ type ListFormsResponse struct {
 
 func (x *ListFormsResponse) Reset() {
 	*x = ListFormsResponse{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[9]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +562,7 @@ func (x *ListFormsResponse) String() string {
 func (*ListFormsResponse) ProtoMessage() {}
 
 func (x *ListFormsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[9]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +575,7 @@ func (x *ListFormsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFormsResponse.ProtoReflect.Descriptor instead.
 func (*ListFormsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{9}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListFormsResponse) GetForms() []*Form {
@@ -628,7 +595,7 @@ type GetFormRequest struct {
 
 func (x *GetFormRequest) Reset() {
 	*x = GetFormRequest{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[10]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -640,7 +607,7 @@ func (x *GetFormRequest) String() string {
 func (*GetFormRequest) ProtoMessage() {}
 
 func (x *GetFormRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[10]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -653,7 +620,7 @@ func (x *GetFormRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFormRequest.ProtoReflect.Descriptor instead.
 func (*GetFormRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{10}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetFormRequest) GetServerId() string {
@@ -679,7 +646,7 @@ type GetFormResponse struct {
 
 func (x *GetFormResponse) Reset() {
 	*x = GetFormResponse{}
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[11]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -691,7 +658,7 @@ func (x *GetFormResponse) String() string {
 func (*GetFormResponse) ProtoMessage() {}
 
 func (x *GetFormResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[11]
+	mi := &file_pkg_apispec_v1_forms_forms_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -704,7 +671,7 @@ func (x *GetFormResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFormResponse.ProtoReflect.Descriptor instead.
 func (*GetFormResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{11}
+	return file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetFormResponse) GetForm() *Form {
@@ -718,36 +685,35 @@ var File_pkg_apispec_v1_forms_forms_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_forms_forms_proto_rawDesc = "" +
 	"\n" +
-	" pkg/apispec/v1/forms/forms.proto\x12\x11hulation.v1.forms\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a+pkg/server/authware/proto/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbd\x01\n" +
-	"\x0fFieldDefinition\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1a\n" +
-	"\brequired\x18\x03 \x01(\bR\brequired\x12\x14\n" +
-	"\x05label\x18\x04 \x01(\tR\x05label\x12 \n" +
-	"\vplaceholder\x18\x05 \x01(\tR\vplaceholder\x12\x18\n" +
-	"\aoptions\x18\x06 \x03(\tR\aoptions\x12\x14\n" +
-	"\x05regex\x18\a \x01(\tR\x05regex\"\xe6\x02\n" +
+	" pkg/apispec/v1/forms/forms.proto\x12\x11hulation.v1.forms\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x90\x02\n" +
 	"\x04Form\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x04 \x01(\tR\vdescription\x12:\n" +
-	"\x06fields\x18\x05 \x03(\v2\".hulation.v1.forms.FieldDefinitionR\x06fields\x12!\n" +
-	"\fredirect_url\x18\x06 \x01(\tR\vredirectUrl\x12&\n" +
-	"\x0femail_notify_to\x18\a \x01(\tR\remailNotifyTo\x129\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06schema\x18\x04 \x01(\tR\x06schema\x12\x18\n" +
+	"\acaptcha\x18\x05 \x01(\tR\acaptcha\x12\x1a\n" +
+	"\bfeedback\x18\x06 \x01(\tR\bfeedback\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"]\n" +
+	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xb4\x01\n" +
 	"\x11CreateFormRequest\x12\x1b\n" +
-	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12+\n" +
-	"\x04form\x18\x02 \x01(\v2\x17.hulation.v1.forms.FormR\x04form\"A\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06schema\x18\x04 \x01(\tR\x06schema\x12\x18\n" +
+	"\acaptcha\x18\x05 \x01(\tR\acaptcha\x12\x1a\n" +
+	"\bfeedback\x18\x06 \x01(\tR\bfeedback\"A\n" +
 	"\x12CreateFormResponse\x12+\n" +
-	"\x04form\x18\x01 \x01(\v2\x17.hulation.v1.forms.FormR\x04form\"v\n" +
+	"\x04form\x18\x01 \x01(\v2\x17.hulation.v1.forms.FormR\x04form\"\xcd\x01\n" +
 	"\x11ModifyFormRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x17\n" +
-	"\aform_id\x18\x02 \x01(\tR\x06formId\x12+\n" +
-	"\x04form\x18\x03 \x01(\v2\x17.hulation.v1.forms.FormR\x04form\"A\n" +
+	"\aform_id\x18\x02 \x01(\tR\x06formId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06schema\x18\x05 \x01(\tR\x06schema\x12\x18\n" +
+	"\acaptcha\x18\x06 \x01(\tR\acaptcha\x12\x1a\n" +
+	"\bfeedback\x18\a \x01(\tR\bfeedback\"A\n" +
 	"\x12ModifyFormResponse\x12+\n" +
 	"\x04form\x18\x01 \x01(\v2\x17.hulation.v1.forms.FormR\x04form\"I\n" +
 	"\x11DeleteFormRequest\x12\x1b\n" +
@@ -791,47 +757,43 @@ func file_pkg_apispec_v1_forms_forms_proto_rawDescGZIP() []byte {
 	return file_pkg_apispec_v1_forms_forms_proto_rawDescData
 }
 
-var file_pkg_apispec_v1_forms_forms_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_pkg_apispec_v1_forms_forms_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_pkg_apispec_v1_forms_forms_proto_goTypes = []any{
-	(*FieldDefinition)(nil),       // 0: hulation.v1.forms.FieldDefinition
-	(*Form)(nil),                  // 1: hulation.v1.forms.Form
-	(*CreateFormRequest)(nil),     // 2: hulation.v1.forms.CreateFormRequest
-	(*CreateFormResponse)(nil),    // 3: hulation.v1.forms.CreateFormResponse
-	(*ModifyFormRequest)(nil),     // 4: hulation.v1.forms.ModifyFormRequest
-	(*ModifyFormResponse)(nil),    // 5: hulation.v1.forms.ModifyFormResponse
-	(*DeleteFormRequest)(nil),     // 6: hulation.v1.forms.DeleteFormRequest
-	(*DeleteFormResponse)(nil),    // 7: hulation.v1.forms.DeleteFormResponse
-	(*ListFormsRequest)(nil),      // 8: hulation.v1.forms.ListFormsRequest
-	(*ListFormsResponse)(nil),     // 9: hulation.v1.forms.ListFormsResponse
-	(*GetFormRequest)(nil),        // 10: hulation.v1.forms.GetFormRequest
-	(*GetFormResponse)(nil),       // 11: hulation.v1.forms.GetFormResponse
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*Form)(nil),                  // 0: hulation.v1.forms.Form
+	(*CreateFormRequest)(nil),     // 1: hulation.v1.forms.CreateFormRequest
+	(*CreateFormResponse)(nil),    // 2: hulation.v1.forms.CreateFormResponse
+	(*ModifyFormRequest)(nil),     // 3: hulation.v1.forms.ModifyFormRequest
+	(*ModifyFormResponse)(nil),    // 4: hulation.v1.forms.ModifyFormResponse
+	(*DeleteFormRequest)(nil),     // 5: hulation.v1.forms.DeleteFormRequest
+	(*DeleteFormResponse)(nil),    // 6: hulation.v1.forms.DeleteFormResponse
+	(*ListFormsRequest)(nil),      // 7: hulation.v1.forms.ListFormsRequest
+	(*ListFormsResponse)(nil),     // 8: hulation.v1.forms.ListFormsResponse
+	(*GetFormRequest)(nil),        // 9: hulation.v1.forms.GetFormRequest
+	(*GetFormResponse)(nil),       // 10: hulation.v1.forms.GetFormResponse
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
 }
 var file_pkg_apispec_v1_forms_forms_proto_depIdxs = []int32{
-	0,  // 0: hulation.v1.forms.Form.fields:type_name -> hulation.v1.forms.FieldDefinition
-	12, // 1: hulation.v1.forms.Form.created_at:type_name -> google.protobuf.Timestamp
-	12, // 2: hulation.v1.forms.Form.updated_at:type_name -> google.protobuf.Timestamp
-	1,  // 3: hulation.v1.forms.CreateFormRequest.form:type_name -> hulation.v1.forms.Form
-	1,  // 4: hulation.v1.forms.CreateFormResponse.form:type_name -> hulation.v1.forms.Form
-	1,  // 5: hulation.v1.forms.ModifyFormRequest.form:type_name -> hulation.v1.forms.Form
-	1,  // 6: hulation.v1.forms.ModifyFormResponse.form:type_name -> hulation.v1.forms.Form
-	1,  // 7: hulation.v1.forms.ListFormsResponse.forms:type_name -> hulation.v1.forms.Form
-	1,  // 8: hulation.v1.forms.GetFormResponse.form:type_name -> hulation.v1.forms.Form
-	2,  // 9: hulation.v1.forms.FormsService.CreateForm:input_type -> hulation.v1.forms.CreateFormRequest
-	4,  // 10: hulation.v1.forms.FormsService.ModifyForm:input_type -> hulation.v1.forms.ModifyFormRequest
-	6,  // 11: hulation.v1.forms.FormsService.DeleteForm:input_type -> hulation.v1.forms.DeleteFormRequest
-	8,  // 12: hulation.v1.forms.FormsService.ListForms:input_type -> hulation.v1.forms.ListFormsRequest
-	10, // 13: hulation.v1.forms.FormsService.GetForm:input_type -> hulation.v1.forms.GetFormRequest
-	3,  // 14: hulation.v1.forms.FormsService.CreateForm:output_type -> hulation.v1.forms.CreateFormResponse
-	5,  // 15: hulation.v1.forms.FormsService.ModifyForm:output_type -> hulation.v1.forms.ModifyFormResponse
-	7,  // 16: hulation.v1.forms.FormsService.DeleteForm:output_type -> hulation.v1.forms.DeleteFormResponse
-	9,  // 17: hulation.v1.forms.FormsService.ListForms:output_type -> hulation.v1.forms.ListFormsResponse
-	11, // 18: hulation.v1.forms.FormsService.GetForm:output_type -> hulation.v1.forms.GetFormResponse
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	11, // 0: hulation.v1.forms.Form.created_at:type_name -> google.protobuf.Timestamp
+	11, // 1: hulation.v1.forms.Form.updated_at:type_name -> google.protobuf.Timestamp
+	0,  // 2: hulation.v1.forms.CreateFormResponse.form:type_name -> hulation.v1.forms.Form
+	0,  // 3: hulation.v1.forms.ModifyFormResponse.form:type_name -> hulation.v1.forms.Form
+	0,  // 4: hulation.v1.forms.ListFormsResponse.forms:type_name -> hulation.v1.forms.Form
+	0,  // 5: hulation.v1.forms.GetFormResponse.form:type_name -> hulation.v1.forms.Form
+	1,  // 6: hulation.v1.forms.FormsService.CreateForm:input_type -> hulation.v1.forms.CreateFormRequest
+	3,  // 7: hulation.v1.forms.FormsService.ModifyForm:input_type -> hulation.v1.forms.ModifyFormRequest
+	5,  // 8: hulation.v1.forms.FormsService.DeleteForm:input_type -> hulation.v1.forms.DeleteFormRequest
+	7,  // 9: hulation.v1.forms.FormsService.ListForms:input_type -> hulation.v1.forms.ListFormsRequest
+	9,  // 10: hulation.v1.forms.FormsService.GetForm:input_type -> hulation.v1.forms.GetFormRequest
+	2,  // 11: hulation.v1.forms.FormsService.CreateForm:output_type -> hulation.v1.forms.CreateFormResponse
+	4,  // 12: hulation.v1.forms.FormsService.ModifyForm:output_type -> hulation.v1.forms.ModifyFormResponse
+	6,  // 13: hulation.v1.forms.FormsService.DeleteForm:output_type -> hulation.v1.forms.DeleteFormResponse
+	8,  // 14: hulation.v1.forms.FormsService.ListForms:output_type -> hulation.v1.forms.ListFormsResponse
+	10, // 15: hulation.v1.forms.FormsService.GetForm:output_type -> hulation.v1.forms.GetFormResponse
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_pkg_apispec_v1_forms_forms_proto_init() }
@@ -845,7 +807,7 @@ func file_pkg_apispec_v1_forms_forms_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apispec_v1_forms_forms_proto_rawDesc), len(file_pkg_apispec_v1_forms_forms_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

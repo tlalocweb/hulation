@@ -26,21 +26,26 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Lander describes a landing-page tracking record.
+// Lander mirrors model.Lander.
 type Lander struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ServerId    string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	Name        string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Description string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	// url_path is the path to match on the server (e.g., "/pricing/launch").
-	UrlPath string `protobuf:"bytes,5,opt,name=url_path,json=urlPath,proto3" json:"url_path,omitempty"`
-	// redirect_url (optional) — if set, visits to url_path redirect here.
-	RedirectUrl string `protobuf:"bytes,6,opt,name=redirect_url,json=redirectUrl,proto3" json:"redirect_url,omitempty"`
-	// track_utm — whether to record UTM params on hit.
-	TrackUtm      bool                   `protobuf:"varint,7,opt,name=track_utm,json=trackUtm,proto3" json:"track_utm,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	// Server name (as declared in hula config.yaml). Distinct from the
+	// server_id used for permission scoping, though in practice they match.
+	Server string `protobuf:"bytes,4,opt,name=server,proto3" json:"server,omitempty"`
+	// url_postfix is the path suffix for the lander (e.g., "/launch").
+	UrlPostfix string `protobuf:"bytes,5,opt,name=url_postfix,json=urlPostfix,proto3" json:"url_postfix,omitempty"`
+	// redirect is the target URL. Optional — empty means the lander just
+	// counts hits without redirecting.
+	Redirect string `protobuf:"bytes,6,opt,name=redirect,proto3" json:"redirect,omitempty"`
+	// Hits counter. Incremented by the visitor-tracking hot path.
+	Hits          uint64                 `protobuf:"varint,7,opt,name=hits,proto3" json:"hits,omitempty"`
+	IgnorePort    bool                   `protobuf:"varint,8,opt,name=ignore_port,json=ignorePort,proto3" json:"ignore_port,omitempty"`
+	NoServe       bool                   `protobuf:"varint,9,opt,name=no_serve,json=noServe,proto3" json:"no_serve,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -82,13 +87,6 @@ func (x *Lander) GetId() string {
 	return ""
 }
 
-func (x *Lander) GetServerId() string {
-	if x != nil {
-		return x.ServerId
-	}
-	return ""
-}
-
 func (x *Lander) GetName() string {
 	if x != nil {
 		return x.Name
@@ -103,23 +101,44 @@ func (x *Lander) GetDescription() string {
 	return ""
 }
 
-func (x *Lander) GetUrlPath() string {
+func (x *Lander) GetServer() string {
 	if x != nil {
-		return x.UrlPath
+		return x.Server
 	}
 	return ""
 }
 
-func (x *Lander) GetRedirectUrl() string {
+func (x *Lander) GetUrlPostfix() string {
 	if x != nil {
-		return x.RedirectUrl
+		return x.UrlPostfix
 	}
 	return ""
 }
 
-func (x *Lander) GetTrackUtm() bool {
+func (x *Lander) GetRedirect() string {
 	if x != nil {
-		return x.TrackUtm
+		return x.Redirect
+	}
+	return ""
+}
+
+func (x *Lander) GetHits() uint64 {
+	if x != nil {
+		return x.Hits
+	}
+	return 0
+}
+
+func (x *Lander) GetIgnorePort() bool {
+	if x != nil {
+		return x.IgnorePort
+	}
+	return false
+}
+
+func (x *Lander) GetNoServe() bool {
+	if x != nil {
+		return x.NoServe
 	}
 	return false
 }
@@ -622,19 +641,24 @@ var File_pkg_apispec_v1_landers_landers_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_landers_landers_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/apispec/v1/landers/landers.proto\x12\x13hulation.v1.landers\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbc\x02\n" +
+	"$pkg/apispec/v1/landers/landers.proto\x12\x13hulation.v1.landers\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe9\x02\n" +
 	"\x06Lander\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x19\n" +
-	"\burl_path\x18\x05 \x01(\tR\aurlPath\x12!\n" +
-	"\fredirect_url\x18\x06 \x01(\tR\vredirectUrl\x12\x1b\n" +
-	"\ttrack_utm\x18\a \x01(\bR\btrackUtm\x129\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06server\x18\x04 \x01(\tR\x06server\x12\x1f\n" +
+	"\vurl_postfix\x18\x05 \x01(\tR\n" +
+	"urlPostfix\x12\x1a\n" +
+	"\bredirect\x18\x06 \x01(\tR\bredirect\x12\x12\n" +
+	"\x04hits\x18\a \x01(\x04R\x04hits\x12\x1f\n" +
+	"\vignore_port\x18\b \x01(\bR\n" +
+	"ignorePort\x12\x19\n" +
+	"\bno_serve\x18\t \x01(\bR\anoServe\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"created_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"g\n" +
+	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"g\n" +
 	"\x13CreateLanderRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x123\n" +
 	"\x06lander\x18\x02 \x01(\v2\x1b.hulation.v1.landers.LanderR\x06lander\"K\n" +

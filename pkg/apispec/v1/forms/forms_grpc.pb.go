@@ -5,6 +5,11 @@
 // source: pkg/apispec/v1/forms/forms.proto
 
 // FormsService — CRUD for forms hosted on a virtual server.
+//
+// Forms in hulation are identified by name/id; the server_id is a
+// permission-scoping param only (the underlying Form record is not
+// per-server). A caller must hold the server-scoped permission to
+// manage forms on that server.
 
 package formsspec
 

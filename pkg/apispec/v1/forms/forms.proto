@@ -1,6 +1,11 @@
 syntax = "proto3";
 
 // FormsService — CRUD for forms hosted on a virtual server.
+//
+// Forms in hulation are identified by name/id; the server_id is a
+// permission-scoping param only (the underlying Form record is not
+// per-server). A caller must hold the server-scoped permission to
+// manage forms on that server.
 
 package hulation.v1.forms;
 
@@ -8,7 +13,6 @@ option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/forms;formsspe
 
 import "google/api/annotations.proto";
 import "izuma/auth/permission.proto";
-import "pkg/server/authware/proto/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
 service FormsService {
@@ -46,38 +50,28 @@ service FormsService {
   }
 }
 
-// FieldDefinition describes a single input in a form's schema.
-message FieldDefinition {
-  string name = 1;
-  // type one of: text, email, number, tel, url, textarea, select, checkbox, radio, hidden
-  string type = 2;
-  bool required = 3;
-  string label = 4;
-  string placeholder = 5;
-  // options populate select/radio inputs.
-  repeated string options = 6;
-  // regex is an optional validation pattern.
-  string regex = 7;
-}
-
-// Form is the form configuration payload.
+// Form mirrors model.FormModel. `schema` is a JSON-schema string
+// (santhosh-tekuri/jsonschema format); `captcha` is one of the
+// supported captcha providers; `feedback` is a template message
+// returned on successful submission.
 message Form {
   string id = 1;
-  string server_id = 2;
-  string name = 3;
-  string description = 4;
-  repeated FieldDefinition fields = 5;
-  // redirect_url is where the browser is sent after a successful submission.
-  string redirect_url = 6;
-  // email_notify_to — comma-separated recipients for submission notifications.
-  string email_notify_to = 7;
-  google.protobuf.Timestamp created_at = 8;
-  google.protobuf.Timestamp updated_at = 9;
+  string name = 2;
+  string description = 3;
+  string schema = 4;
+  string captcha = 5;
+  string feedback = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
 }
 
 message CreateFormRequest {
   string server_id = 1;
-  Form form = 2;
+  string name = 2;
+  string description = 3;
+  string schema = 4;
+  string captcha = 5;
+  string feedback = 6;
 }
 
 message CreateFormResponse {
@@ -87,7 +81,13 @@ message CreateFormResponse {
 message ModifyFormRequest {
   string server_id = 1;
   string form_id = 2;
-  Form form = 3;
+  // Omitted (empty-string) fields are left unchanged, matching the
+  // existing handler's PATCH semantics.
+  string name = 3;
+  string description = 4;
+  string schema = 5;
+  string captcha = 6;
+  string feedback = 7;
 }
 
 message ModifyFormResponse {

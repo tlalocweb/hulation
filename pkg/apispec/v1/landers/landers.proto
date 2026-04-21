@@ -45,20 +45,25 @@ service LandersService {
   }
 }
 
-// Lander describes a landing-page tracking record.
+// Lander mirrors model.Lander.
 message Lander {
   string id = 1;
-  string server_id = 2;
-  string name = 3;
-  string description = 4;
-  // url_path is the path to match on the server (e.g., "/pricing/launch").
-  string url_path = 5;
-  // redirect_url (optional) — if set, visits to url_path redirect here.
-  string redirect_url = 6;
-  // track_utm — whether to record UTM params on hit.
-  bool track_utm = 7;
-  google.protobuf.Timestamp created_at = 8;
-  google.protobuf.Timestamp updated_at = 9;
+  string name = 2;
+  string description = 3;
+  // Server name (as declared in hula config.yaml). Distinct from the
+  // server_id used for permission scoping, though in practice they match.
+  string server = 4;
+  // url_postfix is the path suffix for the lander (e.g., "/launch").
+  string url_postfix = 5;
+  // redirect is the target URL. Optional — empty means the lander just
+  // counts hits without redirecting.
+  string redirect = 6;
+  // Hits counter. Incremented by the visitor-tracking hot path.
+  uint64 hits = 7;
+  bool ignore_port = 8;
+  bool no_serve = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
 }
 
 message CreateLanderRequest {
