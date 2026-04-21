@@ -786,6 +786,15 @@ type Config struct {
 	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
 	// See servers section.
 	HulaHost string `yaml:"hula_host,omitempty" env:"HULA_HOST" test:"~.+" default:"localhost"`
+	// Hostname is an alias for HulaHost retained for compatibility with
+	// adopted izcr code that reads config.GetConfig().Hostname. If empty,
+	// HulaHost is used.
+	Hostname string `yaml:"hostname,omitempty"`
+	// RegistryHostnames is a comma-separated list of hostnames that should
+	// be treated as "registry" hosts. Used by adopted izcr code (e.g., to
+	// pick a JWT issuer). Hula uses the first entry; fall back to Hostname
+	// / HulaHost when unset.
+	RegistryHostnames string `yaml:"registry_hostnames,omitempty"`
 	// Optional - other names the Host header can be to match this server
 	HulaAliases []string `yaml:"hula_aliases,omitempty"`
 	// Specifically configure the domain for Hula vs. it being derived automatically from hula_host.

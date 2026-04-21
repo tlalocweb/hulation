@@ -311,50 +311,6 @@ func GenClaimsForUser(user *apiobjects.User, tokenid string, tokenversion int64,
 	return
 }
 
-// GenClaimsForRegistryUser creates JWT claims for a RegistryUser
-// RegistryUsers are lightweight users for OCI registry access only
-func GenClaimsForRegistryUser(registryUser *apiobjects.RegistryUser, projectAccess map[string]ProjectAccessInfo, tokenid string, tokenversion int64, tokenduration time.Duration, sess *apiobjects.SessionAdapter, ip string) (claims *Claims) {
-	// Extract default permissions from projectAccess
-	permissions := []string{}
-	if len(projectAccess) > 0 {
-		// Collect unique permissions across all projects
-		permSet := make(map[string]struct{})
-		for _, access := range projectAccess {
-			for _, perm := range access.Permissions {
-				permSet[perm] = struct{}{}
-			}
-		}
-		for perm := range permSet {
-			permissions = append(permissions, perm)
-		}
-	}
-
-	// If no permissions were derived, use defaults
-	if len(permissions) == 0 {
-		permissions = []string{"registry:read", "registry:write"}
-	}
-
-	claims = &Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    getJWTIssuer(),
-			Subject:   registryUser.Uuid,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenduration)),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ID:        tokenid,
-		},
-		Roles: []string{"registry_user"}, // Special role for registry-only access
-		// Username is left empty for RegistryUsers - they use UUID as subject
-		Username:         "",
-		TenantRoles:      make(map[string]map[string]struct{}),
-		Permissions:      permissions,
-		ProjectAccess:    projectAccess, // NEW: Add project-scoped access
-		SessionID:        sess.GetSessionId(),
-		IPAddress:        ip,
-		TokenVersion:     tokenversion,
-		IDProviderName:   "izcr", // RegistryUsers are always internal
-		RegistryUserUUID: registryUser.Uuid,
-	}
-
-	return
-}
+// GenClaimsForRegistryUser (izcr-only) intentionally omitted: hulation has
+// no OCI RegistryUser concept. The RegistryUserUUID field on Claims remains
+// for JSON compatibility but is never populated.

@@ -9,11 +9,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/open-policy-agent/opa/v1/rego"
-	apiobjects "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	"github.com/tlalocweb/hulation/pkg/server/authware/permissions"
 	permcache "github.com/tlalocweb/hulation/pkg/server/authware/permissions/cache"
 	"github.com/tlalocweb/hulation/pkg/store/common"
@@ -440,133 +438,11 @@ func (ware *Authware) RegistryAuthHandler(next http.Handler) http.Handler {
 	})
 }
 
-// lookupAndValidateRegistryUser looks up a RegistryUser from storage and validates it
-func (ware *Authware) lookupAndValidateRegistryUser(registryUserUUID string) (*apiobjects.RegistryUser, error) {
-	// Construct the storage key for the RegistryUser
-	key := ware.store.Join("v1/registryusers", registryUserUUID)
-
-	// Get the RegistryUser object from storage
-	objRegistryUser, err := ware.store.GetObject(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get RegistryUser from storage: %w", err)
-	}
-
-	if objRegistryUser == nil {
-		return nil, fmt.Errorf("RegistryUser not found")
-	}
-
-	// Type assert to RegistryUser
-	registryUser, ok := objRegistryUser.(*apiobjects.RegistryUser)
-	if !ok {
-		return nil, fmt.Errorf("invalid RegistryUser type in storage")
-	}
-
-	// Check if RegistryUser is soft-deleted
-	if registryUser.DeletedAt != nil && registryUser.DeletedAt.IsValid() {
-		return nil, fmt.Errorf("RegistryUser has been deleted")
-	}
-
-	// Check if RegistryUser has expired (registry_only_at timestamp)
-	if registryUser.RegistryOnlyAt != nil && registryUser.RegistryOnlyAt.IsValid() {
-		// RegistryOnlyAt is the expiration time
-		// If current time is after RegistryOnlyAt, the RegistryUser has expired
-		if registryUser.RegistryOnlyAt.AsTime().Before(time.Now()) {
-			return nil, fmt.Errorf("RegistryUser has expired")
-		}
-	}
-
-	return registryUser, nil
-}
-
-// resolveRegistryUserPermissions resolves permissions inherited from a linked User or Group
-// Returns roles and permissions to be added to the RegistryUser's JWT claims
-func (ware *Authware) resolveRegistryUserPermissions(registryUser *apiobjects.RegistryUser) (roles []string, permissions []string, projectAccess map[string]ProjectAccessInfo, err error) {
-	// Initialize empty slices and map
-	roles = []string{}
-	permissions = []string{}
-	projectAccess = make(map[string]ProjectAccessInfo)
-
-	// Check if RegistryUser inherits from a User
-	if registryUser.GetInheritedUserUuid() != "" {
-		log.Debugf("resolveRegistryUserPermissions: Resolving permissions from User %s", registryUser.GetInheritedUserUuid())
-
-		// Construct the storage key for the User
-		userKey := ware.store.Join("v1/users", registryUser.GetInheritedUserUuid())
-
-		// Get the User object from storage
-		objUser, err := ware.store.GetObject(userKey)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to get inherited User from storage: %w", err)
-		}
-
-		if objUser == nil {
-			return nil, nil, nil, fmt.Errorf("inherited User not found")
-		}
-
-		// Type assert to User
-		_, ok := objUser.(*apiobjects.User)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("invalid User type in storage")
-		}
-
-		// Extract permissions from User's project_roles
-		// Map Harbor/OCI project roles to registry permissions
-		// DEPRECATED: ProjectRoles field is deprecated, use RoleAssignments instead
-		// for _, projectRole := range user.ProjectRoles {
-		// 	// Create project access entry
-		// 	projectInfo := ProjectAccessInfo{
-		// 		ProjectUUID: projectRole.ProjectUuid,
-		// 		ProjectName: projectRole.ProjectUuid, // TODO: Resolve actual project name when Project entity is implemented
-		// 	}
-
-		// 	switch projectRole.Role {
-		// 	case apiobjects.ProjectRole_PROJECT_ROLE_GUEST, apiobjects.ProjectRole_PROJECT_ROLE_LIMITED_GUEST:
-		// 		// Guest can only pull (read)
-		// 		permissions = append(permissions, "registry:read")
-		// 		roles = append(roles, ROLE_REGISTRY_PULL_ONLY)
-		// 		projectInfo.Role = "guest"
-		// 		projectInfo.Permissions = []string{"registry:read", "registry_pull_only"}
-		// 	case apiobjects.ProjectRole_PROJECT_ROLE_DEVELOPER:
-		// 		// Developer can push and pull (read/write)
-		// 		permissions = append(permissions, "registry:read", "registry:write")
-		// 		projectInfo.Role = "developer"
-		// 		projectInfo.Permissions = []string{"registry:read", "registry:write"}
-		// 	case apiobjects.ProjectRole_PROJECT_ROLE_MAINTAINER:
-		// 		// Maintainer has full access (read/write/delete)
-		// 		permissions = append(permissions, "registry:read", "registry:write", "registry:delete")
-		// 		roles = append(roles, ROLE_REGISTRY_USER)
-		// 		projectInfo.Role = "maintainer"
-		// 		projectInfo.Permissions = []string{"registry:read", "registry:write", "registry:delete"}
-		// 	case apiobjects.ProjectRole_PROJECT_ROLE_ADMIN:
-		// 		// Admin has full access (read/write/delete)
-		// 		permissions = append(permissions, "registry:read", "registry:write", "registry:delete")
-		// 		roles = append(roles, ROLE_REGISTRY_USER)
-		// 		projectInfo.Role = "admin"
-		// 		projectInfo.Permissions = []string{"registry:read", "registry:write", "registry:delete"}
-		// 	}
-
-		// 	// Add to project access map
-		// 	projectAccess[projectRole.ProjectUuid] = projectInfo
-		// }
-
-		// log.Debugf("resolveRegistryUserPermissions: Resolved %d permissions from User project_roles, %d projects", len(permissions), len(projectAccess))
-	}
-
-	// Check if RegistryUser is associated with a Group
-	if registryUser.GetAssociatedGroupUuid() != "" {
-		log.Debugf("resolveRegistryUserPermissions: Group association found (%s) but Group support not yet implemented", registryUser.GetAssociatedGroupUuid())
-		// TODO: Implement Group permission resolution when Group support is added
-		// For now, just log a warning
-		log.Warnf("Group-based permission inheritance not yet implemented for RegistryUser %s", registryUser.Uuid)
-	}
-
-	// If no permissions were resolved and no inheritance was configured, return empty
-	if len(permissions) == 0 && registryUser.GetInheritedUserUuid() == "" && registryUser.GetAssociatedGroupUuid() == "" {
-		log.Debugf("resolveRegistryUserPermissions: No permission inheritance configured for RegistryUser %s", registryUser.Uuid)
-	}
-
-	return roles, permissions, projectAccess, nil
-}
+// lookupAndValidateRegistryUser / resolveRegistryUserPermissions:
+// izcr-only (OCI registry user support). Hulation does not have a
+// registry concept; these functions are intentionally omitted. The
+// RegistryUserUUID field on Claims is kept for JSON compat and will
+// always be the empty string in hulation-issued tokens.
 
 // for HTTP handlers
 func (ware *Authware) AuthHandler(next http.Handler) http.Handler {

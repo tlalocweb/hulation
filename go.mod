@@ -6,6 +6,7 @@ replace gorm.io/driver/clickhouse => ../clickhouse
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.43.0
+	github.com/alexedwards/argon2id v1.0.0
 	github.com/alphadose/haxmap v1.4.1
 	github.com/cbroglie/mustache v1.4.0
 	github.com/cespare/xxhash/v2 v2.3.0
