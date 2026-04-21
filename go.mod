@@ -39,6 +39,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tlalocweb/argon2id v0.0.0-20240207052003-0730dd790e46
 	github.com/tlalocweb/go-cache v0.0.1
+	github.com/ua-parser/uap-go v0.0.0-20251207011819-db9adb27a0b8
 	github.com/umputun/remark42/backend v1.14.0
 	github.com/valyala/fasthttp v1.67.0
 	go.etcd.io/bbolt v1.4.3
@@ -94,7 +95,7 @@ require (
 	github.com/hashicorp/go-metrics v0.5.4 // indirect
 	github.com/hashicorp/go-msgpack v0.5.5 // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
-	github.com/hashicorp/golang-lru v0.5.1 // indirect
+	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
