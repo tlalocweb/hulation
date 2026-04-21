@@ -780,6 +780,9 @@ type Config struct {
 	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
 	// Issuer name shown in authenticator apps (default: "Hulation")
 	TotpIssuer string `yaml:"totp_issuer,omitempty" default:"Hulation"`
+	// Auth providers (OIDC SSO + internal password). See pkg/server/
+	// authware/provider for the runtime. Use AuthConfig.Providers.
+	Auth *AuthConfig `yaml:"auth,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
