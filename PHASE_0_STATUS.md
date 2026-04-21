@@ -5,6 +5,16 @@ Plan: `PLAN_0.md`
 
 ## Completed stages (8.5 of 11)
 
+### Stage 0.9 — Analytics data foundation ✅ (fully closed)
+Commits: `349ca7f` (0.9a), `44f8344` (0.9b+c+d), `6c96f2e` (0.9e).
+
+0.9e completed the last piece (handler wiring):
+- `model/event.go`: 18 new enrichment fields on Event (SessionID, ServerID, Referer, RefererHost, Channel, SearchTerm, UTM fields, GCLID, FBCLID, Browser, BrowserVersion, OS, OSVersion, DeviceCategory, IsBot, CountryCode, Region, City). GORM-tagged; AutoMigrate picks them up on legacy path. ApplyEnrichment method takes raw inputs and populates everything.
+- `handler/visitor.go`: BMIndexReferer bounce-data slot added; Referer captured at all three ingest points. `enrichEventFromBounce` helper called just before every `CommitTo` call. `IPInfoHook` function-pointer var lets badactor register its `GetIPInfo` without creating an import cycle.
+- `badactor/admin.go`: `init()` registers the IPInfoHook.
+
+Enrichment flows through the full ingest path — session IDs, channel classification, UTM attribution, UA parsing, cached geo — all land on every event. Non-blocking on the hot path.
+
 ### Stage 0.7 (~85% done) — Handler ports to gRPC ⚠️
 Commits: `5867de4` (Forms + Landers), `9eb7877` (BadActor), `6791293` (Site + Staging), `8349514` (Auth skeleton).
 
@@ -21,10 +31,11 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
 **Remaining work in 0.7**:
-1. Full auth impl — wire Bolt user store, implement LoginAdmin, TOTP, user CRUD, invite, password-reset, RefreshToken, GrantServerAccess family, OIDC login flow. This is a focused 1–2 day session on its own.
-2. Flip Fiber off — move non-gRPC HTTP routes (WebDAV staging-update / staging-mount / PATCH, visitor `/v/*`, scripts, `/hulastatus`, per-host site serving) onto the unified server's `http.ServeMux` fallback. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
-3. Enrichment wiring — call `enrich.ClassifyReferrer` / `ParseUTM` / `ParseUA` / `SessionIDForVisitor` from `handler/visitor.go` before `ev.CommitTo(...)`. Persist enriched columns onto `events_v1` rows.
-4. Delete legacy `/api/form/*`, `/api/lander/*`, `/api/site/*`, `/api/staging/*`, `/api/badactor/*` routes from `router/router.go` once hulactl and the e2e harness are pointed at `/api/v1/*`.
+1. Full auth impl — wire Bolt user store at startup, implement LoginAdmin, TOTP, user CRUD, invite, password-reset, RefreshToken, GrantServerAccess family, OIDC login flow. Needs: boot `raft.NewRaftStorage(config)` with the bolt path from config; seed root user from `config.Admin`; construct `tokens.JWTFactory` with the store; replace the `authimpl` Unimplemented stubs.
+2. Flip Fiber off — replace the listener in `server/run.go` with `BootUnifiedServer(ctx, cfg).Start(ctx)`. Register non-gRPC HTTP routes (WebDAV staging-update / staging-mount / PATCH, visitor `/v/*`, scripts, `/hulastatus`, per-host site serving) via `unified.Server.RegisterCustomHandler(...)` or inline on the returned `http.ServeMux`. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
+3. Delete legacy `/api/form/*`, `/api/lander/*`, `/api/site/*`, `/api/staging/*`, `/api/badactor/*` routes from `router/router.go` once hulactl and the e2e harness are pointed at `/api/v1/*`.
+
+Enrichment wiring (originally listed here) landed in stage 0.9e.
 
 
 
