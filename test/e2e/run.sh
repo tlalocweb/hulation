@@ -66,6 +66,8 @@ else
     HULA_HOST_PORT="${HULA_HOST_PORT:-4443}"
     export HULA_E2E_ROOT REPO_ROOT WORKDIR COMPOSE_PROJECT COMPOSE_FILE
     export HULA_HOST SITE_HOST STAGING_HOST HULA_HOST_PORT
+    TEST_SITE_SRC="${TEST_SITE_SRC:-/home/ubuntu/work/tlaloc-hula-test-site}"
+    export TEST_SITE_SRC
     if [ -f "$WORKDIR/admin_password.txt" ]; then
         ADMIN_PASS=$(cat "$WORKDIR/admin_password.txt")
         export ADMIN_PASS

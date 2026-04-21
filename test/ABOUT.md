@@ -43,8 +43,7 @@ cp test/e2e/.env.example test/e2e/.env
 ./test/e2e/run.sh --no-setup    # skip build+compose-up (needs stack already up)
 ```
 
-Expected result: **33 passed, 4 failed** (the 4 failures are documented known
-gaps — see `test/e2e/README.md#known-gaps`). Exit 0 on all-pass, nonzero on any
+Expected result: **42 passed, 0 failed**. Exit 0 on all-pass, nonzero on any
 failure.
 
 **First run is slow** (~5-10 minutes): hula:local, both builder images, and

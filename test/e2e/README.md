@@ -64,28 +64,6 @@ on a single suite while the stack is already up):
 
 3. **Teardown**: `docker compose down -v`, prune builder containers, clean workdir.
 
-## Known gaps
-
-These tests are expected to fail because of limitations in hulactl or the test
-harness itself, not because hula is broken:
-
-- **02-admin generatehash** — the command reads a password from stdin when not
-  on a tty. Piping through `docker compose run -T` loses the newline terminator
-  or otherwise confuses the read. A fix would add env-var support (similar to
-  the new `HULACTL_PASSWORD` for `auth`).
-
-- **04-forms createform** — tview-based interactive form prompts don't work
-  in the non-tty runner. The command also accepts JSON as an arg[1] but
-  something in the JSON escaping path is rejecting the input.
-
-- **10-staging-mount autobuild** — the inotify watcher inside the
-  staging-mount runner container doesn't always pick up writes from *another*
-  container that shares the same bind mount. Sync is detected but the
-  subsequent auto-build trigger doesn't always fire before our timeout.
-
-- **11-webdav-patch PUT** — needs more investigation (self-signed cert path
-  trust issue or Bearer token extraction issue).
-
 ## Troubleshooting
 
 - **"permission denied on docker.sock"**: add your user to the `docker` group

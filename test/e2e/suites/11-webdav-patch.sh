@@ -9,9 +9,8 @@
 # using the admin JWT for auth.
 
 # Get the admin token from the hulactl config inside the runner container.
-TOKEN=$(dc run --rm -T hulactl-runner sh -c '
-    awk "/token:/ {gsub(/\"/, \"\"); print \$2; exit}" /root/.hula/hulactl.yaml
-' | tr -d ' \r\n')
+# Use runner_shell which overrides the entrypoint to /bin/sh.
+TOKEN=$(runner_shell 'awk "/^ *token:/ {gsub(/\"/, \"\"); print \$2; exit}" /root/.hula/hulactl.yaml' | tr -d ' \r\n')
 
 if [ -z "$TOKEN" ]; then
     fail "WebDAV tests need an admin token" "could not extract token from hulactl config"
