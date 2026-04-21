@@ -31,14 +31,20 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
 **Remaining work in 0.7**:
-1. Full auth impl — the Unimplemented RPCs (user CRUD, TOTP, invite, password-reset, RefreshToken, OIDC login, GrantServerAccess family) need either Bolt wiring OR a lighter "use the existing ClickHouse user table" approach. LoginAdmin (stage 0.7f) is a template — it delegates to existing `model.NewJWTClaimsCommit`. The Bolt story can be deferred if hula ships Phase 0 on the legacy user table and migrates later.
-2. Flip Fiber off — replace the listener in `server/run.go` with `BootUnifiedServer(ctx, cfg).Start(ctx)`. **Non-gRPC route registration is already done** (stage 0.7e, `server/unified_fallback.go`). WebDAV and per-host backend routing still need to be wired in. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
-3. Delete legacy `/api/form/*`, `/api/lander/*`, `/api/site/*`, `/api/staging/*`, `/api/badactor/*` routes from `router/router.go` once hulactl and the e2e harness are pointed at `/api/v1/*`.
+1. **Auth Unimplemented RPCs** — user CRUD, TOTP, invite, password-reset, RefreshToken, OIDC login, GrantServerAccess family. LoginAdmin (0.7f) is the template: delegate to existing `model.*` helpers. Full Bolt user-store wiring is a separate effort — hula's legacy ClickHouse user table works for Phase-0 auth.
+2. **Unified server TLS/routing polish** — RunUnified today requires `hula_ssl.cert` and `hula_ssl.key` (static files). Port ACME + per-host SNI cert selection from the legacy path. Wire backend per-host proxies + WebDAV route (`/api/staging/{server_id}/dav`) on the ServeMux fallback.
+
+**Completed in 0.7**:
+- 0.7a–d: Forms, Landers, BadActor, Site, Staging, Auth-skeleton gRPC impls.
+- 0.7e: Non-gRPC HTTP fallback routes wired (`server/unified_fallback.go`).
+- 0.7f: LoginAdmin live.
+- 0.7g: **Fiber dropped.** `router/router.go`, `middleware/*`, `handler/fiber_adapter.go`, `server/run.go` all deleted. `backend/proxy.go` rewritten on httputil.ReverseProxy. `handler/staging.go` trimmed. `main.go` calls `server.RunUnified(ctx, cfg)`. go.mod clean of `gofiber` and `valyala/fasthttp`. Hula binary builds.
 
 Progress notes:
 - Enrichment wiring landed in 0.9e.
 - LoginAdmin landed in 0.7f (real endpoint, not stub).
-- ServeMux fallback routes landed in 0.7e (ready for cutover).
+- ServeMux fallback routes landed in 0.7e (now wired into RunUnified).
+- Fiber fully removed in 0.7g.
 
 
 
@@ -108,15 +114,15 @@ Commit: `a2e9416`
 - `pkg/apispec/v1/auth/auth.proto` — three new RPCs: `GrantServerAccess`, `RevokeServerAccess`, `ListServerAccess`. `ServerAccessRole` enum (VIEWER/MANAGER). `ServerAccessEntry` message.
 - Implementations land with the rest of the AuthService in stage 0.7.
 
-## Remaining stages (2.5 of 11)
+## Remaining stages (2 of 11)
 
 | Stage | Estimate | Notes |
 |-------|----------|-------|
-| 0.7 finishers | 2–3 days | Full Auth impl over Bolt; Fiber-off + ServeMux migration for non-gRPC routes; enrichment wiring. |
+| 0.7 finishers | 1–2 days | Auth Unimplemented RPCs (user CRUD + TOTP + invite + password-reset + RefreshToken + OIDC login + GrantServerAccess family); unified-server TLS polish (ACME / per-host SNI); register WebDAV + backend per-host proxies on the fallback mux. |
 | 0.8 Migrate hulactl to gRPC clients | 2 days | After 0.7. |
 | 0.11 Tests + docs + sign-off | 2 days | Update 12 existing e2e suites; add 8 new; update integration harness; DEPLOYMENT.md, test/ABOUT.md, MIGRATION_0.md. |
 
-**Remaining effort**: ~6–7 working days.
+**Remaining effort**: ~5–6 working days.
 
 ## Recommended next-session plan
 
