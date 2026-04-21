@@ -58,6 +58,7 @@ HULABUILD_BIN := $(BIN_DIR)/hulabuild
 .PHONY: test test-unit test-verbose vet lint
 .PHONY: clean clean-docker
 .PHONY: deps version help
+.PHONY: protobuf protobuf-clean protoc-install
 
 ## build: Build the hula server binary (default)
 build: hula
@@ -146,6 +147,76 @@ docker-local:
 		--tag $(DOCKER_IMAGE):$(DOCKER_TAG) \
 		--tag $(DOCKER_IMAGE):latest \
 		$(DOCKER_CONTEXT)
+
+# ============================================================================
+# Protobuf / gRPC
+# ============================================================================
+
+# Folders containing .proto files whose generated code is checked into the repo.
+# Note: $(PROTOBUF_SRCS) is computed at Make time using shell find. New .proto
+# files are picked up automatically on the next invocation.
+PROTOBUF_FOLDERS = protoext/izuma/auth \
+                   pkg/server/authware/proto \
+                   pkg/apiobjects/v1 \
+                   pkg/apispec/v1
+PROTOBUF_SRCS = $(shell find $(PROTOBUF_FOLDERS) -name '*.proto' 2>/dev/null)
+PROTOBUF_OUTS = $(PROTOBUF_SRCS:.proto=.pb.go)
+
+PROTOC       := $(BIN_DIR)/protoc
+PROTOC_INC   := -I. -I./protoext -I$(BIN_DIR)/include
+
+## protoc-install: Install pinned protoc + plugins into .bin/
+protoc-install:
+	@bash $(CURDIR)/hack/install-protoc.sh
+
+## protobuf: Regenerate Go code from all .proto files
+protobuf: $(PROTOBUF_OUTS)
+
+# Per-folder rules. Each folder has slightly different generation requirements
+# (gotag for tag injection, grpc for services, gateway for REST).
+
+# protoext/izuma/auth — annotation extension, Go only
+protoext/izuma/auth/%.pb.go: protoext/izuma/auth/%.proto | $(PROTOC)
+	@echo "protoc (extension): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+
+# pkg/server/authware/proto — annotation extension, Go only
+pkg/server/authware/proto/%.pb.go: pkg/server/authware/proto/%.proto | $(PROTOC)
+	@echo "protoc (extension): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+
+# pkg/apiobjects/v1 — message types with optional gotag injection
+pkg/apiobjects/v1/%.pb.go: pkg/apiobjects/v1/%.proto | $(PROTOC)
+	@echo "protoc (apiobjects): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+	@if grep -q '@gotags' $<; then \
+		PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) --gotag_out=paths=source_relative:. $<; \
+	fi
+
+# pkg/apispec/v1 — gRPC services with REST gateway
+pkg/apispec/v1/%.pb.go: pkg/apispec/v1/%.proto | $(PROTOC)
+	@echo "protoc (service): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		--grpc-gateway_out=. --grpc-gateway_opt=paths=source_relative \
+		$<
+
+$(PROTOC):
+	@echo ""
+	@echo "protoc not installed. Run: make protoc-install"
+	@echo ""
+	@exit 1
+
+## protobuf-clean: Remove generated .pb.go files
+protobuf-clean:
+	@find $(PROTOBUF_FOLDERS) -type f \( -name '*.pb.go' -o -name '*.pb.gw.go' \) -print -delete 2>/dev/null || true
 
 # ============================================================================
 # Testing & Quality

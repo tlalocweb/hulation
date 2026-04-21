@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package izuma.auth;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/tlalocweb/hulation/protoext/izuma/auth;izumaauth";
+
+// Permission requirements for an RPC method
+message PermissionRequirement {
+  // List of permissions required (ANY of these grants access - OR logic by default)
+  // Permissions can include scope placeholders like {tenant_uuid} or {project_uuid}
+  // which will be resolved at request time from the request parameters.
+  // Examples:
+  //   - "superadmin.kv.read" (system-scoped, no placeholders)
+  //   - "tenant.{tenant_uuid}.project.list" (tenant-scoped)
+  //   - "tenant.{tenant_uuid}.project.{project_uuid}.registry.write" (project-scoped)
+  repeated string needs = 1;
+
+  // If true, ALL permissions in 'needs' are required (AND logic)
+  // Default (false) means any single permission match grants access (OR logic)
+  bool require_all = 2;
+
+  // OR between multiple permission requirements - if any of the 'or' requirements
+  // is satisfied, access is granted. Used for endpoints that have multiple
+  // alternative permission paths (e.g., project-scoped OR superadmin).
+  repeated PermissionRequirement or = 3;
+}
+
+extend google.protobuf.MethodOptions {
+  // Permission requirements for this RPC method
+  // If not specified, the endpoint requires authentication but no specific permission
+  PermissionRequirement permission = 50010;
+}
