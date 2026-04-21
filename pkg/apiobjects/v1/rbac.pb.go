@@ -414,18 +414,25 @@ func (x *RoleDefinition) GetCreatedBy() string {
 
 // RoleAssignment assigns a role to a user at a specific scope.
 //
-//	scope_type="system"            — applies everywhere; scope_uuid is empty.
-//	scope_type="server"            — applies to one virtual server; scope_uuid
-//	                                 is the server ID from config.yaml.
-//	scope_type="tenant"|"project"  — RESERVED for future multi-tenant support.
+// scope_type values in hula's current single-tenant deployment:
+//
+//	"system"  — applies everywhere; tenant_uuid and project_uuid empty.
+//	"server"  — applies to one virtual server; tenant_uuid holds the
+//	            server ID from config.yaml; project_uuid unused.
+//	"tenant", "project" — reserved for future multi-tenant / per-server-
+//	            tenancy support. Field names mirror izcr for port parity.
 type RoleAssignment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Uuid          string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	RoleName      string                 `protobuf:"bytes,2,opt,name=role_name,json=roleName,proto3" json:"role_name,omitempty"`
-	ScopeType     string                 `protobuf:"bytes,3,opt,name=scope_type,json=scopeType,proto3" json:"scope_type,omitempty"`
-	ScopeUuid     string                 `protobuf:"bytes,4,opt,name=scope_uuid,json=scopeUuid,proto3" json:"scope_uuid,omitempty"` // server_id when scope_type="server"
-	GrantedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
-	GrantedBy     string                 `protobuf:"bytes,6,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"` // UUID of user who granted the role
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Uuid      string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
+	RoleName  string                 `protobuf:"bytes,2,opt,name=role_name,json=roleName,proto3" json:"role_name,omitempty"`
+	ScopeType string                 `protobuf:"bytes,3,opt,name=scope_type,json=scopeType,proto3" json:"scope_type,omitempty"`
+	// Tenant/server scope ID. In hula, this is the server_id when
+	// scope_type="server". Named tenant_uuid for izcr port parity.
+	TenantUuid string `protobuf:"bytes,4,opt,name=tenant_uuid,json=tenantUuid,proto3" json:"tenant_uuid,omitempty"`
+	// Project scope ID. Unused in hula v1. Reserved.
+	ProjectUuid   string                 `protobuf:"bytes,5,opt,name=project_uuid,json=projectUuid,proto3" json:"project_uuid,omitempty"`
+	GrantedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,7,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"` // UUID of user who granted the role
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -481,9 +488,16 @@ func (x *RoleAssignment) GetScopeType() string {
 	return ""
 }
 
-func (x *RoleAssignment) GetScopeUuid() string {
+func (x *RoleAssignment) GetTenantUuid() string {
 	if x != nil {
-		return x.ScopeUuid
+		return x.TenantUuid
+	}
+	return ""
+}
+
+func (x *RoleAssignment) GetProjectUuid() string {
+	if x != nil {
+		return x.ProjectUuid
 	}
 	return ""
 }
@@ -505,14 +519,16 @@ func (x *RoleAssignment) GetGrantedBy() string {
 // PermissionGrant is a direct permission grant or deny for a user or group.
 // This allows fine-grained control beyond role-based permissions.
 type PermissionGrant struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Uuid          string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	Permission    string                 `protobuf:"bytes,2,opt,name=permission,proto3" json:"permission,omitempty"` // e.g., "server.{server_id}.forms.create"
-	IsDeny        bool                   `protobuf:"varint,3,opt,name=is_deny,json=isDeny,proto3" json:"is_deny,omitempty"`
-	ScopeType     string                 `protobuf:"bytes,4,opt,name=scope_type,json=scopeType,proto3" json:"scope_type,omitempty"` // "system", "server"
-	ScopeUuid     string                 `protobuf:"bytes,5,opt,name=scope_uuid,json=scopeUuid,proto3" json:"scope_uuid,omitempty"` // server_id when scope_type="server"
-	GrantedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
-	GrantedBy     string                 `protobuf:"bytes,7,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Uuid       string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
+	Permission string                 `protobuf:"bytes,2,opt,name=permission,proto3" json:"permission,omitempty"` // e.g., "server.{server_id}.forms.create"
+	IsDeny     bool                   `protobuf:"varint,3,opt,name=is_deny,json=isDeny,proto3" json:"is_deny,omitempty"`
+	ScopeType  string                 `protobuf:"bytes,4,opt,name=scope_type,json=scopeType,proto3" json:"scope_type,omitempty"` // "system", "server"
+	// See RoleAssignment.tenant_uuid for field-naming rationale.
+	TenantUuid    string                 `protobuf:"bytes,5,opt,name=tenant_uuid,json=tenantUuid,proto3" json:"tenant_uuid,omitempty"`
+	ProjectUuid   string                 `protobuf:"bytes,6,opt,name=project_uuid,json=projectUuid,proto3" json:"project_uuid,omitempty"`
+	GrantedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,8,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -575,9 +591,16 @@ func (x *PermissionGrant) GetScopeType() string {
 	return ""
 }
 
-func (x *PermissionGrant) GetScopeUuid() string {
+func (x *PermissionGrant) GetTenantUuid() string {
 	if x != nil {
-		return x.ScopeUuid
+		return x.TenantUuid
+	}
+	return ""
+}
+
+func (x *PermissionGrant) GetProjectUuid() string {
+	if x != nil {
+		return x.ProjectUuid
 	}
 	return ""
 }
@@ -698,18 +721,19 @@ const file_pkg_apiobjects_v1_rbac_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x1d\n" +
 	"\n" +
-	"created_by\x18\t \x01(\tR\tcreatedBy\"\xd9\x01\n" +
+	"created_by\x18\t \x01(\tR\tcreatedBy\"\xfe\x01\n" +
 	"\x0eRoleAssignment\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1b\n" +
 	"\trole_name\x18\x02 \x01(\tR\broleName\x12\x1d\n" +
 	"\n" +
-	"scope_type\x18\x03 \x01(\tR\tscopeType\x12\x1d\n" +
+	"scope_type\x18\x03 \x01(\tR\tscopeType\x12\x1f\n" +
+	"\vtenant_uuid\x18\x04 \x01(\tR\n" +
+	"tenantUuid\x12!\n" +
+	"\fproject_uuid\x18\x05 \x01(\tR\vprojectUuid\x129\n" +
 	"\n" +
-	"scope_uuid\x18\x04 \x01(\tR\tscopeUuid\x129\n" +
+	"granted_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tgrantedAt\x12\x1d\n" +
 	"\n" +
-	"granted_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tgrantedAt\x12\x1d\n" +
-	"\n" +
-	"granted_by\x18\x06 \x01(\tR\tgrantedBy\"\xf6\x01\n" +
+	"granted_by\x18\a \x01(\tR\tgrantedBy\"\x9b\x02\n" +
 	"\x0fPermissionGrant\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1e\n" +
 	"\n" +
@@ -717,13 +741,14 @@ const file_pkg_apiobjects_v1_rbac_proto_rawDesc = "" +
 	"permission\x12\x17\n" +
 	"\ais_deny\x18\x03 \x01(\bR\x06isDeny\x12\x1d\n" +
 	"\n" +
-	"scope_type\x18\x04 \x01(\tR\tscopeType\x12\x1d\n" +
+	"scope_type\x18\x04 \x01(\tR\tscopeType\x12\x1f\n" +
+	"\vtenant_uuid\x18\x05 \x01(\tR\n" +
+	"tenantUuid\x12!\n" +
+	"\fproject_uuid\x18\x06 \x01(\tR\vprojectUuid\x129\n" +
 	"\n" +
-	"scope_uuid\x18\x05 \x01(\tR\tscopeUuid\x129\n" +
+	"granted_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tgrantedAt\x12\x1d\n" +
 	"\n" +
-	"granted_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tgrantedAt\x12\x1d\n" +
-	"\n" +
-	"granted_by\x18\a \x01(\tR\tgrantedBy\"\xa3\x01\n" +
+	"granted_by\x18\b \x01(\tR\tgrantedBy\"\xa3\x01\n" +
 	"\x10PermissionSource\x12\x1e\n" +
 	"\n" +
 	"permission\x18\x01 \x01(\tR\n" +

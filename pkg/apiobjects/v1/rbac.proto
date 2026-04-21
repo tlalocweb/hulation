@@ -66,17 +66,24 @@ message RoleDefinition {
 }
 
 // RoleAssignment assigns a role to a user at a specific scope.
-//   scope_type="system"            — applies everywhere; scope_uuid is empty.
-//   scope_type="server"            — applies to one virtual server; scope_uuid
-//                                    is the server ID from config.yaml.
-//   scope_type="tenant"|"project"  — RESERVED for future multi-tenant support.
+//
+// scope_type values in hula's current single-tenant deployment:
+//   "system"  — applies everywhere; tenant_uuid and project_uuid empty.
+//   "server"  — applies to one virtual server; tenant_uuid holds the
+//               server ID from config.yaml; project_uuid unused.
+//   "tenant", "project" — reserved for future multi-tenant / per-server-
+//               tenancy support. Field names mirror izcr for port parity.
 message RoleAssignment {
   string uuid = 1;
   string role_name = 2;
   string scope_type = 3;
-  string scope_uuid = 4;                        // server_id when scope_type="server"
-  google.protobuf.Timestamp granted_at = 5;
-  string granted_by = 6;                        // UUID of user who granted the role
+  // Tenant/server scope ID. In hula, this is the server_id when
+  // scope_type="server". Named tenant_uuid for izcr port parity.
+  string tenant_uuid = 4;
+  // Project scope ID. Unused in hula v1. Reserved.
+  string project_uuid = 5;
+  google.protobuf.Timestamp granted_at = 6;
+  string granted_by = 7;                        // UUID of user who granted the role
 }
 
 // PermissionGrant is a direct permission grant or deny for a user or group.
@@ -86,9 +93,11 @@ message PermissionGrant {
   string permission = 2;                        // e.g., "server.{server_id}.forms.create"
   bool is_deny = 3;
   string scope_type = 4;                        // "system", "server"
-  string scope_uuid = 5;                        // server_id when scope_type="server"
-  google.protobuf.Timestamp granted_at = 6;
-  string granted_by = 7;
+  // See RoleAssignment.tenant_uuid for field-naming rationale.
+  string tenant_uuid = 5;
+  string project_uuid = 6;
+  google.protobuf.Timestamp granted_at = 7;
+  string granted_by = 8;
 }
 
 // PermissionSource tracks where a permission came from (for debugging/audit).
