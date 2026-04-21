@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -60,6 +61,6 @@ func main() {
 		utils.CleanShutdown(1)
 	}
 
-	utils.CleanShutdown(server.Run(app.GetConfig()))
+	utils.CleanShutdown(server.RunUnified(context.Background(), app.GetConfig()))
 
 }

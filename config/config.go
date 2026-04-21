@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
@@ -493,8 +492,6 @@ type Listener struct {
 	ACMEManager *autocert.Manager
 	// Port for the ACME HTTP-01 challenge listener (default: 80)
 	ACMEHTTPPort int
-	// the fiber app for this listener - if applicable
-	FiberApp *fiber.App
 	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
 	// actual server port/router to put the APIs on
 	hulacore bool
