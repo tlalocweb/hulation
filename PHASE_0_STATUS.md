@@ -31,11 +31,14 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
 **Remaining work in 0.7**:
-1. Full auth impl — wire Bolt user store at startup, implement LoginAdmin, TOTP, user CRUD, invite, password-reset, RefreshToken, GrantServerAccess family, OIDC login flow. Needs: boot `raft.NewRaftStorage(config)` with the bolt path from config; seed root user from `config.Admin`; construct `tokens.JWTFactory` with the store; replace the `authimpl` Unimplemented stubs.
-2. Flip Fiber off — replace the listener in `server/run.go` with `BootUnifiedServer(ctx, cfg).Start(ctx)`. Register non-gRPC HTTP routes (WebDAV staging-update / staging-mount / PATCH, visitor `/v/*`, scripts, `/hulastatus`, per-host site serving) via `unified.Server.RegisterCustomHandler(...)` or inline on the returned `http.ServeMux`. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
+1. Full auth impl — the Unimplemented RPCs (user CRUD, TOTP, invite, password-reset, RefreshToken, OIDC login, GrantServerAccess family) need either Bolt wiring OR a lighter "use the existing ClickHouse user table" approach. LoginAdmin (stage 0.7f) is a template — it delegates to existing `model.NewJWTClaimsCommit`. The Bolt story can be deferred if hula ships Phase 0 on the legacy user table and migrates later.
+2. Flip Fiber off — replace the listener in `server/run.go` with `BootUnifiedServer(ctx, cfg).Start(ctx)`. **Non-gRPC route registration is already done** (stage 0.7e, `server/unified_fallback.go`). WebDAV and per-host backend routing still need to be wired in. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
 3. Delete legacy `/api/form/*`, `/api/lander/*`, `/api/site/*`, `/api/staging/*`, `/api/badactor/*` routes from `router/router.go` once hulactl and the e2e harness are pointed at `/api/v1/*`.
 
-Enrichment wiring (originally listed here) landed in stage 0.9e.
+Progress notes:
+- Enrichment wiring landed in 0.9e.
+- LoginAdmin landed in 0.7f (real endpoint, not stub).
+- ServeMux fallback routes landed in 0.7e (ready for cutover).
 
 
 
