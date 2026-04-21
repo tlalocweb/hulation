@@ -1,0 +1,61 @@
+# E2E test hula config.
+# Placeholders ({{...}}) are substituted by setup.sh when it renders this
+# template into workdir/hula-config.yaml.
+
+admin:
+    username: admin
+    hash: ${ADMIN_ARGON_HASH}
+
+jwt_key: ${JWT_KEY}
+jwt_expiration: "72h"
+port: 443
+
+hula_host: hula.test.local
+hula_ssl:
+    cert: /var/hula/certs/cert.pem
+    key: /var/hula/certs/key.pem
+
+# Bad actor detection is disabled in the e2e test config — the test network
+# IPs would otherwise get blocked mid-run. Suite 06 tests the command in this
+# disabled state.
+bad_actors:
+    disable: true
+
+dbconfig:
+    host: hula-clickhouse
+    port: 9000
+    user: hula
+    pass: hula
+    dbname: hula
+    retries: 5
+    delay_retry: 5
+
+servers:
+    # --- Production site (git autodeploy, ephemeral build) ---
+    - host: site.test.local
+      id: testsite
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      root_git_autodeploy:
+          # Local bind-mount of the test site repo (no GitHub access needed)
+          repo: file:///var/hula/testsite-repo
+          ref:
+              branch: main
+          hula_build: production
+          no_pull_on_start: true
+
+    # --- Staging site (long-lived container, webdav editable) ---
+    # Note: no_pull_on_start is NOT set here — staging needs its container
+    # running for staging-build, staging-update, and staging-mount tests.
+    - host: staging.test.local
+      id: testsite-staging
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      root_git_autodeploy:
+          # Local bind-mount of the test site repo (no GitHub access needed)
+          repo: file:///var/hula/testsite-repo
+          ref:
+              branch: main
+          hula_build: staging

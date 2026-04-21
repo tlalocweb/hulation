@@ -12,7 +12,7 @@ import (
 )
 
 func (c *Client) LanderCreate(modelreq string) (ret *handler.LanderPostResp, err error) {
-	url := fmt.Sprintf("%s://%s:%d%s/lander/create", c.proto, c.host, c.port, c.path)
+	url := fmt.Sprintf("%s://%s:%d%s/api/lander/create", c.proto, c.host, c.port, c.path)
 
 	if c.token == "" {
 		c.errout("No token\n")
@@ -90,7 +90,7 @@ func (c *Client) LanderModify(formid string, modelreq string) (err error) {
 		return
 	}
 
-	url := c.apiUrl + "/lander/" + formid
+	url := c.apiUrl + "/api/lander/" + formid
 	c.out("LanderModify: PATCH url: %s\n", url)
 	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(modelbody))
 	if err != nil {
@@ -121,7 +121,7 @@ func (c *Client) LanderModify(formid string, modelreq string) (err error) {
 }
 
 func (c *Client) LanderDelete(formid string) (err error) {
-	url := c.apiUrl + "/form/" + formid
+	url := c.apiUrl + "/api/lander/" + formid
 	c.out("LanderDelete: DELETE url: %s\n", url)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {

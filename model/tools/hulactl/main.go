@@ -165,6 +165,10 @@ type HulactlConfig struct {
 	HostId             string                  `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
 	Dangerous          bool                    `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
 	AutoBuild          bool                    `flag:"autobuild" usage:"automatically trigger a staging build after changes are synced (staging-mount only)"`
+	// Non-interactive auth — when set, `auth` skips the readline prompts.
+	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
+	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`
+	AuthPassword       string                  `flag:"password" usage:"password for non-interactive auth (prefer HULACTL_PASSWORD env var)" env:"HULACTL_PASSWORD"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -501,28 +505,42 @@ func main() {
 		}
 
 		fmt.Printf("Authenticating against %s\n", authURL)
-		l, err := readline.NewEx(&readline.Config{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
-			os.Exit(1)
-		}
+
 		var identity, password string
-		l.SetPrompt("Identity (default: admin): ")
-		identity, err = l.Readline()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
-			os.Exit(1)
+		var l *readline.Instance
+
+		// Non-interactive path: if --identity/--password (or HULACTL_IDENTITY/
+		// HULACTL_PASSWORD) are provided, skip the readline prompts entirely.
+		if hulactlconfig.AuthPassword != "" {
+			if hulactlconfig.AuthIdentity != "" {
+				identity = hulactlconfig.AuthIdentity
+			} else {
+				identity = "admin"
+			}
+			password = hulactlconfig.AuthPassword
+		} else {
+			l, err = readline.NewEx(&readline.Config{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			l.SetPrompt("Identity (default: admin): ")
+			identity, err = l.Readline()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			if len(identity) < 1 {
+				identity = "admin"
+			}
+			var pass []byte
+			pass, err = l.ReadPassword("Password: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			password = string(pass)
 		}
-		if len(identity) < 1 {
-			identity = "admin"
-		}
-		var pass []byte
-		pass, err = l.ReadPassword("Password: ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
-			os.Exit(1)
-		}
-		password = string(pass)
 
 		// Create a client targeting the auth URL directly
 		hulaclient := client.NewClient(authURL, "")
@@ -1305,12 +1323,26 @@ func main() {
 		fmt.Printf("Uploaded %s to %s on server %s\n", localFile, remotePath, serverID)
 
 	case CMD_STAGING_MOUNT:
-		if len(argz) < 3 {
-			fmt.Printf("Usage: hulactl staging-mount <server-id> <folder-mount-point>\n")
+		// Go's flag.Parse stops at the first non-flag arg, so `--autobuild`
+		// and `--dangerous` placed AFTER `staging-mount` aren't parsed as
+		// flags. Scan argz manually to pick them up wherever they appear.
+		positional := []string{}
+		for _, a := range argz {
+			switch a {
+			case "--autobuild", "-autobuild":
+				hulactlconfig.AutoBuild = true
+			case "--dangerous", "-dangerous":
+				hulactlconfig.Dangerous = true
+			default:
+				positional = append(positional, a)
+			}
+		}
+		if len(positional) < 3 {
+			fmt.Printf("Usage: hulactl staging-mount <server-id> <folder-mount-point> [--autobuild] [--dangerous]\n")
 			os.Exit(1)
 		}
-		serverID := argz[1]
-		localDir := argz[2]
+		serverID := positional[1]
+		localDir := positional[2]
 
 		absDir, err := filepath.Abs(localDir)
 		if err != nil {

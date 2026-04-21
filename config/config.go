@@ -1451,7 +1451,10 @@ func LoadConfig(filename string) (*Config, error) {
 			}
 		}
 		// Resolve Cloudflare Origin CA env vars for hula_ssl (uses "hula" as the ID).
-		if cfg.HulaSSL.CloudflareOriginCA != nil {
+		// Skip this whole block if a static cert is configured — conftagz may have
+		// auto-populated an empty CloudflareOriginCA struct from default tags,
+		// and we don't want to validate it when it wasn't the user's intent.
+		if !cfg.HulaSSL.hasStaticCert() && cfg.HulaSSL.CloudflareOriginCA != nil {
 			SubstConfVarsForAllStrings(cfg.HulaSSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
 			cfca := cfg.HulaSSL.CloudflareOriginCA
 			if cfca.APIToken == "" {
