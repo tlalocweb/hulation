@@ -1048,6 +1048,19 @@ start:
 - **Events table migration**: `INSERT … SELECT` over a large existing
   table can be slow and I/O-heavy. Run during a maintenance window;
   keep the old table around for 30 days as a rollback path.
+- **Fiber removal — WebDAV regression**: the custom `PATCH
+  X-Update-Range` / `X-Patch-Format: diff` handlers were written against
+  the Fiber ctx and only cross-tested via the e2e harness. Risk: subtle
+  differences in how net/http buffers request bodies vs. fasthttp cause
+  PATCH edge cases to regress. Mitigate: run `test/e2e/suites/11-webdav-patch.sh`
+  during stage 0.6 (not just at the end) and add a unit test covering
+  short-write and chunked-upload cases.
+- **Fiber removal — HTTP/1.1 throughput regression**: raw net/http is
+  slower than fasthttp at high connection churn. Low-risk in practice
+  because (a) visitor beacons multiplex over HTTP/2 once the client
+  connects, (b) behind Cloudflare/any reverse proxy the origin sees
+  long-lived HTTP/2 pipes, and (c) the admin API is low-volume.
+  Accepted.
 
 ---
 
