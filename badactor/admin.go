@@ -6,6 +6,19 @@ import (
 	"github.com/tlalocweb/hulation/handler"
 )
 
+// init registers the ipinfo lookup hook with the handler package so
+// handler/visitor.go can enrich events with cached geo info without
+// creating a handler → badactor import cycle.
+func init() {
+	handler.IPInfoHook = func(ip string) (countryCode, region, city string) {
+		info := GetIPInfo(ip)
+		if info == nil {
+			return "", "", ""
+		}
+		return info.CountryCode, info.Region, info.City
+	}
+}
+
 // BadActorListEntry is a single entry returned by the list API.
 type BadActorListEntry struct {
 	IP         string    `json:"ip"`
