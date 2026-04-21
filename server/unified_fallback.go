@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
@@ -85,6 +86,16 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
 	}
 
+	// --- Legacy /api/* routes (TRANSITIONAL) ---
+	//
+	// These mirror the old router.SetupRoutesFiber admin routes so
+	// hulactl builds predating the gRPC migration (Stage 0.8) keep
+	// working against the unified server. Each route registered here
+	// is also available via gRPC or the REST gateway at /api/v1/*.
+	// Once Stage 0.8 ships and the e2e harness confirms hulactl uses
+	// /api/v1, this block can be deleted.
+	registerLegacyAPIRoutes(srv)
+
 	// WebDAV staging endpoints. Supports PUT, PATCH with X-Update-Range,
 	// PATCH with X-Patch-Format: diff, and the rest of the emersion
 	// WebDAV verbs. Authentication is handled inside the handler via
@@ -103,6 +114,60 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 	})
 
 	unifiedLog.Infof("Registered non-gRPC HTTP fallback routes on unified server")
+}
+
+// registerLegacyAPIRoutes mounts the pre-gRPC /api/* admin routes on
+// the unified server's ServeMux. Lift-and-shift from the deleted
+// router/router.go — same handlers, same paths, no Fiber. Transitional
+// only; removed once hulactl and the e2e harness move to /api/v1/*.
+func registerLegacyAPIRoutes(srv *unified.Server) {
+	// Auth (login is the critical one — hulactl needs it to bootstrap).
+	srv.RegisterCustomHandler("POST /api/auth/login", handler.WrapForNetHTTP(handler.Login))
+	srv.RegisterCustomHandler("POST /api/auth/logout", handler.WrapForNetHTTP(handler.Logout))
+	srv.RegisterCustomHandler("GET /api/auth/ok", handler.WrapForNetHTTP(handler.StatusAuthOK))
+	srv.RegisterCustomHandler("POST /api/auth/user", handler.WrapForNetHTTP(handler.NewUser))
+	srv.RegisterCustomHandler("GET /api/auth/user/{userlookup}", handler.WrapForNetHTTP(handler.GetUser))
+	srv.RegisterCustomHandler("PATCH /api/auth/user/{userid}", handler.WrapForNetHTTP(handler.ModifyUser))
+
+	// Status probe paths.
+	srv.RegisterCustomHandler("GET /api/status", handler.WrapForNetHTTP(handler.Status))
+
+	// TOTP — validate is noauth; the rest assume a valid token.
+	srv.RegisterCustomHandler("POST /api/auth/totp/validate", handler.WrapForNetHTTP(handler.TotpValidate))
+	srv.RegisterCustomHandler("POST /api/auth/totp/setup", handler.WrapForNetHTTP(handler.TotpSetup))
+	srv.RegisterCustomHandler("POST /api/auth/totp/verify-setup", handler.WrapForNetHTTP(handler.TotpVerifySetup))
+	srv.RegisterCustomHandler("POST /api/auth/totp/disable", handler.WrapForNetHTTP(handler.TotpDisable))
+	srv.RegisterCustomHandler("GET /api/auth/totp/status", handler.WrapForNetHTTP(handler.TotpStatus))
+
+	// Forms.
+	srv.RegisterCustomHandler("POST /api/form/create", handler.WrapForNetHTTP(handler.FormCreate))
+	srv.RegisterCustomHandler("PATCH /api/form/{formid}", handler.WrapForNetHTTP(handler.FormModify))
+	srv.RegisterCustomHandler("DELETE /api/form/{formid}", handler.WrapForNetHTTP(handler.FormDelete))
+
+	// Landers.
+	srv.RegisterCustomHandler("POST /api/lander/create", handler.WrapForNetHTTP(handler.LanderCreate))
+	srv.RegisterCustomHandler("PATCH /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderModify))
+	srv.RegisterCustomHandler("DELETE /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderDelete))
+
+	// Site deployment.
+	srv.RegisterCustomHandler("POST /api/site/trigger-build", handler.WrapForNetHTTP(handler.TriggerBuild))
+	srv.RegisterCustomHandler("GET /api/site/build-status/{buildid}", handler.WrapForNetHTTP(handler.BuildStatus))
+	srv.RegisterCustomHandler("GET /api/site/builds/{serverid}", handler.WrapForNetHTTP(handler.ListBuilds))
+
+	// Staging build (WebDAV registered separately below).
+	srv.RegisterCustomHandler("POST /api/staging/build", handler.WrapForNetHTTP(handler.StagingBuild))
+
+	// Bad actor admin — only registered when the feature is enabled.
+	if badactor.IsEnabled() {
+		srv.RegisterCustomHandler("GET /api/badactor/list", handler.WrapForNetHTTP(badactor.ListBadActors))
+		srv.RegisterCustomHandler("DELETE /api/badactor/block/{ip}", handler.WrapForNetHTTP(badactor.EvictBadActor))
+		srv.RegisterCustomHandler("POST /api/badactor/block", handler.WrapForNetHTTP(badactor.ManualBlock))
+		srv.RegisterCustomHandler("GET /api/badactor/allowlist", handler.WrapForNetHTTP(badactor.ListAllowlistHandler))
+		srv.RegisterCustomHandler("POST /api/badactor/allowlist", handler.WrapForNetHTTP(badactor.AddToAllowlistHandler))
+		srv.RegisterCustomHandler("DELETE /api/badactor/allowlist/{ip}", handler.WrapForNetHTTP(badactor.RemoveFromAllowlistHandler))
+		srv.RegisterCustomHandler("GET /api/badactor/stats", handler.WrapForNetHTTP(badactor.BadActorStats))
+		srv.RegisterCustomHandler("GET /api/badactor/signatures", handler.WrapForNetHTTP(badactor.ListSignaturesHandler))
+	}
 }
 
 // verifyJWTAdmin is the token verifier passed to the WebDAV handler.
