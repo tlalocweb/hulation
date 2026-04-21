@@ -21,11 +21,13 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	apiobjects "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	"github.com/tlalocweb/hulation/utils"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var aLog = log.GetTaggedLogger("auth-impl", "gRPC AuthService implementation")
@@ -149,4 +151,136 @@ func hasRole(roles []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// userModelToProto maps a legacy model.User into the apiobjects User
+// proto. Only the fields hula's current (ClickHouse) schema actually
+// populates — the Bolt-native fields (role_assignments, TOTP state,
+// email validation, etc.) stay zero-valued until that migration lands.
+func userModelToProto(u *model.User) *apiobjects.User {
+	if u == nil {
+		return nil
+	}
+	return &apiobjects.User{
+		Uuid:      u.ID,
+		Username:  u.Email,
+		Email:     u.Email,
+		CreatedAt: timestamppb.New(u.CreatedAt),
+		UpdatedAt: timestamppb.New(u.UpdatedAt),
+	}
+}
+
+// Logout revokes the login token. Mirrors the legacy handler.Logout.
+// No-op if the claim token is empty.
+func (s *Server) logoutInternal(ctx context.Context) error {
+	claims, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
+	if !ok || claims == nil || claims.ID == "" {
+		return nil
+	}
+	// Delete the login token from the DB. The JWT itself is
+	// stateless, but the `login_tokens` table is what stamps it as
+	// still-valid; removing the row invalidates subsequent requests.
+	return model.GetDB().Delete(&model.LoginToken{}, "id = ?", claims.ID).Error
+}
+
+// ListUsers returns every user row in the DB. Requires
+// superadmin.user.list (enforced by authware upstream).
+func (s *Server) ListUsers(ctx context.Context, req *authspec.ListUsersRequest) (*authspec.ListUsersResponse, error) {
+	var users []model.User
+	if err := model.GetDB().Find(&users).Error; err != nil {
+		aLog.Errorf("ListUsers: %v", err)
+		return nil, status.Errorf(codes.Internal, "list users: %v", err)
+	}
+	out := &authspec.ListUsersResponse{Users: make([]*apiobjects.User, 0, len(users))}
+	for i := range users {
+		out.Users = append(out.Users, userModelToProto(&users[i]))
+	}
+	return out, nil
+}
+
+// CreateUser creates a user with the given email. First/last name come
+// from the proto User payload. Requires superadmin.user.create.
+func (s *Server) CreateUser(ctx context.Context, req *authspec.CreateUserRequest) (*authspec.CreateUserResponse, error) {
+	u := req.GetUser()
+	if u == nil {
+		return nil, status.Error(codes.InvalidArgument, "user is required")
+	}
+	if u.GetEmail() == "" {
+		return nil, status.Error(codes.InvalidArgument, "email is required")
+	}
+	// Split display_name into first/last if provided. hula's legacy
+	// CreateNewUser takes (email, first, last).
+	first, last := splitName(u.GetDisplayName())
+	created, err := model.CreateNewUser(model.GetDB(), u.GetEmail(), first, last)
+	if err != nil {
+		return nil, status.Errorf(codes.AlreadyExists, "create user: %v", err)
+	}
+	return &authspec.CreateUserResponse{
+		Status: "ok",
+		User:   userModelToProto(created),
+	}, nil
+}
+
+// GetUser looks up a user by UUID or email. Requires
+// superadmin.user.read.
+func (s *Server) GetUser(ctx context.Context, req *authspec.GetUserRequest) (*authspec.GetUserResponse, error) {
+	id := req.GetUserId()
+	if id == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	var u *model.User
+	var err error
+	if looksLikeUUID(id) {
+		u, err = model.GetUserById(model.GetDB(), id)
+	} else {
+		u, err = model.GetUserByEmail(model.GetDB(), id)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "lookup user: %v", err)
+	}
+	if u == nil {
+		return nil, status.Errorf(codes.NotFound, "user %q not found", id)
+	}
+	return &authspec.GetUserResponse{Status: "ok", User: userModelToProto(u)}, nil
+}
+
+// DeleteUser removes a user by UUID or email. Requires
+// superadmin.user.delete.
+func (s *Server) DeleteUser(ctx context.Context, req *authspec.DeleteUserRequest) (*authspec.DeleteUserResponse, error) {
+	id := req.GetIdentity()
+	if id == "" {
+		return nil, status.Error(codes.InvalidArgument, "identity is required")
+	}
+	var err error
+	if looksLikeUUID(id) {
+		err = model.DeleteUser(model.GetDB(), id)
+	} else {
+		err = model.DeleteUserByEmail(model.GetDB(), id)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "delete user: %v", err)
+	}
+	return &authspec.DeleteUserResponse{Status: "ok"}, nil
+}
+
+func splitName(full string) (first, last string) {
+	for i := 0; i < len(full); i++ {
+		if full[i] == ' ' {
+			return full[:i], full[i+1:]
+		}
+	}
+	return full, ""
+}
+
+func looksLikeUUID(s string) bool {
+	// Rough UUID shape check: 36 chars with dashes at 8/13/18/23.
+	if len(s) != 36 {
+		return false
+	}
+	for _, i := range []int{8, 13, 18, 23} {
+		if s[i] != '-' {
+			return false
+		}
+	}
+	return true
 }

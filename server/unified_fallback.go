@@ -14,9 +14,11 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/handler"
+	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
 )
 
@@ -83,5 +85,33 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
 	}
 
+	// WebDAV staging endpoints. Supports PUT, PATCH with X-Update-Range,
+	// PATCH with X-Patch-Format: diff, and the rest of the emersion
+	// WebDAV verbs. Authentication is handled inside the handler via
+	// the supplied verifyToken callback (Bearer-token → JWT validation).
+	//
+	// Path: /api/staging/{serverID}/dav/<file-path>
+	//
+	// ServeMux pattern with /{serverid}/dav/ requires Go 1.22+ enhanced
+	// routing — covered by hula's go.mod (go 1.25).
+	webdavHandler := handler.StagingWebDAVNetHTTP(verifyJWTAdmin)
+	srv.RegisterCustomHandler("/api/staging/{serverid}/dav/", func(w http.ResponseWriter, r *http.Request) {
+		webdavHandler.ServeHTTP(w, r)
+	})
+	srv.RegisterCustomHandler("/api/staging/{serverid}/dav", func(w http.ResponseWriter, r *http.Request) {
+		webdavHandler.ServeHTTP(w, r)
+	})
+
 	unifiedLog.Infof("Registered non-gRPC HTTP fallback routes on unified server")
+}
+
+// verifyJWTAdmin is the token verifier passed to the WebDAV handler.
+// Returns (valid, isAdmin, error). Matches the signature
+// handler.StagingWebDAVNetHTTP expects.
+func verifyJWTAdmin(token string) (valid bool, isAdmin bool, err error) {
+	ok, perms, verr := model.VerifyJWTClaims(model.GetDB(), token)
+	if verr != nil || !ok {
+		return false, false, verr
+	}
+	return true, perms.HasCap("admin"), nil
 }
