@@ -426,6 +426,93 @@ service AuthService {
         option (annotations.skip_totp_check) = true;
         option (annotations.skip_email_validation) = true;
     }
+
+    // ============================================================================
+    // Server-access ACL (hulation-specific)
+    //
+    // Hulation's scope hierarchy is (system, server). GrantServerAccess and
+    // friends are a convenience layer over RoleAssignment — they create,
+    // revoke, and list role_assignments with scope_type="server".
+    // ============================================================================
+
+    // GrantServerAccess grants a user a role (viewer / manager) on one virtual server.
+    rpc GrantServerAccess(GrantServerAccessRequest) returns (GrantServerAccessResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/access"
+            body: "*"
+        };
+        option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+    }
+
+    // RevokeServerAccess removes a user's access to one virtual server.
+    rpc RevokeServerAccess(RevokeServerAccessRequest) returns (RevokeServerAccessResponse) {
+        option (google.api.http) = {
+            delete: "/api/v1/auth/access/{user_id}/{server_id}"
+        };
+        option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+    }
+
+    // ListServerAccess returns all (user, server, role) triples. Optional
+    // filters narrow by user or server.
+    rpc ListServerAccess(ListServerAccessRequest) returns (ListServerAccessResponse) {
+        option (google.api.http) = { get: "/api/v1/auth/access" };
+        option (izuma.auth.permission) = { needs: ["superadmin.user.list"] };
+    }
+}
+
+// ============================================================================
+// Server-access messages
+// ============================================================================
+
+// ServerAccessRole is the role a user holds on a specific server.
+enum ServerAccessRole {
+    SERVER_ACCESS_ROLE_UNSPECIFIED = 0;
+    SERVER_ACCESS_ROLE_VIEWER = 1;     // read-only analytics
+    SERVER_ACCESS_ROLE_MANAGER = 2;    // analytics + goals/reports config
+}
+
+// ServerAccessEntry represents one user's access to one server.
+message ServerAccessEntry {
+    string user_id = 1;
+    string user_email = 2;               // populated on reads for display
+    string server_id = 3;
+    ServerAccessRole role = 4;
+    google.protobuf.Timestamp granted_at = 5;
+    string granted_by = 6;
+}
+
+message GrantServerAccessRequest {
+    string user_id = 1;
+    string server_id = 2;
+    ServerAccessRole role = 3;
+}
+
+message GrantServerAccessResponse {
+    string status = 1;
+    optional string error = 2;
+    ServerAccessEntry entry = 3;
+}
+
+message RevokeServerAccessRequest {
+    string user_id = 1;
+    string server_id = 2;
+}
+
+message RevokeServerAccessResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+message ListServerAccessRequest {
+    // Optional filters. Leave blank to list everything.
+    string user_id = 1;
+    string server_id = 2;
+}
+
+message ListServerAccessResponse {
+    string status = 1;
+    optional string error = 2;
+    repeated ServerAccessEntry entries = 3;
 }
 
 // Admin login messages

@@ -57,6 +57,9 @@ const (
 	AuthService_TotpDisable_FullMethodName                = "/hulation.v1.auth.AuthService/TotpDisable"
 	AuthService_TotpAdminReset_FullMethodName             = "/hulation.v1.auth.AuthService/TotpAdminReset"
 	AuthService_TotpStatus_FullMethodName                 = "/hulation.v1.auth.AuthService/TotpStatus"
+	AuthService_GrantServerAccess_FullMethodName          = "/hulation.v1.auth.AuthService/GrantServerAccess"
+	AuthService_RevokeServerAccess_FullMethodName         = "/hulation.v1.auth.AuthService/RevokeServerAccess"
+	AuthService_ListServerAccess_FullMethodName           = "/hulation.v1.auth.AuthService/ListServerAccess"
 )
 
 // AuthServiceClient is the client API for AuthService service.
@@ -159,6 +162,13 @@ type AuthServiceClient interface {
 	TotpAdminReset(ctx context.Context, in *TotpAdminResetRequest, opts ...grpc.CallOption) (*TotpAdminResetResponse, error)
 	// TotpStatus returns TOTP status for the authenticated user.
 	TotpStatus(ctx context.Context, in *TotpStatusRequest, opts ...grpc.CallOption) (*TotpStatusResponse, error)
+	// GrantServerAccess grants a user a role (viewer / manager) on one virtual server.
+	GrantServerAccess(ctx context.Context, in *GrantServerAccessRequest, opts ...grpc.CallOption) (*GrantServerAccessResponse, error)
+	// RevokeServerAccess removes a user's access to one virtual server.
+	RevokeServerAccess(ctx context.Context, in *RevokeServerAccessRequest, opts ...grpc.CallOption) (*RevokeServerAccessResponse, error)
+	// ListServerAccess returns all (user, server, role) triples. Optional
+	// filters narrow by user or server.
+	ListServerAccess(ctx context.Context, in *ListServerAccessRequest, opts ...grpc.CallOption) (*ListServerAccessResponse, error)
 }
 
 type authServiceClient struct {
@@ -549,6 +559,36 @@ func (c *authServiceClient) TotpStatus(ctx context.Context, in *TotpStatusReques
 	return out, nil
 }
 
+func (c *authServiceClient) GrantServerAccess(ctx context.Context, in *GrantServerAccessRequest, opts ...grpc.CallOption) (*GrantServerAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GrantServerAccessResponse)
+	err := c.cc.Invoke(ctx, AuthService_GrantServerAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) RevokeServerAccess(ctx context.Context, in *RevokeServerAccessRequest, opts ...grpc.CallOption) (*RevokeServerAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeServerAccessResponse)
+	err := c.cc.Invoke(ctx, AuthService_RevokeServerAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) ListServerAccess(ctx context.Context, in *ListServerAccessRequest, opts ...grpc.CallOption) (*ListServerAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServerAccessResponse)
+	err := c.cc.Invoke(ctx, AuthService_ListServerAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServiceServer is the server API for AuthService service.
 // All implementations must embed UnimplementedAuthServiceServer
 // for forward compatibility.
@@ -649,6 +689,13 @@ type AuthServiceServer interface {
 	TotpAdminReset(context.Context, *TotpAdminResetRequest) (*TotpAdminResetResponse, error)
 	// TotpStatus returns TOTP status for the authenticated user.
 	TotpStatus(context.Context, *TotpStatusRequest) (*TotpStatusResponse, error)
+	// GrantServerAccess grants a user a role (viewer / manager) on one virtual server.
+	GrantServerAccess(context.Context, *GrantServerAccessRequest) (*GrantServerAccessResponse, error)
+	// RevokeServerAccess removes a user's access to one virtual server.
+	RevokeServerAccess(context.Context, *RevokeServerAccessRequest) (*RevokeServerAccessResponse, error)
+	// ListServerAccess returns all (user, server, role) triples. Optional
+	// filters narrow by user or server.
+	ListServerAccess(context.Context, *ListServerAccessRequest) (*ListServerAccessResponse, error)
 	mustEmbedUnimplementedAuthServiceServer()
 }
 
@@ -772,6 +819,15 @@ func (UnimplementedAuthServiceServer) TotpAdminReset(context.Context, *TotpAdmin
 }
 func (UnimplementedAuthServiceServer) TotpStatus(context.Context, *TotpStatusRequest) (*TotpStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TotpStatus not implemented")
+}
+func (UnimplementedAuthServiceServer) GrantServerAccess(context.Context, *GrantServerAccessRequest) (*GrantServerAccessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GrantServerAccess not implemented")
+}
+func (UnimplementedAuthServiceServer) RevokeServerAccess(context.Context, *RevokeServerAccessRequest) (*RevokeServerAccessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeServerAccess not implemented")
+}
+func (UnimplementedAuthServiceServer) ListServerAccess(context.Context, *ListServerAccessRequest) (*ListServerAccessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListServerAccess not implemented")
 }
 func (UnimplementedAuthServiceServer) mustEmbedUnimplementedAuthServiceServer() {}
 func (UnimplementedAuthServiceServer) testEmbeddedByValue()                     {}
@@ -1478,6 +1534,60 @@ func _AuthService_TotpStatus_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AuthService_GrantServerAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantServerAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).GrantServerAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_GrantServerAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).GrantServerAccess(ctx, req.(*GrantServerAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_RevokeServerAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeServerAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).RevokeServerAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_RevokeServerAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).RevokeServerAccess(ctx, req.(*RevokeServerAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_ListServerAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServerAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).ListServerAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_ListServerAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).ListServerAccess(ctx, req.(*ListServerAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AuthService_ServiceDesc is the grpc.ServiceDesc for AuthService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1636,6 +1746,18 @@ var AuthService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TotpStatus",
 			Handler:    _AuthService_TotpStatus_Handler,
+		},
+		{
+			MethodName: "GrantServerAccess",
+			Handler:    _AuthService_GrantServerAccess_Handler,
+		},
+		{
+			MethodName: "RevokeServerAccess",
+			Handler:    _AuthService_RevokeServerAccess_Handler,
+		},
+		{
+			MethodName: "ListServerAccess",
+			Handler:    _AuthService_ListServerAccess_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
