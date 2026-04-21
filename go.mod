@@ -29,6 +29,7 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb v0.0.0-20251103221153-05f9dd7a5148
 	github.com/open-policy-agent/opa v1.14.1
+	github.com/pires/go-proxyproto v0.12.0
 	github.com/pquerna/otp v1.5.0
 	github.com/risor-io/risor v1.8.1
 	github.com/rivo/tview v0.42.0
