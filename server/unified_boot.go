@@ -15,8 +15,10 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
+	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
@@ -91,6 +93,13 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	landersspec.RegisterLandersServiceServer(grpcSrv, landersSvc)
 	if err := landersspec.RegisterLandersServiceHandlerServer(ctx, gwMux, landersSvc); err != nil {
 		return nil, fmt.Errorf("register landers handler: %w", err)
+	}
+
+	// BadActor
+	badactorSvc := badactorimpl.New()
+	badactorspec.RegisterBadActorServiceServer(grpcSrv, badactorSvc)
+	if err := badactorspec.RegisterBadActorServiceHandlerServer(ctx, gwMux, badactorSvc); err != nil {
+		return nil, fmt.Errorf("register badactor handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.

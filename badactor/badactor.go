@@ -429,3 +429,36 @@ func (s *Store) ListBlockedIPsWithDetail(limit, offset int) []BadActorListEntry 
 	}
 	return entries
 }
+
+// DB returns the gorm DB handle bound to this Store. Used by external
+// packages (e.g. the gRPC admin service) that need to call the
+// package-level DB helpers (LoadAllowlist, AddToAllowlistDB, etc.).
+func (s *Store) DB() *gorm.DB { return s.db }
+
+// BlockThreshold returns the score above which an IP is considered
+// blocked. Used by the gRPC admin service when inserting a manual
+// block.
+func (s *Store) BlockThreshold() int { return s.blockThreshold }
+
+// AllSignatures returns the list of currently loaded signatures. Used
+// by the gRPC ListSignatures RPC.
+func (s *Store) AllSignatures() []*CompiledSignature {
+	if s == nil || s.sigs == nil {
+		return nil
+	}
+	return s.sigs.All
+}
+
+// ManualInsertBlocked inserts or refreshes an IP in the radix tree with
+// a reason sufficient to block it (score = blockThreshold). Called by
+// the gRPC ManualBlock RPC after it has persisted the DB record.
+func (s *Store) ManualInsertBlocked(ip, reason string) {
+	txn := s.tree.Load().Txn()
+	txn.Insert([]byte(ip), BadActorEntry{
+		Score:      s.blockThreshold,
+		DetectedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(s.ttl),
+		LastReason: reason,
+	})
+	s.tree.Store(txn.Commit())
+}
