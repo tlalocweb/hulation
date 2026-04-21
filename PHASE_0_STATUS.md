@@ -3,7 +3,30 @@
 Branch: `roadmap/phase0`
 Plan: `PLAN_0.md`
 
-## Completed stages (8 of 11)
+## Completed stages (8.5 of 11)
+
+### Stage 0.7 (~85% done) — Handler ports to gRPC ⚠️
+Commits: `5867de4` (Forms + Landers), `9eb7877` (BadActor), `6791293` (Site + Staging), `8349514` (Auth skeleton).
+
+Six of seven services fully ported; Auth has a live skeleton.
+
+- **Forms** (`pkg/api/v1/forms/formsimpl.go`): Create / Modify / Delete / List / Get. Calls into `model.FormModel`. Proto simplified to match the existing model shape (schema is JSON-schema string).
+- **Landers** (`pkg/api/v1/landers/landersimpl.go`): same CRUD shape, mapped onto `model.Lander`.
+- **BadActor** (`pkg/api/v1/badactor/badactorimpl.go`): ListBadActors, ManualBlock, EvictBadActor, ListAllowlist, AddToAllowlist, RemoveFromAllowlist, BadActorStats, ListSignatures. Five new Store accessors added (`DB`, `BlockThreshold`, `AllSignatures`, `ManualInsertBlocked`, existing `AddToAllowlist`/`RemoveFromAllowlist`).
+- **Site** (`pkg/api/v1/site/siteimpl.go`): TriggerBuild, GetBuildStatus, ListBuilds. Wraps `sitedeploy.BuildManager`.
+- **Staging** (`pkg/api/v1/staging/stagingimpl.go`): StagingBuild only. WebDAV stays HTTP.
+- **Auth** (`pkg/api/v1/auth/authimpl.go`): **skeleton**. Live RPCs: `ListAuthProviders`, `WhoAmI`, `GetMyPermissions`. All other RPCs return `codes.Unimplemented`.
+- `model/form.go`: `ListFormModels(db)` added.
+- `model/lander.go`: `ListLanders(db)` added.
+- `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
+
+**Remaining work in 0.7**:
+1. Full auth impl — wire Bolt user store, implement LoginAdmin, TOTP, user CRUD, invite, password-reset, RefreshToken, GrantServerAccess family, OIDC login flow. This is a focused 1–2 day session on its own.
+2. Flip Fiber off — move non-gRPC HTTP routes (WebDAV staging-update / staging-mount / PATCH, visitor `/v/*`, scripts, `/hulastatus`, per-host site serving) onto the unified server's `http.ServeMux` fallback. Delete `handler/fiber_adapter.go`. `go mod tidy` drops `gofiber/fiber/v2` and `valyala/fasthttp`.
+3. Enrichment wiring — call `enrich.ClassifyReferrer` / `ParseUTM` / `ParseUA` / `SessionIDForVisitor` from `handler/visitor.go` before `ev.CommitTo(...)`. Persist enriched columns onto `events_v1` rows.
+4. Delete legacy `/api/form/*`, `/api/lander/*`, `/api/site/*`, `/api/staging/*`, `/api/badactor/*` routes from `router/router.go` once hulactl and the e2e harness are pointed at `/api/v1/*`.
+
+
 
 ### Stage 0.1 — Proto toolchain and layout ✅
 Commit: `1070870`
@@ -71,15 +94,15 @@ Commit: `a2e9416`
 - `pkg/apispec/v1/auth/auth.proto` — three new RPCs: `GrantServerAccess`, `RevokeServerAccess`, `ListServerAccess`. `ServerAccessRole` enum (VIEWER/MANAGER). `ServerAccessEntry` message.
 - Implementations land with the rest of the AuthService in stage 0.7.
 
-## Remaining stages (3 of 11)
+## Remaining stages (2.5 of 11)
 
 | Stage | Estimate | Notes |
 |-------|----------|-------|
-| 0.7 Port handlers to gRPC | 5–7 days | Biggest stage. For each of the 7 services (status → auth → badactor → forms → landers → site → staging), create `pkg/api/v1/<service>/<service>impl.go`, register on the unified server, delete the Fiber route. Wire JWT-claim `AllowedServerIds` population. Hook enrichment into `handler/visitor.go`. Drop Fiber after last endpoint. |
+| 0.7 finishers | 2–3 days | Full Auth impl over Bolt; Fiber-off + ServeMux migration for non-gRPC routes; enrichment wiring. |
 | 0.8 Migrate hulactl to gRPC clients | 2 days | After 0.7. |
 | 0.11 Tests + docs + sign-off | 2 days | Update 12 existing e2e suites; add 8 new; update integration harness; DEPLOYMENT.md, test/ABOUT.md, MIGRATION_0.md. |
 
-**Remaining effort**: ~9–11 working days.
+**Remaining effort**: ~6–7 working days.
 
 ## Recommended next-session plan
 
