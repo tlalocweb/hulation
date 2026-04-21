@@ -18,9 +18,13 @@ import (
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
+	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
+	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
+	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
+	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
@@ -100,6 +104,20 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	badactorspec.RegisterBadActorServiceServer(grpcSrv, badactorSvc)
 	if err := badactorspec.RegisterBadActorServiceHandlerServer(ctx, gwMux, badactorSvc); err != nil {
 		return nil, fmt.Errorf("register badactor handler: %w", err)
+	}
+
+	// Site (production build triggers)
+	siteSvc := siteimpl.New()
+	sitespec.RegisterSiteServiceServer(grpcSrv, siteSvc)
+	if err := sitespec.RegisterSiteServiceHandlerServer(ctx, gwMux, siteSvc); err != nil {
+		return nil, fmt.Errorf("register site handler: %w", err)
+	}
+
+	// Staging build (WebDAV remains on the ServeMux fallback).
+	stagingSvc := stagingimpl.New()
+	stagingspec.RegisterStagingServiceServer(grpcSrv, stagingSvc)
+	if err := stagingspec.RegisterStagingServiceHandlerServer(ctx, gwMux, stagingSvc); err != nil {
+		return nil, fmt.Errorf("register staging handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
