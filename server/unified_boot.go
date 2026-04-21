@@ -15,11 +15,13 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
+	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
@@ -118,6 +120,16 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	stagingspec.RegisterStagingServiceServer(grpcSrv, stagingSvc)
 	if err := stagingspec.RegisterStagingServiceHandlerServer(ctx, gwMux, stagingSvc); err != nil {
 		return nil, fmt.Errorf("register staging handler: %w", err)
+	}
+
+	// Auth — skeleton impl. WhoAmI, GetMyPermissions, and
+	// ListAuthProviders are live; the rest (LoginAdmin, LoginOIDC, user
+	// CRUD, TOTP, invite, RefreshToken, GrantServerAccess family)
+	// return Unimplemented pending the Bolt user-store wiring.
+	authSvc := authimpl.New()
+	authspec.RegisterAuthServiceServer(grpcSrv, authSvc)
+	if err := authspec.RegisterAuthServiceHandlerServer(ctx, gwMux, authSvc); err != nil {
+		return nil, fmt.Errorf("register auth handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
