@@ -31,27 +31,50 @@ decisions now land here first:
    single HTTPS port serving both gRPC and REST, permission requirements
    declared as proto annotations, a single authware middleware.
 
-### 1.2 What stays on plain HTTP (NOT migrating to gRPC)
+### 1.2 One listener to rule them all
 
-Confirmed with the user:
+**Every web service Hula serves — without exception — goes through a
+single unified HTTPS listener.** This mirrors izcr's `unified` server:
+one port, one TLS cert, one `http.Server` that dispatches by request
+shape:
 
-- **WebDAV endpoints** — staging-mount, staging-update, and the custom
-  `PATCH X-Update-Range` / `X-Patch-Format: diff` surface. WebDAV is a
-  standard protocol; wrapping it in gRPC buys nothing and would break
-  interoperability with WebDAV clients.
-- **Visitor-tracking endpoints** — `/v/hello`, `/v/helloiframe`,
-  `/v/hellonoscript`, `/v/sub/:formid`, and the served
-  `/scripts/hello.js` / `/scripts/forms.js`. These are called from
-  untrusted browsers using form-encoded bodies, query strings, and cookies.
-  They stay on Fiber with their current shape.
-- **Static site serving** — the per-host `/*` handler that serves built
-  sites. Not an API.
-- **`/hulastatus`** — unauthenticated health check. Keep as plain HTTP for
-  probe simplicity.
+1. `Content-Type: application/grpc` → gRPC server.
+2. Path registered on the grpc-gateway mux (e.g., `/api/v1/*`) → REST
+   gateway (translates to gRPC under the hood).
+3. Everything else → **`http.ServeMux` fallback** for the non-gRPC HTTP
+   surface (WebDAV, visitor tracking, scripts, static site, /hulastatus).
+
+**Fiber is being removed.** The unified server is `net/http`-based
+(required by gRPC and grpc-gateway). Keeping Fiber would mean running
+fasthttp alongside net/http with an adapter between them, and would
+deny the origin HTTP/2 — a real loss when deployments aren't behind a
+CDN. The `handler/` package already has `nethttp_adapter.go` alongside
+`fiber_adapter.go`, so handler bodies are already portable; we delete
+the Fiber half.
+
+Endpoints that keep their current HTTP shape (i.e., aren't migrating to
+gRPC) are served on the fallback mux. They are NOT on a separate
+listener — same HTTPS port, same TLS cert, same process:
+
+- **WebDAV** — staging-update, staging-mount, custom
+  `PATCH X-Update-Range` / `X-Patch-Format: diff`. Standard protocol;
+  gRPC-wrapping it would break WebDAV clients.
+- **Visitor-tracking** — `/v/hello`, `/v/helloiframe`,
+  `/v/hellonoscript`, `/v/sub/:formid`, `/scripts/hello.js`,
+  `/scripts/forms.js`. Called by untrusted browsers with
+  form-encoded bodies, query strings, and cookies.
+- **Static site serving** — per-host `/*` handler that serves built
+  sites (routed by hostname; also via the unified server).
+- **`/hulastatus`** — unauthenticated health check on the same listener.
 
 Everything else — auth, users, forms CRUD, lander CRUD, site build,
-staging-build, bad-actor admin, future analytics — becomes gRPC with a
-REST gateway.
+staging-build admin, bad-actor admin, future analytics — becomes gRPC
+with a REST gateway. Still, same listener.
+
+**Not a web service, genuinely separate**: the **ClickHouse client
+connection** uses its native protocol (TCP on 9000 or HTTPS on 8123 to
+the ClickHouse server) and has nothing to do with this listener. That's
+a backend database link, not an API Hula exposes.
 
 ### 1.3 Goals
 
@@ -94,7 +117,7 @@ any of them before implementation starts.
 | D9 | **Package layout**: all adopted izcr code lands under `pkg/` (new top-level directory in Hula), renamed to `go.izuma.io/hulation/pkg/...`. Existing `model/`, `handler/`, `badactor/`, etc. stay where they are. | Keeps izcr-style code visibly grouped and separable from Hula's legacy layout, which avoids cross-pollution. |
 | D10 | **Proto package path**: `hulation.v1.<service>`; Go import path `go.izuma.io/hulation/pkg/apispec/v1/<service>`. Mirrors izcr. | Predictable, greppable. |
 | D11 | **Single port for gRPC + REST**: serve both on the existing admin HTTPS listener. gRPC detected via `Content-Type: application/grpc`; everything else goes through the gateway / Fiber. | One TLS cert, one port; matches izcr's unified-server pattern. |
-| D12 | **Fiber stays — for now** for the three non-migrating surfaces (WebDAV, visitor tracking, static). The unified server front-ends everything; paths that aren't a registered gRPC/gateway route fall through to Fiber via a passthrough handler. | Avoids rewriting WebDAV and the visitor tracking bounce-map logic in this phase. |
+| D12 | **Drop Fiber entirely.** The unified server is net/http, and the handler/ package already has a net/http adapter. Non-migrating endpoints (WebDAV, visitor tracking, scripts, static, /hulastatus) register on an `http.ServeMux` fallback. | HTTP/2 support, single HTTP stack, no adapter layer. Raw HTTP/1.1 throughput drops vs. fasthttp — irrelevant behind a CDN and offset by HTTP/2 multiplexing on the hot path (visitor beacons). |
 
 ---
 
@@ -485,11 +508,12 @@ parallel.
 
 ---
 
-## 9. Stage 0.6 — Unified gRPC + REST + Fiber-passthrough server
+## 9. Stage 0.6 — Unified gRPC + REST + net/http fallback server
 
 **Goal**: A single HTTPS listener serves gRPC, grpc-gateway REST, WebDAV,
-visitor tracking, and static files on the same port with the same TLS
-cert.
+visitor tracking, scripts, static site hosts, and `/hulastatus` — all on
+the same port with the same TLS cert. **No other web listener exists in
+the Hula process.** Fiber is removed in this stage.
 
 **What to copy from izcr**:
 
@@ -501,18 +525,47 @@ cert.
 
 - **Routing rules**: the unified server's ServeHTTP already splits gRPC
   (by `Content-Type: application/grpc`) from HTTP. On the HTTP side we
-  add a **Fiber passthrough** for paths that aren't part of the REST
-  gateway:
+  add an **`http.ServeMux` fallback** for paths that aren't part of the
+  REST gateway. All of these are served by the single unified HTTPS
+  listener — there is no second port.
   - `/v/*` (visitor tracking)
-  - `/scripts/*` (static scripts)
+  - `/scripts/*` (static scripts, via `http.FileServer`)
   - WebDAV paths: `/<webdav-prefix>/*` (from config)
   - `/hulastatus`
   - Per-host site serving (`/*` for configured site hostnames)
 
+- **Dropping Fiber**:
+  - Delete `handler/fiber_adapter.go`.
+  - Remove `github.com/gofiber/fiber/v2` and `github.com/valyala/fasthttp`
+    from `go.mod`.
+  - In `server/run.go`, replace `FiberApp.Listen(...)` with the unified
+    server's `ListenAndServeTLS`.
+  - In `router/router.go`, remove all `FiberApp.Post/Get/Patch/Delete`
+    calls. For non-migrating endpoints (WebDAV, visitor, scripts,
+    static, /hulastatus), register handlers on the fallback mux
+    directly — they already work against the `RequestCtx` interface
+    via `nethttp_adapter.go`.
+  - Middleware currently implemented on Fiber (body size limits,
+    recover, the bad-actor guard) gets ported to the equivalent
+    net/http middleware chain izcr already uses in the unified server.
+
 - **Static-site host routing**: izcr's unified server handles "registry
   hostnames" separately; we generalize this to "site hostnames from
   `config.yaml`" so per-server hosts serve the built static site, while
-  the primary admin host serves the gRPC/REST/WebDAV/visitor API.
+  the primary admin host serves the gRPC/REST/WebDAV/visitor API. All on
+  the same listener — routing is by `Host` header, not by port.
+
+- **HTTP/2 on by default**: `net/http`'s TLS server enables HTTP/2
+  automatically when ALPN advertises it. Verify with
+  `curl --http2 -v https://host/hulastatus` in the smoke test.
+
+- **No second listener**: verify during this stage that nothing in
+  `server/run.go`, the config loader, or any startup path binds a
+  separate HTTP port. A grep for `net.Listen`, `http.ListenAndServe`,
+  `FiberApp.Listen`, `ListenMutualTLS` should turn up exactly one
+  binding — the unified server's. Any auxiliary listener (e.g., a
+  debug/pprof port) must either be removed or be explicit about being
+  non-public loopback-only.
 
 **Integration points** in `server/run.go` (Hula's existing startup):
 
@@ -567,14 +620,21 @@ implementation wired up; the corresponding legacy Fiber route is removed.
 
 - Move handler body from `handler/<name>.go` into a new
   `pkg/api/v1/<service>/<service>impl.go`.
-- Translate Fiber ctx access (`ctx.Params(...)`, `ctx.Query(...)`,
+- Translate request-ctx access (`ctx.Params(...)`, `ctx.Query(...)`,
   `ctx.BodyParser(...)`) into proto request fields.
-- Translate Fiber status codes (`ctx.Status(400).SendString(msg)`) into
+- Translate old error responses (`ctx.Status(400).SendString(msg)`) into
   gRPC status errors (`status.Error(codes.InvalidArgument, msg)`) — the
   gateway converts these back to the right HTTP status codes.
 - Remove the matching `router.go` route registration.
 - Update the e2e test suite to call the new REST path (most paths
   change: `/api/form/...` → `/api/v1/forms/...`).
+
+**Fiber cleanup at the end of stage 0.7**: once every admin endpoint is
+ported, the only handlers left are the non-migrating net/http set
+(WebDAV, visitor, scripts, /hulastatus, static). Confirm there are no
+remaining Fiber imports anywhere in the tree (`grep -r "gofiber/fiber"
+/home/ubuntu/work/hulation` should return nothing) and run `go mod tidy`
+to drop `fasthttp` and friends from `go.sum`.
 
 **hulactl implication**: every ported endpoint breaks the existing
 hulactl client code. Stage 0.8 handles the migration.
@@ -789,32 +849,100 @@ gets a JWT with `AllowedServers=["server_a"]`; trying to access
 
 ---
 
-## 14. Stage 0.11 — Tests and docs
+## 14. Stage 0.11 — Tests, docs, and full green-test sign-off
 
-### 14.1 e2e harness additions
+**Goal**: every test harness Hula ships — integration and e2e — runs
+clean end-to-end against the new architecture. This is the gate that
+closes Phase 0.
 
-New suites under `test/e2e/suites/`:
+### 14.1 Update existing e2e suites for the new API surface
 
-- `13-grpc-smoke.sh` — `grpcurl -d '{}' host:443 hulation.v1.status.StatusService/Status` returns 200 via gRPC.
-- `14-rest-gateway.sh` — same endpoints reachable at `/api/v1/status` via curl (REST gateway).
+Each of the 12 existing suites under `test/e2e/suites/` needs to be
+reviewed and updated where necessary:
+
+| Suite | What changes |
+|-------|--------------|
+| `01-auth.sh` | `hulactl auth <url>` now calls the `LoginAdmin` gRPC method; the stored token format in `hulactl.yaml` is unchanged |
+| `02-admin.sh` | `generatehash`, `totp-key`, `reload` — same external interface; may invoke gRPC under the hood |
+| `03-users.sh` | `createuser`/`listusers`/`modifyuser`/`deleteuser` now go through `AuthService.CreateUser` etc. Response shapes change — assertions updated to match the new proto-generated JSON |
+| `04-forms.sh` | REST path changes: `/api/form/...` → `/api/v1/forms/...`. Direct curl assertions updated; hulactl-driven assertions untouched |
+| `05-landers.sh` | Same path shift |
+| `06-badactors.sh` | `hulactl badactors` → gRPC; path shifts for any direct curl probes |
+| `07-build.sh` | `/api/site/...` → `/api/v1/site/...` |
+| `08-staging-build.sh` | `/api/staging/build` → `/api/v1/staging/{server_id}/build` |
+| `09-staging-update.sh` | **No change** — still WebDAV PUT |
+| `10-staging-mount.sh` | **No change** — still WebDAV |
+| `11-webdav-patch.sh` | **No change** — still WebDAV; verify `PATCH X-Update-Range` + `X-Patch-Format: diff` survive the Fiber→net/http port |
+| `12-db-lifecycle.sh` | `initdb`/`deletedb` now gRPC |
+
+### 14.2 New e2e suites
+
+Under `test/e2e/suites/`:
+
+- `13-grpc-smoke.sh` — `grpcurl -d '{}' host:443 hulation.v1.status.StatusService/Status` returns 200 via native gRPC.
+- `14-rest-gateway.sh` — same endpoints reachable at `/api/v1/status` via curl (REST gateway path).
 - `15-sso-google.sh` — full Google OIDC flow using a mock OIDC provider container (spin up `dexidp/dex` configured as a fake Google).
 - `16-rbac.sh` — create user, grant server access, verify their JWT only sees the right servers.
 - `17-analytics-foundation.sh` — seed a visitor, trigger a pageview, assert the new columns (`browser`, `os`, `device_category`, `session_id`, `channel`, …) are populated in ClickHouse.
 - `18-events-migration.sh` — start with old-schema data, run the migration, confirm rows are preserved and the new columns default correctly.
+- `19-http2.sh` — `curl --http2 -v https://host/hulastatus` reports `HTTP/2`; also verify an HTTP/1.1 client still works against the same port (fallback).
+- `20-single-listener.sh` — `ss -tlnp` (or `netstat`) inside the hula container shows exactly one listening TCP port for HTTP(S) traffic (plus whatever ClickHouse has open on its own port, which is a separate process).
 
-Existing suites 01–12 are updated to hit the `/api/v1/` REST gateway
-paths (or the new hulactl, which handles the path change
-transparently).
+### 14.3 Update the integration harness (`test/integration/run.sh`)
 
-### 14.2 Docs
+The older narrower harness exercises visitor APIs, forms, and backends.
+Review each test and update where needed:
+
+- Visitor APIs (`/v/*`) — **no change**; they stay on net/http with the
+  same paths.
+- Form submission (`/v/sub/:formid`) — **no change**; visitor-facing.
+- Form CRUD in the admin path — now gRPC; the harness currently
+  constructs raw curl calls against `/api/form/...` and must be updated
+  to `/api/v1/forms/...` (or switched to `hulactl` where it's already
+  installed in the integration container).
+- Any Fiber-specific assertions (e.g., checking `X-Powered-By: Fiber`
+  headers) — delete.
+
+### 14.4 Final sign-off checklist
+
+Phase 0 is not "done" until **every one** of these is green on the same
+commit:
+
+- [ ] `go build ./...` — clean, no lint warnings.
+- [ ] `go test ./...` — all Go unit tests pass.
+- [ ] `make protobuf` — regenerates cleanly, no diff.
+- [ ] `./test/integration/run.sh` — full run, all passing.
+- [ ] `./test/e2e/run.sh` — **all 20 suites** pass (12 updated + 8 new).
+- [ ] `grep -r "gofiber/fiber\|valyala/fasthttp" /home/ubuntu/work/hulation`
+      returns nothing (verified Fiber removal).
+- [ ] `go mod tidy` leaves `go.sum` clean — no orphan fasthttp deps.
+- [ ] `ss -tlnp` inside the running hula container shows one HTTPS
+      listener (confirming the single-listener rule).
+- [ ] Smoke-test curl: `curl --http2 -v https://host/hulastatus`
+      reports HTTP/2.
+- [ ] Smoke-test gRPC: `grpcurl ... list` shows all registered
+      services.
+- [ ] Smoke-test SSO: Google login works end-to-end in a browser in the
+      e2e stack.
+
+Any failure here blocks Phase 1 from starting. Fix in place or escalate
+for a design call — do not move on.
+
+### 14.5 Docs
 
 - `pkg/apispec/v1/README.md` — how to add a new gRPC service (mirrors
   izcr's proto/service conventions).
 - `pkg/server/authware/README.md` — how permissions resolve, the
   `{server_id}` placeholder mechanism, the OPA policy file.
+- `pkg/server/unified/README.md` — the single-listener model; how the
+  gRPC / REST gateway / ServeMux fallback split works.
 - Update `DEPLOYMENT.md` with the new `auth.providers` section and the
   required `HULA_*_CLIENT_ID`/`HULA_*_CLIENT_SECRET` env vars.
-- Update `test/ABOUT.md` with the new suites.
+- Update `test/ABOUT.md` with the new suites and the updated integration
+  harness notes.
+- Add a `MIGRATION_0.md` at the repo root documenting the breaking
+  changes for anyone upgrading: path rename (`/api/*` → `/api/v1/*`),
+  Fiber removal, SSO provisioning requirement, events-table rename.
 
 ---
 
@@ -847,11 +975,14 @@ transparently).
 | `Makefile` | **Update** | Add `protobuf` target mirror of izcr's |
 | `external-versions.env` | **NEW** | Pin protoc, plugin versions |
 | `scripts/install-protoc.sh` | **NEW** (copied) | Protoc + plugin installer |
-| `server/run.go` | **Update** | Replace Fiber-only listener with unified server; keep Fiber for WebDAV + visitor + static |
-| `router/router.go` | **Update** | Strip all `/api/*` admin routes (now handled by gRPC); keep WebDAV, visitor, static |
-| `handler/{auth,forms,lander,sitedeploy,staging,api}.go` | **Delete** | Superseded by gRPC impls (except staging WebDAV parts) |
-| `handler/{visitor,redirect,common,scripts}.go` | **Keep** | Still served via Fiber |
-| `handler/staging.go` | **Trim** | Keep WebDAV handlers; remove build/reload (now gRPC) |
+| `server/run.go` | **Update** | Replace Fiber listener with the unified server; net/http throughout |
+| `router/router.go` | **Update** | Strip all `/api/*` admin routes (now gRPC); register non-migrating endpoints on the unified server's `http.ServeMux` fallback |
+| `handler/{auth,forms,lander,sitedeploy,api}.go` | **Delete** | Superseded by gRPC impls |
+| `handler/fiber_adapter.go` | **Delete** | Fiber dropped; only the net/http adapter remains |
+| `handler/nethttp_adapter.go` | **Update** | Becomes the sole request-ctx adapter |
+| `handler/{visitor,redirect,common,scripts}.go` | **Keep** | Still served via net/http through the fallback mux |
+| `handler/staging.go` | **Trim** | Keep WebDAV handlers (net/http); remove build/reload (now gRPC) |
+| `go.mod` / `go.sum` | **Update** | Drop `github.com/gofiber/fiber/v2` and `github.com/valyala/fasthttp`; `go mod tidy` |
 | `client/*.go` | **Replace** | Thin wrapper over generated gRPC clients |
 | `model/tools/hulactl/main.go` | **Update** | Call the new gRPC client |
 | `config/config.go` | **Update** | Add `auth.providers[]`, `analytics.events_ttl_days` |
