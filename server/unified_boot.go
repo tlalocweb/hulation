@@ -137,6 +137,13 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("init provider manager: %w", err)
 	}
 
+	// Register every non-gRPC HTTP endpoint (visitor tracking, scripts,
+	// /hulastatus) on the unified server's ServeMux fallback. WebDAV
+	// and per-host site routing are registered by their owning
+	// subsystems at startup time — not here, because they need
+	// host-level dispatch.
+	RegisterFallbackRoutes(srv)
+
 	unifiedLog.Infof("Unified server constructed on %s (gRPC + REST gateway + ServeMux fallback)", addr)
 	return srv, nil
 }
