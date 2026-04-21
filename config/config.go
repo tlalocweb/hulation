@@ -783,6 +783,9 @@ type Config struct {
 	// Auth providers (OIDC SSO + internal password). See pkg/server/
 	// authware/provider for the runtime. Use AuthConfig.Providers.
 	Auth *AuthConfig `yaml:"auth,omitempty"`
+	// Analytics — tunables for the visitor-analytics subsystem. All fields
+	// optional; sensible defaults applied by pkg/store/clickhouse.
+	Analytics *AnalyticsConfig `yaml:"analytics,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
