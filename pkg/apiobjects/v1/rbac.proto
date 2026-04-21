@@ -50,6 +50,18 @@ enum PermissionEffect {
   PERMISSION_EFFECT_DENY = 2;
 }
 
+// ProjectRoleAssignment is reserved for future multi-tenant deployments
+// (where a user may hold project-scoped roles within a tenant). Unused in
+// hulation v1; referenced by the adopted auth apispec so the schema stays
+// portable if distributed tenancy is enabled later.
+message ProjectRoleAssignment {
+  string project_uuid = 1;
+  string project_name = 2;
+  string role = 3;
+  google.protobuf.Timestamp granted_at = 4;
+  string granted_by = 5;
+}
+
 // RoleDefinition defines a named role with its associated permissions.
 // Built-in roles (admin, viewer, manager) are defined in code. Custom roles
 // can be stored in the database.

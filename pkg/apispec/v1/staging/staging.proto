@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+// StagingService — staging-mode build coordination.
+//
+// NOTE: staging-update and staging-mount use WebDAV (PUT, PATCH with
+// X-Update-Range / X-Patch-Format: diff) and are intentionally NOT part
+// of this gRPC service. They remain served over HTTP via the unified
+// server's fallback mux.
+
+package hulation.v1.staging;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/staging;stagingspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "pkg/apispec/v1/site/site.proto";
+
+service StagingService {
+  // StagingBuild rebuilds the long-lived staging container's output.
+  rpc StagingBuild(StagingBuildRequest) returns (StagingBuildResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/staging/{server_id}/build"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.staging.build"] };
+  }
+}
+
+message StagingBuildRequest {
+  string server_id = 1;
+  // force — if true, triggers a full clean build even if no files changed.
+  bool force = 2;
+}
+
+message StagingBuildResponse {
+  hulation.v1.site.BuildInfo build = 1;
+}

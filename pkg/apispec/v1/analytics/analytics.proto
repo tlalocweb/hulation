@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+// AnalyticsService — Phase-0 SKELETON ONLY.
+//
+// Message types and RPC shapes are defined here so the Svelte UI can begin
+// design work against a stable contract, and so downstream code generation
+// keeps working. Implementations are empty stubs in Phase 0; Phase 1 fills
+// them in.
+
+package hulation.v1.analytics;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics;analyticsspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+
+service AnalyticsService {
+  rpc Summary(SummaryRequest) returns (SummaryResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/summary" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Timeseries(TimeseriesRequest) returns (TimeseriesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/timeseries" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Pages(PagesRequest) returns (PagesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/pages" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Sources(SourcesRequest) returns (SourcesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/sources" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Geography(GeographyRequest) returns (GeographyResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/geography" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Devices(DevicesRequest) returns (DevicesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/devices" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Events(EventsRequest) returns (EventsResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/events" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc FormsReport(FormsReportRequest) returns (FormsReportResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/forms" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Visitors(VisitorsRequest) returns (VisitorsResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/visitors" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Visitor(VisitorRequest) returns (VisitorResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/visitor/{visitor_id}" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Realtime(RealtimeRequest) returns (RealtimeResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/realtime" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+}
+
+// Common filter parameters used across report queries. Every analytics RPC
+// takes these via query string (the grpc-gateway maps fields 1:1).
+message Filters {
+  // server_ids — intersected with user's allowed set by the backend.
+  repeated string server_ids = 1;
+  // from / to — ISO-8601 timestamps (e.g. "2026-04-14T00:00Z").
+  string from = 2;
+  string to = 3;
+  // granularity: "hour" | "day" | "week"
+  string granularity = 4;
+  // compare: "previous" | "previous_year" | ""
+  string compare = 5;
+  // drill-down chip filters
+  string country = 6;
+  string device = 7;
+  string source = 8;
+  string path = 9;
+  string event_code = 10;
+  string goal = 11;
+}
+
+message SummaryRequest { Filters filters = 1; string server_id = 2; }
+message SummaryResponse {
+  int64 visitors = 1;
+  int64 pageviews = 2;
+  double bounce_rate = 3;
+  double avg_session_duration_seconds = 4;
+  // deltas vs. comparison period (percent, -1 if no comparison requested).
+  double visitors_delta_pct = 5;
+  double pageviews_delta_pct = 6;
+  double bounce_rate_delta_pct = 7;
+  double avg_session_duration_delta_pct = 8;
+  repeated double sparkline = 9;
+}
+
+message TimeseriesBucket {
+  string ts = 1;
+  int64 visitors = 2;
+  int64 pageviews = 3;
+}
+
+message TimeseriesRequest { Filters filters = 1; string server_id = 2; }
+message TimeseriesResponse { repeated TimeseriesBucket buckets = 1; }
+
+message TableRow {
+  string key = 1;
+  int64 visitors = 2;
+  int64 pageviews = 3;
+  double bounce_rate = 4;
+}
+
+message PagesRequest { Filters filters = 1; string server_id = 2; }
+message PagesResponse { repeated TableRow rows = 1; }
+
+message SourcesRequest { Filters filters = 1; string server_id = 2; }
+message SourcesResponse { repeated TableRow rows = 1; }
+
+message GeographyRequest { Filters filters = 1; string server_id = 2; }
+message GeographyResponse { repeated TableRow rows = 1; }
+
+message DevicesRequest { Filters filters = 1; string server_id = 2; }
+message DevicesResponse {
+  repeated TableRow device_category = 1;
+  repeated TableRow browser = 2;
+  repeated TableRow os = 3;
+}
+
+message EventsRequest { Filters filters = 1; string server_id = 2; }
+message EventsResponse { repeated TableRow rows = 1; }
+
+message FormsReportRequest { Filters filters = 1; string server_id = 2; }
+message FormsReportResponse { repeated TableRow rows = 1; }
+
+message VisitorsRequest { Filters filters = 1; string server_id = 2; int32 limit = 3; int32 offset = 4; }
+message VisitorsResponse {
+  repeated VisitorSummary visitors = 1;
+  int32 total = 2;
+}
+
+message VisitorSummary {
+  string visitor_id = 1;
+  string email = 2;
+  string first_seen = 3;
+  string last_seen = 4;
+  int32 sessions = 5;
+  int32 pageviews = 6;
+  int32 events = 7;
+  string top_country = 8;
+  string top_device = 9;
+}
+
+message VisitorRequest { string server_id = 1; string visitor_id = 2; }
+message VisitorResponse {
+  VisitorSummary visitor = 1;
+  repeated VisitorEvent timeline = 2;
+  repeated string ips = 3;
+  repeated string cookies = 4;
+  repeated string aliases = 5;
+}
+
+message VisitorEvent {
+  string ts = 1;
+  string event_code = 2;
+  string url = 3;
+  string referrer = 4;
+  string country = 5;
+  string device = 6;
+}
+
+message RealtimeRequest { string server_id = 1; }
+message RealtimeResponse {
+  int32 active_visitors_5m = 1;
+  repeated VisitorEvent recent = 2;
+  repeated TableRow top_pages = 3;
+  repeated TableRow top_sources = 4;
+}

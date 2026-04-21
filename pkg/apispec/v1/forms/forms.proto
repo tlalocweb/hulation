@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+// FormsService — CRUD for forms hosted on a virtual server.
+
+package hulation.v1.forms;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/forms;formsspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "pkg/server/authware/proto/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+service FormsService {
+  rpc CreateForm(CreateFormRequest) returns (CreateFormResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/forms/{server_id}"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.create"] };
+  }
+
+  rpc ModifyForm(ModifyFormRequest) returns (ModifyFormResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/forms/{server_id}/{form_id}"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.modify"] };
+  }
+
+  rpc DeleteForm(DeleteFormRequest) returns (DeleteFormResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/forms/{server_id}/{form_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.delete"] };
+  }
+
+  rpc ListForms(ListFormsRequest) returns (ListFormsResponse) {
+    option (google.api.http) = { get: "/api/v1/forms/{server_id}" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.list"] };
+  }
+
+  rpc GetForm(GetFormRequest) returns (GetFormResponse) {
+    option (google.api.http) = { get: "/api/v1/forms/{server_id}/{form_id}" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.read"] };
+  }
+}
+
+// FieldDefinition describes a single input in a form's schema.
+message FieldDefinition {
+  string name = 1;
+  // type one of: text, email, number, tel, url, textarea, select, checkbox, radio, hidden
+  string type = 2;
+  bool required = 3;
+  string label = 4;
+  string placeholder = 5;
+  // options populate select/radio inputs.
+  repeated string options = 6;
+  // regex is an optional validation pattern.
+  string regex = 7;
+}
+
+// Form is the form configuration payload.
+message Form {
+  string id = 1;
+  string server_id = 2;
+  string name = 3;
+  string description = 4;
+  repeated FieldDefinition fields = 5;
+  // redirect_url is where the browser is sent after a successful submission.
+  string redirect_url = 6;
+  // email_notify_to — comma-separated recipients for submission notifications.
+  string email_notify_to = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message CreateFormRequest {
+  string server_id = 1;
+  Form form = 2;
+}
+
+message CreateFormResponse {
+  Form form = 1;
+}
+
+message ModifyFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+  Form form = 3;
+}
+
+message ModifyFormResponse {
+  Form form = 1;
+}
+
+message DeleteFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+}
+
+message DeleteFormResponse {
+  bool ok = 1;
+}
+
+message ListFormsRequest {
+  string server_id = 1;
+}
+
+message ListFormsResponse {
+  repeated Form forms = 1;
+}
+
+message GetFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+}
+
+message GetFormResponse {
+  Form form = 1;
+}

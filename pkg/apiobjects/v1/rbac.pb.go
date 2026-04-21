@@ -301,6 +301,86 @@ func (x *PrincipalRef) GetProvider() *AuthProviderRef {
 	return nil
 }
 
+// ProjectRoleAssignment is reserved for future multi-tenant deployments
+// (where a user may hold project-scoped roles within a tenant). Unused in
+// hulation v1; referenced by the adopted auth apispec so the schema stays
+// portable if distributed tenancy is enabled later.
+type ProjectRoleAssignment struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProjectUuid   string                 `protobuf:"bytes,1,opt,name=project_uuid,json=projectUuid,proto3" json:"project_uuid,omitempty"`
+	ProjectName   string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
+	GrantedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,5,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProjectRoleAssignment) Reset() {
+	*x = ProjectRoleAssignment{}
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProjectRoleAssignment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProjectRoleAssignment) ProtoMessage() {}
+
+func (x *ProjectRoleAssignment) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProjectRoleAssignment.ProtoReflect.Descriptor instead.
+func (*ProjectRoleAssignment) Descriptor() ([]byte, []int) {
+	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ProjectRoleAssignment) GetProjectUuid() string {
+	if x != nil {
+		return x.ProjectUuid
+	}
+	return ""
+}
+
+func (x *ProjectRoleAssignment) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *ProjectRoleAssignment) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *ProjectRoleAssignment) GetGrantedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.GrantedAt
+	}
+	return nil
+}
+
+func (x *ProjectRoleAssignment) GetGrantedBy() string {
+	if x != nil {
+		return x.GrantedBy
+	}
+	return ""
+}
+
 // RoleDefinition defines a named role with its associated permissions.
 // Built-in roles (admin, viewer, manager) are defined in code. Custom roles
 // can be stored in the database.
@@ -321,7 +401,7 @@ type RoleDefinition struct {
 
 func (x *RoleDefinition) Reset() {
 	*x = RoleDefinition{}
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[2]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -333,7 +413,7 @@ func (x *RoleDefinition) String() string {
 func (*RoleDefinition) ProtoMessage() {}
 
 func (x *RoleDefinition) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[2]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -346,7 +426,7 @@ func (x *RoleDefinition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoleDefinition.ProtoReflect.Descriptor instead.
 func (*RoleDefinition) Descriptor() ([]byte, []int) {
-	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{2}
+	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RoleDefinition) GetUuid() string {
@@ -439,7 +519,7 @@ type RoleAssignment struct {
 
 func (x *RoleAssignment) Reset() {
 	*x = RoleAssignment{}
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[3]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -451,7 +531,7 @@ func (x *RoleAssignment) String() string {
 func (*RoleAssignment) ProtoMessage() {}
 
 func (x *RoleAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[3]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -464,7 +544,7 @@ func (x *RoleAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoleAssignment.ProtoReflect.Descriptor instead.
 func (*RoleAssignment) Descriptor() ([]byte, []int) {
-	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{3}
+	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RoleAssignment) GetUuid() string {
@@ -535,7 +615,7 @@ type PermissionGrant struct {
 
 func (x *PermissionGrant) Reset() {
 	*x = PermissionGrant{}
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[4]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -547,7 +627,7 @@ func (x *PermissionGrant) String() string {
 func (*PermissionGrant) ProtoMessage() {}
 
 func (x *PermissionGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[4]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -560,7 +640,7 @@ func (x *PermissionGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionGrant.ProtoReflect.Descriptor instead.
 func (*PermissionGrant) Descriptor() ([]byte, []int) {
-	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{4}
+	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PermissionGrant) GetUuid() string {
@@ -633,7 +713,7 @@ type PermissionSource struct {
 
 func (x *PermissionSource) Reset() {
 	*x = PermissionSource{}
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[5]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -645,7 +725,7 @@ func (x *PermissionSource) String() string {
 func (*PermissionSource) ProtoMessage() {}
 
 func (x *PermissionSource) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[5]
+	mi := &file_pkg_apiobjects_v1_rbac_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -658,7 +738,7 @@ func (x *PermissionSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionSource.ProtoReflect.Descriptor instead.
 func (*PermissionSource) Descriptor() ([]byte, []int) {
-	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{5}
+	return file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PermissionSource) GetPermission() string {
@@ -708,7 +788,15 @@ const file_pkg_apiobjects_v1_rbac_proto_rawDesc = "" +
 	"\x04kind\x18\x01 \x01(\x0e2%.hulation.v1.apiobjects.PrincipalKindR\x04kind\x12\x12\n" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12!\n" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12C\n" +
-	"\bprovider\x18\x04 \x01(\v2'.hulation.v1.apiobjects.AuthProviderRefR\bprovider\"\xed\x02\n" +
+	"\bprovider\x18\x04 \x01(\v2'.hulation.v1.apiobjects.AuthProviderRefR\bprovider\"\xcb\x01\n" +
+	"\x15ProjectRoleAssignment\x12!\n" +
+	"\fproject_uuid\x18\x01 \x01(\tR\vprojectUuid\x12!\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x12\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\x129\n" +
+	"\n" +
+	"granted_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tgrantedAt\x12\x1d\n" +
+	"\n" +
+	"granted_by\x18\x05 \x01(\tR\tgrantedBy\"\xed\x02\n" +
 	"\x0eRoleDefinition\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -785,31 +873,33 @@ func file_pkg_apiobjects_v1_rbac_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_apiobjects_v1_rbac_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pkg_apiobjects_v1_rbac_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_pkg_apiobjects_v1_rbac_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_pkg_apiobjects_v1_rbac_proto_goTypes = []any{
 	(PrincipalKind)(0),            // 0: hulation.v1.apiobjects.PrincipalKind
 	(SystemRole)(0),               // 1: hulation.v1.apiobjects.SystemRole
 	(PermissionEffect)(0),         // 2: hulation.v1.apiobjects.PermissionEffect
 	(*AuthProviderRef)(nil),       // 3: hulation.v1.apiobjects.AuthProviderRef
 	(*PrincipalRef)(nil),          // 4: hulation.v1.apiobjects.PrincipalRef
-	(*RoleDefinition)(nil),        // 5: hulation.v1.apiobjects.RoleDefinition
-	(*RoleAssignment)(nil),        // 6: hulation.v1.apiobjects.RoleAssignment
-	(*PermissionGrant)(nil),       // 7: hulation.v1.apiobjects.PermissionGrant
-	(*PermissionSource)(nil),      // 8: hulation.v1.apiobjects.PermissionSource
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
+	(*ProjectRoleAssignment)(nil), // 5: hulation.v1.apiobjects.ProjectRoleAssignment
+	(*RoleDefinition)(nil),        // 6: hulation.v1.apiobjects.RoleDefinition
+	(*RoleAssignment)(nil),        // 7: hulation.v1.apiobjects.RoleAssignment
+	(*PermissionGrant)(nil),       // 8: hulation.v1.apiobjects.PermissionGrant
+	(*PermissionSource)(nil),      // 9: hulation.v1.apiobjects.PermissionSource
+	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
 }
 var file_pkg_apiobjects_v1_rbac_proto_depIdxs = []int32{
-	0, // 0: hulation.v1.apiobjects.PrincipalRef.kind:type_name -> hulation.v1.apiobjects.PrincipalKind
-	3, // 1: hulation.v1.apiobjects.PrincipalRef.provider:type_name -> hulation.v1.apiobjects.AuthProviderRef
-	9, // 2: hulation.v1.apiobjects.RoleDefinition.created_at:type_name -> google.protobuf.Timestamp
-	9, // 3: hulation.v1.apiobjects.RoleDefinition.updated_at:type_name -> google.protobuf.Timestamp
-	9, // 4: hulation.v1.apiobjects.RoleAssignment.granted_at:type_name -> google.protobuf.Timestamp
-	9, // 5: hulation.v1.apiobjects.PermissionGrant.granted_at:type_name -> google.protobuf.Timestamp
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0,  // 0: hulation.v1.apiobjects.PrincipalRef.kind:type_name -> hulation.v1.apiobjects.PrincipalKind
+	3,  // 1: hulation.v1.apiobjects.PrincipalRef.provider:type_name -> hulation.v1.apiobjects.AuthProviderRef
+	10, // 2: hulation.v1.apiobjects.ProjectRoleAssignment.granted_at:type_name -> google.protobuf.Timestamp
+	10, // 3: hulation.v1.apiobjects.RoleDefinition.created_at:type_name -> google.protobuf.Timestamp
+	10, // 4: hulation.v1.apiobjects.RoleDefinition.updated_at:type_name -> google.protobuf.Timestamp
+	10, // 5: hulation.v1.apiobjects.RoleAssignment.granted_at:type_name -> google.protobuf.Timestamp
+	10, // 6: hulation.v1.apiobjects.PermissionGrant.granted_at:type_name -> google.protobuf.Timestamp
+	7,  // [7:7] is the sub-list for method output_type
+	7,  // [7:7] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_pkg_apiobjects_v1_rbac_proto_init() }
@@ -823,7 +913,7 @@ func file_pkg_apiobjects_v1_rbac_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apiobjects_v1_rbac_proto_rawDesc), len(file_pkg_apiobjects_v1_rbac_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

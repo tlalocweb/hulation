@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+// BadActorService — anti-abuse admin APIs.
+
+package hulation.v1.badactor;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor;badactorspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service BadActorService {
+  rpc ListBadActors(ListBadActorsRequest) returns (ListBadActorsResponse) {
+    option (google.api.http) = { get: "/api/v1/badactors" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc ManualBlock(ManualBlockRequest) returns (ManualBlockResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/badactors/block"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc EvictBadActor(EvictBadActorRequest) returns (EvictBadActorResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/badactors/block/{ip}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc ListAllowlist(ListAllowlistRequest) returns (ListAllowlistResponse) {
+    option (google.api.http) = { get: "/api/v1/badactors/allowlist" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc AddToAllowlist(AddToAllowlistRequest) returns (AddToAllowlistResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/badactors/allowlist"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc RemoveFromAllowlist(RemoveFromAllowlistRequest) returns (RemoveFromAllowlistResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/badactors/allowlist/{ip}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc BadActorStats(BadActorStatsRequest) returns (BadActorStatsResponse) {
+    option (google.api.http) = { get: "/api/v1/badactors/stats" };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+  }
+
+  rpc ListSignatures(ListSignaturesRequest) returns (ListSignaturesResponse) {
+    option (google.api.http) = { get: "/api/v1/badactors/signatures" };
+    option (izuma.auth.permission) = { needs: ["superadmin.badactor.read"] };
+  }
+}
+
+message BadActor {
+  string ip = 1;
+  string reason = 2;
+  // country_code from IP geo lookup.
+  string country_code = 3;
+  string asn = 4;
+  string org = 5;
+  // hit_count — number of times this IP tripped a signature.
+  int64 hit_count = 6;
+  google.protobuf.Timestamp first_seen = 7;
+  google.protobuf.Timestamp last_seen = 8;
+  // signature_id — which rule matched (if blocked automatically).
+  string signature_id = 9;
+  // manual — true when the block was added by an operator, not a signature.
+  bool manual = 10;
+}
+
+message AllowlistEntry {
+  string ip = 1;
+  string reason = 2;
+  string added_by = 3;
+  google.protobuf.Timestamp added_at = 4;
+}
+
+message Signature {
+  string id = 1;
+  string description = 2;
+  // pattern is the regex / glob matched against paths, UAs, etc.
+  string pattern = 3;
+  // target: path, ua, query, method
+  string target = 4;
+  // severity: log, rate_limit, block
+  string severity = 5;
+}
+
+message ListBadActorsRequest {
+  string server_id = 1;
+  int32 limit = 2;
+}
+
+message ListBadActorsResponse {
+  repeated BadActor actors = 1;
+}
+
+message ManualBlockRequest {
+  string server_id = 1;
+  string ip = 2;
+  string reason = 3;
+}
+
+message ManualBlockResponse {
+  BadActor actor = 1;
+}
+
+message EvictBadActorRequest {
+  string server_id = 1;
+  string ip = 2;
+}
+
+message EvictBadActorResponse {
+  bool ok = 1;
+}
+
+message ListAllowlistRequest {
+  string server_id = 1;
+}
+
+message ListAllowlistResponse {
+  repeated AllowlistEntry entries = 1;
+}
+
+message AddToAllowlistRequest {
+  string server_id = 1;
+  string ip = 2;
+  string reason = 3;
+}
+
+message AddToAllowlistResponse {
+  AllowlistEntry entry = 1;
+}
+
+message RemoveFromAllowlistRequest {
+  string server_id = 1;
+  string ip = 2;
+}
+
+message RemoveFromAllowlistResponse {
+  bool ok = 1;
+}
+
+message BadActorStatsRequest {
+  string server_id = 1;
+}
+
+message BadActorStatsResponse {
+  int64 blocked_total = 1;
+  int64 blocked_last_24h = 2;
+  int64 allowlist_size = 3;
+  // top_sources_24h — ASN/country buckets for observability.
+  repeated StatBucket top_sources_24h = 4;
+}
+
+message StatBucket {
+  string key = 1;
+  int64 count = 2;
+}
+
+message ListSignaturesRequest {}
+
+message ListSignaturesResponse {
+  repeated Signature signatures = 1;
+}

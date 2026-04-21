@@ -1,0 +1,965 @@
+syntax = "proto3";
+package hulation.v1.auth;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/auth;authspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "pkg/server/authware/proto/annotations.proto";
+import "pkg/apiobjects/v1/user.proto";
+import "pkg/apiobjects/v1/rbac.proto";
+import "pkg/apiobjects/v1/tenant.proto";
+import "google/protobuf/timestamp.proto";
+
+service AuthService {
+    // Login for the "admin" user - root user with special privileges
+    // whose credentials are stored internally in izcr
+    rpc LoginAdmin(LoginAdminRequest) returns (LoginAdminResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/admin"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // Login with a secret (password) - used for providers like Keycloak
+    rpc LoginWithSecret(LoginWithSecretRequest) returns (LoginWithSecretResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/secret"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // Login via OpenID Connect - first step in three-step process
+    rpc LoginOIDC(LoginOIDCRequest) returns (LoginOIDCResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/oidc"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // Login with code - third step in OIDC login process
+    rpc LoginWithCode(LoginWithCodeRequest) returns (LoginWithCodeResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/code"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // List all users
+    rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/users/list"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.list"]
+        };
+    }
+
+    // List all users as tenant admin
+    rpc ListUsersAsTenant(ListUsersAsTenantRequest) returns (ListUsersResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/{tenant_uuid}/users/list"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.list"]
+        };
+    }
+
+    // Create a new user
+    rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/users"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.create"]
+        };
+    }
+
+    // this is a variation of CreateUser - by for a tenant admin to be able to create a user for a tenant
+    // this is the common way to create a user for a tenant (most tenant admins are not superadmin.* permissions)
+    rpc CreateUserAsTenant(CreateUserAsTenantRequest) returns (CreateUserResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/{tenant_uuid}/users"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.create"]
+        };
+    }
+
+    // Patch/update a user
+    rpc PatchUser(PatchUserRequest) returns (PatchUserResponse) {
+        option (google.api.http) = {
+            patch: "/api/v1/auth/user"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.modify"]
+        };
+    }
+
+    // Patch/update a user for a tenant
+    rpc PatchUserAsTenant(PatchUserAsTenantRequest) returns (PatchUserResponse) {
+        option (google.api.http) = {
+            patch: "/api/v1/auth/{tenant_uuid}/users/{user_id}"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.modify"]
+        };
+    }
+
+    // Delete a user (superadmin - actually deletes from system)
+    rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/user/delete"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.delete"]
+        };
+    }
+
+    // Delete/remove a user from a tenant (tenant admin - removes from tenant only)
+    // If user belongs to other tenants, they remain in the system.
+    // If user has no other tenant memberships, they become an orphan user.
+    rpc DeleteUserAsTenant(DeleteUserAsTenantRequest) returns (DeleteUserResponse) {
+        option (google.api.http) = {
+            delete: "/api/v1/auth/{tenant_uuid}/users/{user_id}"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.delete"]
+        };
+    }
+
+    // Get a single user by ID or username
+    rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/users/{user_id}"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.read"]
+        };
+    }
+
+    // Search users by username pattern
+    rpc SearchUsers(SearchUsersRequest) returns (SearchUsersResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/users/search"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.list"]
+        };
+    }
+
+    // Update user password
+    rpc UpdateUserPassword(UpdateUserPasswordRequest) returns (UpdateUserPasswordResponse) {
+        option (google.api.http) = {
+            put: "/api/v1/users/{user_id}/password"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.modify"]
+        };
+    }
+
+    // Set user system admin flag
+    rpc SetUserSysAdmin(SetUserSysAdminRequest) returns (SetUserSysAdminResponse) {
+        option (google.api.http) = {
+            put: "/api/v1/users/{user_id}/sysadmin"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.modify"]
+        };
+    }
+
+    // WhoAmI validates the current token and returns user information
+    // Allowed for users with unvalidated email so they can check their status
+    rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/whoami"
+        };
+        option (annotations.skip_email_validation) = true;
+        option (annotations.skip_auth_setup_check) = true;
+    }
+
+    // GetMyPermissions returns the effective permissions for the current authenticated user.
+    // Any authenticated user can call this to see their own permissions.
+    rpc GetMyPermissions(GetMyPermissionsRequest) returns (GetUserPermissionsResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/me/permissions"
+        };
+        // No permission requirement - any authenticated user can see their own permissions
+    }
+
+    // ListAuthProviders returns available authentication providers for login
+    rpc ListAuthProviders(ListAuthProvidersRequest) returns (ListAuthProvidersResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/providers"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // ValidateEmail validates a user's email address using a token from their email
+    // This endpoint does not require authentication
+    rpc ValidateEmail(ValidateEmailRequest) returns (ValidateEmailResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/validate-email"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // ResendValidationEmail resends the email validation link to the authenticated user
+    // Allowed for users with unvalidated email
+    rpc ResendValidationEmail(ResendValidationEmailRequest) returns (ResendValidationEmailResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/resend-validation"
+            body: "*"
+        };
+        option (annotations.skip_email_validation) = true;
+    }
+
+    // InviteUser invites a new user by email
+    // The invited user will receive an email with a validation link
+    rpc InviteUser(InviteUserRequest) returns (InviteUserResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/invite"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.create"]
+        };
+    }
+
+    rpc InviteUserAsTenant(InviteUserAsTenantRequest) returns (InviteUserAsTenantResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/{tenant_uuid}/invite"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.create"]
+        };
+    }
+
+    // ResendInviteUser resends the invitation email to a user who hasn't accepted yet
+    // Only works if last_auth_change_at is zero (user hasn't completed auth setup)
+    rpc ResendInviteUser(ResendInviteUserRequest) returns (ResendInviteUserResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/invite/resend"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.create"]
+        };
+    }
+
+    rpc ResendInviteUserAsTenant(ResendInviteUserAsTenantRequest) returns (ResendInviteUserAsTenantResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/{tenant_uuid}/invite/resend"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["tenant.{tenant_uuid}.user.create"]
+        };
+    }
+
+    // AdminValidateUserEmail allows a superadmin to mark a user's email as validated
+    // This is useful for testing or when email delivery is not available
+    rpc AdminValidateUserEmail(AdminValidateUserEmailRequest) returns (AdminValidateUserEmailResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/admin/validate-email"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.modify"]
+        };
+    }
+
+    // SetInitialPassword sets the initial password for a newly invited user
+    // Only works if last_auth_change_at is zero (user hasn't completed auth setup)
+    // Uses limited JWT token (auth_setup_only=true) obtained after email validation
+    rpc SetInitialPassword(SetInitialPasswordRequest) returns (SetInitialPasswordResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/set-password"
+            body: "*"
+        };
+        option (annotations.skip_email_validation) = true;
+        option (annotations.skip_auth_setup_check) = true;
+    }
+
+    // RequestPasswordReset sends a password reset email to the user
+    // Always returns success to prevent email enumeration attacks
+    rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/request-password-reset"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // ValidatePasswordResetToken validates a password reset token and returns a limited JWT
+    // The limited JWT can be used to set a new password via SetInitialPassword
+    rpc ValidatePasswordResetToken(ValidatePasswordResetTokenRequest) returns (ValidatePasswordResetTokenResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/validate-reset-token"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // ============================================================================
+    // Token Refresh API
+    // ============================================================================
+
+    // RefreshToken generates a new JWT with updated permissions checksum.
+    // This does not require re-authentication - it validates the current token
+    // and returns a new token with the latest permissions.
+    // Use this when receiving a 403 with error code PERMISSIONS_STALE.
+    rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/refresh"
+            body: "*"
+        };
+        option (annotations.skip_email_validation) = true;
+    }
+
+    // ============================================================================
+    // Admin Permission Testing APIs
+    // ============================================================================
+
+    // CheckUserPermission checks if a user has a specific permission.
+    // This is an admin-only API for testing and debugging permission configurations.
+    // Superadmins can check any user; tenant admins can check users in their tenant.
+    rpc CheckUserPermission(CheckUserPermissionRequest) returns (CheckUserPermissionResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/admin/permissions/check"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            or: [
+                { needs: ["superadmin.permissions.check"] },
+                { needs: ["tenant.{tenant_uuid}.permissions.check"] }
+            ]
+        };
+    }
+
+    // GetUserPermissions retrieves all effective permissions for a user.
+    // Returns both allow and deny permissions with their sources (roles, groups, direct grants).
+    // Superadmins can get permissions for any user; tenant admins can get permissions for tenant users.
+    rpc GetUserPermissions(GetUserPermissionsRequest) returns (GetUserPermissionsResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/admin/users/{user_identifier}/permissions"
+        };
+        option (izuma.auth.permission) = {
+            or: [
+                { needs: ["superadmin.permissions.read"] },
+                { needs: ["tenant.{tenant_uuid}.permissions.read"] }
+            ]
+        };
+    }
+
+    // ============================================================================
+    // TOTP (Two-Factor Authentication) APIs
+    // ============================================================================
+
+    // TotpSetup begins TOTP enrollment. Returns secret, provisioning URI, and recovery codes.
+    rpc TotpSetup(TotpSetupRequest) returns (TotpSetupResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/totp/setup"
+            body: "*"
+        };
+        option (annotations.skip_totp_check) = true;
+        option (annotations.skip_email_validation) = true;
+    }
+
+    // TotpVerifySetup verifies TOTP enrollment with the first authenticator code.
+    rpc TotpVerifySetup(TotpVerifySetupRequest) returns (TotpVerifySetupResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/totp/verify-setup"
+            body: "*"
+        };
+        option (annotations.skip_totp_check) = true;
+        option (annotations.skip_email_validation) = true;
+    }
+
+    // TotpValidate validates a TOTP code during login (second step after password).
+    rpc TotpValidate(TotpValidateRequest) returns (TotpValidateResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/totp/validate"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // TotpDisable disables TOTP for the authenticated user (requires current TOTP code).
+    rpc TotpDisable(TotpDisableRequest) returns (TotpDisableResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/totp/disable"
+            body: "*"
+        };
+        option (annotations.skip_email_validation) = true;
+    }
+
+    // TotpAdminReset resets TOTP for a user (admin emergency reset).
+    rpc TotpAdminReset(TotpAdminResetRequest) returns (TotpAdminResetResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/totp/admin/reset"
+            body: "*"
+        };
+        option (izuma.auth.permission) = {
+            needs: ["superadmin.user.modify"]
+        };
+    }
+
+    // TotpStatus returns TOTP status for the authenticated user.
+    rpc TotpStatus(TotpStatusRequest) returns (TotpStatusResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/auth/totp/status"
+        };
+        option (annotations.skip_totp_check) = true;
+        option (annotations.skip_email_validation) = true;
+    }
+}
+
+// Admin login messages
+message LoginAdminRequest {
+    string username = 1;
+    string hash = 2;
+}
+
+message LoginAdminResponse {
+    string admintoken = 1;
+    optional string error = 2;
+    bool totp_required = 3;
+}
+
+// Secret/password login messages
+message LoginWithSecretRequest {
+    string identity = 1;
+    string secret = 2;
+    string provider = 3;
+    optional string tenantId = 4;
+    optional string clientId = 5;
+}
+
+message LoginWithSecretResponse {
+    string token = 1;
+    optional string error = 2;
+    string provider = 3;
+    string providertype = 4;
+    string username = 5;
+    string email = 6;
+    bool totp_required = 7;
+}
+
+// OIDC login messages
+message LoginOIDCRequest {
+    string username = 1;
+    string onetimetoken = 2;
+}
+
+message LoginOIDCResponse {
+    string url = 1;
+    string instructions = 2;
+    optional string error = 3;
+}
+
+message LoginWithCodeRequest {
+    string code = 1;
+    string onetimetoken = 2;
+    string provider = 3;
+}
+
+message LoginWithCodeResponse {
+    string token = 1;
+    optional string error = 2;
+    string provider = 3;
+    optional string tenantId = 4;
+}
+
+// User management messages
+message ListUsersRequest {
+    string filter = 1;
+}
+
+message ListUsersResponse {
+    repeated hulation.v1.apiobjects.User users = 1;
+}
+
+// ListUsersAsTenantRequest - tenant admin lists users in their tenant
+message ListUsersAsTenantRequest {
+    string filter = 1;
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+message CreateUserRequest {
+    hulation.v1.apiobjects.User user = 1;
+}
+
+message CreateUserResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;
+}
+
+// CreateUserAsTenantRequest - tenant admin creates a user within their tenant
+message CreateUserAsTenantRequest {
+    // User data to create
+    hulation.v1.apiobjects.User user = 1;
+    // Role to assign in tenant (VIEWER, MEMBER, OPERATOR)
+    hulation.v1.apiobjects.TenantRole tenant_role = 2;
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+message PatchUserRequest {
+    string identity = 1;
+    hulation.v1.apiobjects.User user = 2;
+    bool createIfNotExists = 3;
+    // NOTE: remove_roles and remove_tenant_roles fields removed as the underlying
+    // role structure has changed from Roles/TenantRoles to SystemRoles/ProjectRoles
+    // map<string, int64> remove_roles = 4;
+    // map<string, hulation.v1.apiobjects.RoleMap> remove_tenant_roles = 5;
+}
+
+message PatchUserResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;
+}
+
+// PatchUserAsTenantRequest - tenant admin patches a user in their tenant
+message PatchUserAsTenantRequest {
+    // User ID from URL path (UUID or username)
+    string user_id = 1;
+    // User data to patch
+    hulation.v1.apiobjects.User user = 2;
+    // Optional: Update tenant role
+    optional hulation.v1.apiobjects.TenantRole new_tenant_role = 3;
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+// DeleteUserAsTenantRequest - tenant admin removes a user from their tenant
+// This does NOT delete the user from the system - only removes them from the tenant.
+// If the user belongs to other tenants, they remain in the system.
+message DeleteUserAsTenantRequest {
+    // User ID from URL path (UUID or username)
+    string user_id = 1;
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+message DeleteUserRequest {
+    string identity = 1;
+    string authprovider = 2;
+    optional string email = 3;
+}
+
+message DeleteUserResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// GetUser messages
+message GetUserRequest {
+    string user_id = 1; // Can be username or UUID
+    // comma separated list of options for the get user API, such as "include_roles" etc.
+    string options = 2;
+}
+
+message GetUserResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;
+    // TODO: Additional fields based on options - to be implemented when role store is ready
+    // repeated hulation.v1.apiobjects.Role role = 4;
+    // repeated hulation.v1.apiobjects.ProjectRole project_role = 5;
+    // repeated hulation.v1.apiobjects.Project project = 6;
+}
+
+// SearchUsers messages
+message SearchUsersRequest {
+    string username = 1; // Search pattern for username
+    optional string filter = 2; // Optional filter (e.g., "wdeleted")
+}
+
+message SearchUsersResponse {
+    string status = 1;
+    optional string error = 2;
+    repeated hulation.v1.apiobjects.User users = 3;
+}
+
+// UpdateUserPassword messages
+message UpdateUserPasswordRequest {
+    string user_id = 1; // User to update
+    string old_password = 2; // Current password for verification
+    string new_password = 3; // New password to set
+}
+
+message UpdateUserPasswordResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// UpdatePassword messages - for provider interface
+message UpdatePasswordRequest {
+    string identity = 1; // User identity
+    string old_password = 2; // Current password for verification
+    string new_password = 3; // New password to set
+    string provider = 4; // Provider name
+}
+
+message UpdatePasswordResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// SetUserSysAdmin messages
+message SetUserSysAdminRequest {
+    string user_id = 1; // User to modify
+    bool sysadmin_flag = 2; // true to grant admin, false to revoke
+}
+
+message SetUserSysAdminResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;
+}
+
+// WhoAmI messages - validates token and returns user info
+message WhoAmIRequest {
+    // No fields needed - token is in authorization header
+}
+
+message WhoAmIResponse {
+    string status = 1;
+    optional string error = 2;
+    string username = 3;        // Username (or "root" for admin)
+    repeated string roles = 4;  // User roles
+    bool is_admin = 5;          // True if user has admin role
+    string token_expires = 6;   // Token expiration time (RFC3339)
+    bool email_validated = 7;   // True if user's email is validated
+    string email = 8;           // User's email address
+    string pending_validation_email = 9; // Email awaiting validation (if any)
+    bool needs_auth_setup = 10; // True if user needs to complete auth setup (password/IdP)
+    bool totp_enabled = 11;           // True if user has TOTP enabled
+    bool totp_required_by_tenant = 12; // True if any tenant requires TOTP
+}
+
+// GetMyPermissions request - no fields needed, uses JWT identity
+message GetMyPermissionsRequest {
+    // No fields needed - user identity is from JWT token
+}
+
+// ValidateEmail messages - validates email via token from email link
+message ValidateEmailRequest {
+    string token = 1;  // Validation token from email link
+}
+
+message ValidateEmailResponse {
+    string status = 1;
+    optional string error = 2;
+    string redirect_url = 3;  // URL to redirect user after validation
+    string jwt_token = 4;     // Limited JWT token for auth setup (auth_setup_only=true)
+}
+
+// ResendValidationEmail messages - resend validation email to authenticated user
+message ResendValidationEmailRequest {
+    // No fields needed - uses authenticated user's email
+}
+
+message ResendValidationEmailResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// InviteUser messages - invite a new user by email
+message InviteUserRequest {
+    string email = 1;                                              // Email address to invite
+    string display_name = 2;                                       // Display name for the new user
+    repeated hulation.v1.apiobjects.SystemRole system_roles = 3;       // System roles to assign
+    repeated hulation.v1.apiobjects.ProjectRoleAssignment project_roles = 4;  // Project roles to assign
+}
+
+message InviteUserResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;  // The created user
+}
+
+// ResendInviteUser messages - resend invitation to pending user
+message ResendInviteUserRequest {
+    string email = 1;  // Email address of the invited user
+}
+
+message ResendInviteUserResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;  // The user (with updated pending validation)
+}
+
+// InviteUserAsTenant messages - tenant admin invites a new user to their tenant
+message InviteUserAsTenantRequest {
+    string email = 1;                                  // Email address to invite
+    string display_name = 2;                           // Display name for the new user
+    hulation.v1.apiobjects.TenantRole tenant_role = 3;     // Role to assign in tenant
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+message InviteUserAsTenantResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;  // The created/invited user
+}
+
+// ResendInviteUserAsTenant messages - tenant admin resends invitation
+message ResendInviteUserAsTenantRequest {
+    string email = 1;  // Email address of the invited user
+    // Tenant UUID from URL path - field 10 by convention for tenant_uuid
+    string tenant_uuid = 10;
+}
+
+message ResendInviteUserAsTenantResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;  // The user (with updated pending validation)
+}
+
+// AdminValidateUserEmail messages - admin validates a user's email
+message AdminValidateUserEmailRequest {
+    string user_identifier = 1;  // User email or UUID
+}
+
+message AdminValidateUserEmailResponse {
+    string status = 1;
+    optional string error = 2;
+    hulation.v1.apiobjects.User user = 3;  // The updated user
+}
+
+// SetInitialPassword messages - set password for newly invited users
+message SetInitialPasswordRequest {
+    string new_password_hash = 1;  // SHA256 hash of the new password
+}
+
+message SetInitialPasswordResponse {
+    string status = 1;
+    optional string error = 2;
+    string jwt_token = 3;  // Full JWT token after successful password setup
+}
+
+// RequestPasswordReset messages - request password reset by email
+message RequestPasswordResetRequest {
+    string email = 1;  // Email address to send reset link to
+}
+
+message RequestPasswordResetResponse {
+    string status = 1;  // Always "success" to prevent email enumeration
+    optional string error = 2;
+}
+
+// ValidatePasswordResetToken messages - validate reset token and get limited JWT
+message ValidatePasswordResetTokenRequest {
+    string token = 1;  // Password reset token from email link
+}
+
+message ValidatePasswordResetTokenResponse {
+    string status = 1;
+    optional string error = 2;
+    string jwt_token = 3;     // Limited JWT (auth_setup_only=true) for password setup
+    string redirect_url = 4;  // URL to redirect user after token validation
+}
+
+// ListAuthProviders messages - returns available OIDC/OAuth providers
+message ListAuthProvidersRequest {
+    // No fields needed
+}
+
+message ListAuthProvidersResponse {
+    repeated AuthProviderInfo providers = 1;
+}
+
+message AuthProviderInfo {
+    string name = 1;           // Provider identifier (e.g., "google")
+    string type = 2;           // Provider type (e.g., "oidc")
+    string display_name = 3;   // Human-readable name (e.g., "Google")
+    string icon_url = 4;       // URL to provider icon
+    string auth_url = 5;       // Pre-generated authorization URL for one-click login
+}
+
+// ============================================================================
+// Token Refresh Messages
+// ============================================================================
+
+// RefreshToken - refresh JWT with updated permissions
+message RefreshTokenRequest {
+    // No fields needed - uses current token from Authorization header
+}
+
+message RefreshTokenResponse {
+    string status = 1;
+    optional string error = 2;
+    // New JWT token with updated permissions checksum
+    string token = 3;
+    // True if permissions were actually changed since the old token was issued
+    bool permissions_changed = 4;
+}
+
+// ============================================================================
+// Admin Permission Testing Messages
+// ============================================================================
+
+// CheckUserPermission - test if a user has a specific permission
+message CheckUserPermissionRequest {
+    // User identifier (UUID or email)
+    string user_identifier = 1;
+    // The permission to check (e.g., "tenant.abc123.project.xyz.registry.write")
+    string permission = 2;
+    // Optional: Tenant UUID for tenant-scoped permission checking.
+    // Required when called by a tenant admin (used for permission validation).
+    string tenant_uuid = 3;
+}
+
+message CheckUserPermissionResponse {
+    // Whether the permission is allowed
+    bool allowed = 1;
+    // If allowed, which permission granted access (may be wildcard)
+    string matched_allow_permission = 2;
+    // If denied, the reason: "no_matching_allow" or "explicit_deny"
+    string denial_reason = 3;
+    // If explicit deny, which deny permission matched
+    string matched_deny_permission = 4;
+}
+
+// GetUserPermissions - get all effective permissions for a user
+message GetUserPermissionsRequest {
+    // User identifier (UUID or email)
+    string user_identifier = 1;
+    // Optional: Tenant UUID for tenant-scoped permission retrieval.
+    // Required when called by a tenant admin (used for permission validation).
+    string tenant_uuid = 2;
+}
+
+message GetUserPermissionsResponse {
+    // All allow permissions (from roles, groups, direct grants)
+    repeated string allow_permissions = 1;
+    // All deny permissions
+    repeated string deny_permissions = 2;
+    // Breakdown by source (for debugging/audit)
+    repeated PermissionSourceInfo permission_sources = 3;
+}
+
+// PermissionSourceInfo tracks where a permission came from
+message PermissionSourceInfo {
+    // The resolved permission string
+    string permission = 1;
+    // Source type: "role", "group", "direct"
+    string source_type = 2;
+    // Role name, group name, or "direct_grant"
+    string source_name = 3;
+    // Scope: "system", "tenant:uuid", "project:tenant_uuid:project_uuid"
+    string scope = 4;
+    // Whether this is a deny permission
+    bool is_deny = 5;
+}
+
+// ============================================================================
+// TOTP Messages
+// ============================================================================
+
+// TotpSetup - begin TOTP enrollment
+message TotpSetupRequest {
+    // No fields needed - uses authenticated user identity
+}
+
+message TotpSetupResponse {
+    string status = 1;
+    optional string error = 2;
+    // Base32-encoded TOTP secret (shown once only)
+    string secret = 3;
+    // otpauth:// provisioning URI for QR code scanning
+    string provisioning_uri = 4;
+    // Plaintext recovery codes (shown once only, 8 codes)
+    repeated string recovery_codes = 5;
+}
+
+// TotpVerifySetup - verify enrollment with first code
+message TotpVerifySetupRequest {
+    // TOTP code from authenticator app
+    string code = 1;
+}
+
+message TotpVerifySetupResponse {
+    string status = 1;
+    optional string error = 2;
+    // Full JWT token (if upgrading from totp_pending token)
+    string token = 3;
+}
+
+// TotpValidate - validate TOTP code during login (second step)
+message TotpValidateRequest {
+    // The totp_pending token received from login
+    string totp_pending_token = 1;
+    // TOTP code from authenticator app or recovery code
+    string code = 2;
+    // If true, the code is a recovery code instead of a TOTP code
+    bool is_recovery_code = 3;
+}
+
+message TotpValidateResponse {
+    string status = 1;
+    optional string error = 2;
+    // Full JWT token after successful TOTP validation
+    string token = 3;
+}
+
+// TotpDisable - disable TOTP (requires current code)
+message TotpDisableRequest {
+    // Current TOTP code to confirm disable
+    string code = 1;
+}
+
+message TotpDisableResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// TotpAdminReset - admin emergency TOTP reset
+message TotpAdminResetRequest {
+    // User identifier (UUID or email) to reset
+    string user_identifier = 1;
+}
+
+message TotpAdminResetResponse {
+    string status = 1;
+    optional string error = 2;
+}
+
+// TotpStatus - get TOTP status
+message TotpStatusRequest {
+    // No fields needed - uses authenticated user identity
+}
+
+message TotpStatusResponse {
+    string status = 1;
+    optional string error = 2;
+    // Whether TOTP is enabled and verified
+    bool totp_enabled = 3;
+    // Whether TOTP setup is pending verification
+    bool totp_pending_setup = 4;
+    // Whether any tenant requires TOTP
+    bool totp_required_by_tenant = 5;
+    // When TOTP was enabled
+    google.protobuf.Timestamp totp_enabled_at = 6;
+    // Number of remaining recovery codes
+    int32 recovery_codes_remaining = 7;
+}
