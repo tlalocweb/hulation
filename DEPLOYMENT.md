@@ -194,6 +194,97 @@ ssl:
     max_version: "1.3"   # default: no limit
 ```
 
+### Phase-0 TLS note
+
+Starting with the Phase-0 gRPC migration, hula uses a single unified HTTPS
+listener for **every** web service (gRPC, REST gateway, WebDAV, visitor
+tracking, static scripts, `/hulastatus`, and per-host site routing).
+The unified server requires a static `hula_ssl.cert` + `hula_ssl.key`
+on disk; the legacy ACME / Cloudflare-origin-CA / per-host SNI flows are
+a planned follow-up on the unified listener. For the immediate Phase-0
+cutover, configure a static cert pair or continue using `mkcert` for
+dev / self-signed deployments.
+
+## Authentication (Phase 0)
+
+### Built-in admin
+
+```yaml
+admin:
+  username: admin
+  hash:     "<argon2id-hash>"    # use `hulactl generatehash`
+  totp_required: false            # optional
+```
+
+The `admin` user is the break-glass account: always present, authenticates
+via username + argon2id password, and receives admin privileges. TOTP is
+enforceable via `admin.totp_required: true` and enrolled via the
+`AuthService.TotpSetup` RPC (or the legacy `/api/auth/totp/setup`).
+
+### SSO via OIDC (Google / GitHub / Microsoft)
+
+```yaml
+auth:
+  providers:
+    - name: google
+      provider: oidc
+      config:
+        display_name: Google
+        discovery_url: https://accounts.google.com/.well-known/openid-configuration
+        client_id:     ${HULA_GOOGLE_CLIENT_ID}
+        client_secret: ${HULA_GOOGLE_CLIENT_SECRET}
+        redirect_url:  https://${HULA_HOST}/api/v1/auth/callback/google
+        scopes:        [openid, email, profile]
+        icon_url:      /analytics/icons/google.svg
+
+    - name: github
+      provider: oidc
+      config:
+        display_name: GitHub
+        # GitHub isn't strictly OIDC-compliant at the discovery-doc level,
+        # but the hula OIDC provider handles it via a type=github subclass.
+        discovery_url: https://token.actions.githubusercontent.com/.well-known/openid-configuration
+        client_id:     ${HULA_GITHUB_CLIENT_ID}
+        client_secret: ${HULA_GITHUB_CLIENT_SECRET}
+        redirect_url:  https://${HULA_HOST}/api/v1/auth/callback/github
+        scopes:        [read:user, user:email]
+        icon_url:      /analytics/icons/github.svg
+
+    - name: microsoft
+      provider: oidc
+      config:
+        display_name: Microsoft
+        discovery_url: https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
+        client_id:     ${HULA_MICROSOFT_CLIENT_ID}
+        client_secret: ${HULA_MICROSOFT_CLIENT_SECRET}
+        redirect_url:  https://${HULA_HOST}/api/v1/auth/callback/microsoft
+        scopes:        [openid, email, profile]
+        icon_url:      /analytics/icons/microsoft.svg
+```
+
+Environment variables for the client IDs and secrets are the recommended
+approach — hula's config loader expands `${…}` references against the
+process environment.
+
+**User provisioning**: admin pre-creates users by email via
+`AuthService.CreateUser` (or the legacy `/api/auth/user` POST).
+First SSO login by a user whose email matches an existing row completes
+the identity link. Unknown emails are rejected; hula does not
+self-provision users through SSO by default.
+
+## Analytics (Phase 0)
+
+```yaml
+analytics:
+  events_ttl_days: 395   # ~13 months; default if unset
+```
+
+All fields optional. The `events_ttl_days` value is consumed by the
+`pkg/store/clickhouse` migration runner when it applies the explicit
+`events_v1` DDL. In Phase 0, GORM AutoMigrate still manages the events
+table for backward compatibility; the migration runner is infrastructure
+ready for the next phase to flip over.
+
 ## Docker Compose
 
 ### Full Stack (Hulation + ClickHouse)

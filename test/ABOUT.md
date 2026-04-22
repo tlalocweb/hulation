@@ -9,6 +9,26 @@ test/
 └── e2e/           # broader harness — every hulactl command against real stack
 ```
 
+## Phase-0 note (current state)
+
+The Phase-0 gRPC migration is landing in stages. Current test status:
+
+- **Both harnesses continue to work** against the unified server's
+  legacy `/api/*` bridge. hulactl's existing HTTP paths are served by
+  the unified `http.ServeMux` fallback — no path changes required.
+- **No new suites added yet.** The plan calls for 8 new e2e suites
+  (`13-grpc-smoke`, `14-rest-gateway`, `15-sso-google`, `16-rbac`,
+  `17-analytics-foundation`, `18-events-migration`, `19-http2`,
+  `20-single-listener`). They land in Stage 0.11 alongside the
+  migration of existing suites onto `/api/v1/*`.
+- **Expected results unchanged** — the legacy bridge is equivalent to
+  the pre-Phase-0 behaviour for the 42 assertions the e2e harness
+  makes. Any deviation is a bug to triage.
+
+Once stage 0.8 closes (hulactl switches to `/api/v1/*`), the legacy
+bridge can be deleted. The suites will need to be updated at that
+point — this is Stage 0.11 work.
+
 ## test/e2e/ — End-to-End Harness
 
 **What it proves**: every publicly documented `hulactl` command can successfully
