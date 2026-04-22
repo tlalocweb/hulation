@@ -41,6 +41,10 @@ type Server struct {
 	externalCert           *tls.Certificate // External/well-known CA cert for API clients
 	internalCert           *tls.Certificate // Internal CA cert for izcragent mTLS
 	customHandlers         map[string]http.HandlerFunc // Custom HTTP handlers for specific paths
+	// dynamicGetCert is a caller-supplied TLS cert source consulted AFTER
+	// per-host static certs and BEFORE the externalCert fallback. Primary
+	// use: ACME autocert.Manager.GetCertificate.
+	dynamicGetCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 }
 
 // Config holds the configuration for the unified server
@@ -72,6 +76,19 @@ type Config struct {
 
 	// Additional ServeMux options
 	MuxOptions []runtime.ServeMuxOption
+
+	// GetCertificate, if non-nil, is used as the last-resort TLS
+	// certificate selector — after per-host static certs attached via
+	// AttachStaticHandler and after the internal cert for mTLS clients.
+	//
+	// Typical use: plug an autocert.Manager for ACME / Let's Encrypt
+	// issuance. When GetCertificate is set, TLSCertFile and TLSKeyFile
+	// may be left empty; the server will not require on-disk cert
+	// files. When TLSCertFile/TLSKeyFile ARE set alongside
+	// GetCertificate, the static cert is kept in the map as a fallback
+	// for hostnames the provided function rejects (useful for localhost
+	// probes during ACME issuance).
+	GetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 }
 
 // NewServer creates a new unified HTTPS server
@@ -84,14 +101,23 @@ func NewServer(cfg *Config) (*Server, error) {
 		cfg.Address = "0.0.0.0:18443"
 	}
 
-	if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
-		return nil, fmt.Errorf("TLS certificate and key files are required")
+	// Either static cert files OR a GetCertificate callback (or both) must
+	// be supplied. GetCertificate on its own is sufficient for ACME-style
+	// managers that issue certs on demand.
+	if (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") && cfg.GetCertificate == nil {
+		return nil, fmt.Errorf("TLS certificate and key files are required (or supply GetCertificate)")
 	}
 
-	// Load external TLS certificate (well-known CA)
-	externalCert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+	// Load the static external cert if files were supplied. Otherwise
+	// externalCert stays at its zero value — the GetCertificate callback
+	// is the sole source of truth.
+	var externalCert tls.Certificate
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		var err error
+		externalCert, err = tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+		}
 	}
 
 	// Load internal certificate if provided (for izcragent mTLS)
@@ -120,16 +146,19 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	// Create server instance first (needed for selectCertificate method reference)
 	server := &Server{
-		grpcServer:     grpcServer,
-		gatewayMux:     gatewayMux,
-		address:        cfg.Address,
-		tlsCertFile:    cfg.TLSCertFile,
-		tlsKeyFile:     cfg.TLSKeyFile,
-		logger:         unifiedLogger,
-		externalCert:   &externalCert,
-		internalCert:   internalCert,
-		hostCerts:      make(map[string]*tls.Certificate),
-		customHandlers: make(map[string]http.HandlerFunc),
+		grpcServer:       grpcServer,
+		gatewayMux:       gatewayMux,
+		address:          cfg.Address,
+		tlsCertFile:      cfg.TLSCertFile,
+		tlsKeyFile:       cfg.TLSKeyFile,
+		logger:           unifiedLogger,
+		internalCert:     internalCert,
+		hostCerts:        make(map[string]*tls.Certificate),
+		customHandlers:   make(map[string]http.HandlerFunc),
+		dynamicGetCert:   cfg.GetCertificate,
+	}
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		server.externalCert = &externalCert
 	}
 
 	// Create TLS config with dynamic certificate selection
@@ -137,12 +166,20 @@ func NewServer(cfg *Config) (*Server, error) {
 		NextProtos: []string{"h2", "http/1.1"}, // Support HTTP/2 for gRPC
 	}
 
-	// Configure dynamic certificate selection if internal cert is available
-	if internalCert != nil {
+	// The GetCertificate callback is used whenever we have:
+	//   - a caller-supplied dynamic source (ACME, custom), OR
+	//   - an internal cert that needs SNI-aware selection, OR
+	//   - per-host static certs attached later via AttachStaticHandler.
+	// Otherwise, fall back to a plain static certificate.
+	if cfg.GetCertificate != nil || internalCert != nil || len(server.hostCerts) > 0 {
 		tlsConfig.GetCertificate = func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return server.selectCertificate(clientHello)
 		}
-		unifiedLogger.Infof("Dynamic certificate selection enabled for internal/external connections")
+		if cfg.GetCertificate != nil {
+			unifiedLogger.Infof("Dynamic certificate selection enabled (caller-supplied GetCertificate, e.g. ACME)")
+		} else {
+			unifiedLogger.Infof("Dynamic certificate selection enabled for internal/external connections")
+		}
 	} else {
 		tlsConfig.Certificates = []tls.Certificate{externalCert}
 	}
@@ -446,9 +483,28 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 		s.logger.Warnf("Internal certificate requested but not configured for ServerName: %s", serverName)
 	}
 
+	// Caller-supplied dynamic cert source (e.g., autocert.Manager for
+	// ACME). Consulted before the static externalCert so hostnames the
+	// manager knows about get freshly-issued certs; hostnames it rejects
+	// fall through to the static cert below (useful for localhost probes,
+	// health checks, and any SNI the ACME manager isn't configured for).
+	if s.dynamicGetCert != nil {
+		cert, err := s.dynamicGetCert(clientHello)
+		if err == nil && cert != nil {
+			s.logger.Debugf("Using caller-supplied dynamic certificate for ServerName: %s", serverName)
+			return cert, nil
+		}
+		if err != nil {
+			s.logger.Debugf("dynamicGetCert rejected ServerName %q: %v", serverName, err)
+		}
+	}
+
 	// Default to external certificate for hostname-based connections
-	s.logger.Debugf("Using external certificate for hostname ServerName: %s", serverName)
-	return s.externalCert, nil
+	if s.externalCert != nil {
+		s.logger.Debugf("Using external certificate for hostname ServerName: %s", serverName)
+		return s.externalCert, nil
+	}
+	return nil, fmt.Errorf("no certificate available for ServerName %q", serverName)
 }
 
 // protocolDetectingListener wraps a net.Listener to detect HTTP vs TLS connections

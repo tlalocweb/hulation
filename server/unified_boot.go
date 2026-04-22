@@ -9,7 +9,10 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
@@ -49,15 +52,34 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("config is nil")
 	}
 
-	// Resolve TLS material. Hula keeps its primary admin cert under
-	// cfg.HulaSSL; for the unified listener we reuse the same cert.
+	// Resolve TLS material. Hula supports three modes on the unified
+	// listener:
+	//   1. Static cert+key files via cfg.HulaSSL.Cert / .Key.
+	//   2. ACME auto-issuance via cfg.HulaSSL.ACME.
+	//   3. Both (static as fallback, ACME for covered hostnames).
+	// At least one must be configured or the boot fails.
 	var tlsCert, tlsKey string
+	var getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
 	if cfg.HulaSSL != nil {
 		tlsCert = cfg.HulaSSL.Cert
 		tlsKey = cfg.HulaSSL.Key
+		if cfg.HulaSSL.ACME != nil {
+			acfg := cfg.HulaSSL.ACME
+			mgr := &autocert.Manager{
+				Prompt: autocert.AcceptTOS,
+				Cache:  autocert.DirCache(acfg.CacheDir),
+				Email:  acfg.Email,
+			}
+			if len(acfg.Domains) > 0 {
+				mgr.HostPolicy = autocert.HostWhitelist(acfg.Domains...)
+			}
+			getCert = mgr.GetCertificate
+			unifiedLog.Infof("ACME enabled: cache=%q email=%q domains=%v", acfg.CacheDir, acfg.Email, acfg.Domains)
+		}
 	}
-	if tlsCert == "" || tlsKey == "" {
-		return nil, fmt.Errorf("hula_ssl.cert / hula_ssl.key must be set to boot the unified server")
+	if (tlsCert == "" || tlsKey == "") && getCert == nil {
+		return nil, fmt.Errorf("hula_ssl: set cert/key files, acme.domains, or both — none is configured")
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -66,9 +88,10 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	}
 
 	srv, err = unified.NewServer(&unified.Config{
-		Address:     addr,
-		TLSCertFile: tlsCert,
-		TLSKeyFile:  tlsKey,
+		Address:        addr,
+		TLSCertFile:    tlsCert,
+		TLSKeyFile:     tlsKey,
+		GetCertificate: getCert,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create unified server: %w", err)
