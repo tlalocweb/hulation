@@ -15,10 +15,11 @@ cleanup() {
     echo ""
     echo "=== Cleanup ==="
     cd "$WORKDIR"
+    docker logs "${COMPOSE_PROJECT}-hula" > /tmp/hula-full.log 2>&1 || true
     docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans 2>/dev/null || true
     docker rmi "${COMPOSE_PROJECT}-counter-backend" 2>/dev/null || true
     rm -rf "$WORKDIR"
-    echo "Cleaned up $WORKDIR"
+    echo "Cleaned up $WORKDIR (hula logs at /tmp/hula-full.log)"
     echo ""
     echo "=== Results: $PASSED passed, $FAILED failed ==="
     if [ "$FAILED" -gt 0 ]; then
@@ -105,7 +106,7 @@ docker buildx build --network=host --load \
     --build-arg hulaversion=test \
     --build-arg hulabuilddate="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --tag hula-inttest:latest \
-    . > /dev/null 2>&1
+    . 2>&1 | tail -20
 echo "  Built hula-inttest:latest"
 
 # -------------------------------------------------------
@@ -113,7 +114,7 @@ echo "  Built hula-inttest:latest"
 # -------------------------------------------------------
 echo "--- Step 4: Build counter backend ---"
 docker build --network=host -t "${COMPOSE_PROJECT}-counter-backend:latest" \
-    "$SCRIPT_DIR/counter-backend" > /dev/null 2>&1
+    "$SCRIPT_DIR/counter-backend" 2>&1 | tail -10
 echo "  Built counter backend image"
 
 # -------------------------------------------------------
@@ -244,6 +245,12 @@ for i in $(seq 1 60); do
         echo "--- Hula logs (saved full to /tmp/hula-full.log) ---"
         docker logs "${COMPOSE_PROJECT}-hula" >/tmp/hula-full.log 2>&1
         docker logs "${COMPOSE_PROJECT}-hula" 2>&1 | tail -30
+        echo "--- probe diagnostic ---"
+        curl11 -v "https://${DOMAIN}:${PORT}/" 2>&1 | tail -40
+        echo "--- hulastatus diagnostic ---"
+        curl11 -v "https://${DOMAIN}:${PORT}/hulastatus" 2>&1 | tail -30
+        echo "--- container site dir ---"
+        docker exec "${COMPOSE_PROJECT}-hula" ls -la /var/hula/site 2>&1 | head -20
         fail "Hula did not start within 60s"
         exit 1
     fi
@@ -359,13 +366,17 @@ echo "--- Test: Visitor tracking ---"
 # Step 4a: Load iframe (sets cookies, creates bounce)
 # HTTP/1.1
 IFRAME_RESP=$(curl11 -v -c "$WORKDIR/cookies11.txt" \
+    -H "User-Agent: TestBot/1.0-h1" \
     "https://${DOMAIN}:${PORT}/v/hula_hello.html?h=testsite1&u=https%3A%2F%2Fexample.com%2Fpage-h1" \
-    2>"$WORKDIR/iframe11_headers.txt")
-BOUNCE_H1=$(echo "$IFRAME_RESP" | grep -oP 'b=\K[a-f0-9-]+' | head -1 || echo "")
+    2>"$WORKDIR/iframe11_headers.txt" || true)
+BOUNCE_H1=$(echo "$IFRAME_RESP" | grep -oP 'b=\K[A-Za-z0-9_+/=-]+' | head -1 || echo "")
 if [ -n "$BOUNCE_H1" ]; then
     pass "HelloIframe (HTTP/1.1) - bounce: ${BOUNCE_H1:0:12}..."
 else
     fail "HelloIframe (HTTP/1.1) - no bounce ID in response"
+    cp "$WORKDIR/iframe11_headers.txt" /tmp/iframe11_headers.txt 2>/dev/null || true
+    echo "        iframe-body-bytes: $(echo -n "$IFRAME_RESP" | wc -c)"
+    echo "        first 200 of body: $(echo "$IFRAME_RESP" | head -c 200)"
 fi
 
 # Check cookies were set
@@ -377,13 +388,19 @@ fi
 
 # HTTP/2
 IFRAME_RESP2=$(curl2 -v -c "$WORKDIR/cookies2.txt" \
+    -H "User-Agent: TestBot/1.0-h2" \
     "https://${DOMAIN}:${PORT}/v/hula_hello.html?h=testsite1&u=https%3A%2F%2Fexample.com%2Fpage-h2" \
-    2>"$WORKDIR/iframe2_headers.txt")
-BOUNCE_H2=$(echo "$IFRAME_RESP2" | grep -oP 'b=\K[a-f0-9-]+' | head -1 || echo "")
+    2>"$WORKDIR/iframe2_headers.txt" || true)
+BOUNCE_H2=$(echo "$IFRAME_RESP2" | grep -oP 'b=\K[A-Za-z0-9_+/=-]+' | head -1 || echo "")
 if [ -n "$BOUNCE_H2" ]; then
     pass "HelloIframe (HTTP/2) - bounce: ${BOUNCE_H2:0:12}..."
 else
     fail "HelloIframe (HTTP/2) - no bounce ID in response"
+    cp "$WORKDIR/iframe2_headers.txt" /tmp/iframe2_headers.txt 2>/dev/null || true
+    echo "        iframe2-body-bytes: $(echo -n "$IFRAME_RESP2" | wc -c)"
+    echo "        --- full body begin ---"
+    echo "$IFRAME_RESP2"
+    echo "        --- full body end ---"
 fi
 
 if grep -q "hula_hello\b" "$WORKDIR/cookies2.txt" 2>/dev/null; then

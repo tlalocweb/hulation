@@ -129,8 +129,10 @@ func registerLegacyAPIRoutes(srv *unified.Server) {
 	srv.RegisterCustomHandler("GET /api/auth/user/{userlookup}", handler.WrapForNetHTTP(handler.GetUser))
 	srv.RegisterCustomHandler("PATCH /api/auth/user/{userid}", handler.WrapForNetHTTP(handler.ModifyUser))
 
-	// Status probe paths.
-	srv.RegisterCustomHandler("GET /api/status", handler.WrapForNetHTTP(handler.Status))
+	// Status probe paths. The /api/ namespace is admin-scoped, so unlike
+	// /hulastatus (liveness, unauth) this one requires a valid admin
+	// bearer token — matches what hulactl and monitoring probes expect.
+	srv.RegisterCustomHandler("GET /api/status", adminOnly(handler.WrapForNetHTTP(handler.Status)))
 
 	// TOTP — validate is noauth; the rest assume a valid token.
 	srv.RegisterCustomHandler("POST /api/auth/totp/validate", handler.WrapForNetHTTP(handler.TotpValidate))
@@ -179,4 +181,24 @@ func verifyJWTAdmin(token string) (valid bool, isAdmin bool, err error) {
 		return false, false, verr
 	}
 	return true, perms.HasCap("admin"), nil
+}
+
+// adminOnly rejects the request with 401 unless the Authorization header
+// carries a valid admin bearer token. Used to gate transitional legacy
+// /api/* routes that mirror legacy Fiber's admin group.
+func adminOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authz := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if len(authz) <= len(prefix) || authz[:len(prefix)] != prefix {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		valid, admin, verr := verifyJWTAdmin(authz[len(prefix):])
+		if verr != nil || !valid || !admin {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
 }

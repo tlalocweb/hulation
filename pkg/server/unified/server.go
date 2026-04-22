@@ -192,10 +192,20 @@ func NewServer(cfg *Config) (*Server, error) {
 		unifiedLogger.Infof("mTLS enabled for agent authentication")
 	}
 
-	// Create HTTP server with routing handler
+	// Create HTTP server with routing handler.
+	//
+	// The dispatcher must be re-evaluated on each request because the
+	// middleware stack (AttachHTTPMiddleware) and late-registered
+	// handlers (backend proxies, per-host static sites) are wired up
+	// AFTER NewServer returns but BEFORE Start. Capturing the result of
+	// grpcHandlerOrPassFunc() once at construction time would freeze the
+	// middleware chain as "nil", silently dropping every middleware
+	// attached during boot.
 	server.httpServer = &http.Server{
-		Addr:      cfg.Address,
-		Handler:   server.grpcHandlerOrPassFunc(),
+		Addr: cfg.Address,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.grpcHandlerOrPassFunc().ServeHTTP(w, r)
+		}),
 		TLSConfig: tlsConfig,
 	}
 
@@ -284,6 +294,29 @@ func (s *Server) RegisterCustomHandler(path string, handler http.HandlerFunc) {
 		s.customHandlers[path] = handler
 	}
 	s.logger.Infof("Custom HTTP handler registered for path: %s", path)
+}
+
+// HasRoute reports whether the unified server has a registered handler
+// (customHandlers exact match, customMux pattern match, or grpc-gateway
+// /api/v1 prefix) that would claim this request in the core dispatcher.
+//
+// Middleware (e.g., per-host backend proxies) should call this before
+// claiming a request so reserved admin paths keep their handlers rather
+// than being greedily proxied to a container mounted on /api or another
+// overlapping prefix. This preserves the legacy Fiber behavior where
+// named admin routes took precedence over /api/* virtual paths.
+func (s *Server) HasRoute(r *http.Request) bool {
+	if _, ok := s.customHandlers[r.URL.Path]; ok {
+		return true
+	}
+	if _, pattern := s.customMux.Handler(r); pattern != "" {
+		return true
+	}
+	// grpc-gateway REST endpoints live under /api/v1.
+	if strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.Path == "/api/v1" {
+		return true
+	}
+	return false
 }
 
 // AddHostCertificate registers a per-host TLS certificate. Requests

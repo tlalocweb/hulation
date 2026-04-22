@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/tlalocweb/hulation/config"
+	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
@@ -176,6 +177,12 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	if err := initProviderManager(cfg); err != nil {
 		return nil, fmt.Errorf("init provider manager: %w", err)
 	}
+
+	// Visitor tracking handlers keep a BounceMap (short-lived per-visitor
+	// state keyed by bounce ID). Fiber used to call InitVisitorHandlers
+	// inside router setup; the unified boot path needs to call it too or
+	// HelloIframe / Hello / FormSubmit nil-panic on first request.
+	handler.InitVisitorHandlers()
 
 	// Register every non-gRPC HTTP endpoint (visitor tracking, scripts,
 	// /hulastatus) on the unified server's ServeMux fallback. WebDAV

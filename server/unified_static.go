@@ -68,10 +68,12 @@ func registerStaticSites(srv *unified.Server, cfg *config.Config) {
 			// replacement for the service routes that live on the
 			// same listener.
 			p := r.URL.Path
+			log.Debugf("static-mw: host=%q path=%q", r.Host, p)
 			if strings.HasPrefix(p, "/api/") ||
 				strings.HasPrefix(p, "/v/") ||
 				strings.HasPrefix(p, "/scripts/") ||
 				p == "/hulastatus" {
+				log.Debugf("static-mw: passthrough for service path %s", p)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -81,10 +83,12 @@ func registerStaticSites(srv *unified.Server, cfg *config.Config) {
 			}
 			for _, rt := range routes {
 				if host == rt.hostLower {
+					log.Debugf("static-mw: serving %s via static route for host %s", p, host)
 					rt.handler.ServeHTTP(w, r)
 					return
 				}
 			}
+			log.Debugf("static-mw: no static route match for host=%s path=%s", host, p)
 			next.ServeHTTP(w, r)
 		})
 	})

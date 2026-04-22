@@ -84,6 +84,15 @@ func registerBackendProxies(srv *unified.Server, cfg *config.Config) {
 
 	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Admin-registered paths take precedence over backend proxy
+			// routes so a backend mounted at /api doesn't shadow the
+			// hula admin API (/api/auth/*, /api/form/*, /api/v1/*, …).
+			// Legacy Fiber matched named routes before wildcards; this
+			// preserves that behavior on the unified listener.
+			if srv.HasRoute(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			for _, rt := range routes {
 				if rt.matches(r) {
 					rt.handler.ServeHTTP(w, r)
