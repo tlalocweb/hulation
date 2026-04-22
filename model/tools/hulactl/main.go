@@ -379,6 +379,10 @@ func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
 	c = client.NewClient(url, token)
 	if insecure {
 		c.SetInsecure(true)
+		// gRPC path honors the insecure flag separately — hulactl's
+		// ---insecure gesture should also skip server-cert verification
+		// on the gRPC handshake.
+		c.InsecureSkipTLSVerify = true
 	}
 	if hulactlconfig.DebugMode {
 		c.Noisy = true
@@ -390,6 +394,15 @@ func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
 		}
 		c.Output = func(format string, a ...any) (int, error) {
 			return fmt.Printf(fmt.Sprintf(utils.Grey("client: ")+"%s", format), a...)
+		}
+	}
+	// Best-effort gRPC dial. Failures don't abort — hulactl commands
+	// fall back to the legacy /api/* HTTP bridge. When DialGRPC
+	// succeeds, any command that calls a Grpc*-prefixed method uses
+	// gRPC; otherwise it returns ErrNoGRPC and the caller falls back.
+	if derr := c.DialGRPC(); derr != nil {
+		if hulactlconfig.DebugMode {
+			fmt.Printf("(gRPC dial failed, falling back to HTTP: %s)\n", derr.Error())
 		}
 	}
 	return
