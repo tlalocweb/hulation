@@ -31,9 +31,9 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
 **Remaining work in 0.7**:
-1. **Auth Unimplemented RPCs** — TOTP (needs Bolt user store for encrypted secret), invite, password-reset, RefreshToken, OIDC login (LoginOIDC / LoginWithCode / LoginWithSecret), PatchUser, UpdateUserPassword, SetUserSysAdmin, SearchUsers, GrantServerAccess family. Most remain `Unimplemented` and can be picked off incrementally the same way user-CRUD just was in 0.7h.
-2. **Unified server TLS polish** — RunUnified today requires static `hula_ssl.cert` and `hula_ssl.key`. Port ACME + per-host SNI cert selection from the legacy path. WebDAV registered in 0.7h.
-3. **Backend per-host proxies** — old Fiber path routed `/` for each configured server to `backend.ProxyHandler`. Need to register these on the unified fallback (probably via host-matching middleware around `backend.ProxyHandler`).
+1. **Auth Unimplemented RPCs** — invite, password-reset, RefreshToken, OIDC login (LoginOIDC / LoginWithCode / LoginWithSecret), PatchUser, UpdateUserPassword, SetUserSysAdmin, SearchUsers, GrantServerAccess family. TOTP landed in 0.7j. The pattern is set; each RPC is a bounded add.
+2. **Unified server TLS polish** — RunUnified today requires static `hula_ssl.cert` and `hula_ssl.key`. Port ACME + per-host SNI cert selection from the legacy path.
+3. **Backend per-host proxies** — old Fiber path routed `/` for each configured server to `backend.ProxyHandler`. Need a host-matching HTTP middleware that wraps the ServeMux fallback and dispatches to `backend.ProxyHandler` for configured host+virtualPath combinations.
 
 **Completed in 0.7**:
 - 0.7a–d: Forms, Landers, BadActor, Site, Staging, Auth-skeleton gRPC impls.
@@ -42,6 +42,7 @@ Six of seven services fully ported; Auth has a live skeleton.
 - 0.7g: **Fiber dropped.** `router/router.go`, `middleware/*`, `handler/fiber_adapter.go`, `server/run.go` all deleted. `backend/proxy.go` rewritten on httputil.ReverseProxy. `handler/staging.go` trimmed. `main.go` calls `server.RunUnified(ctx, cfg)`. go.mod clean of `gofiber` and `valyala/fasthttp`. Hula binary builds.
 - 0.7h: **WebDAV wired onto the unified fallback** at `/api/staging/{serverid}/dav[/...]`. Four more auth RPCs live: `ListUsers`, `CreateUser`, `GetUser`, `DeleteUser` (delegating to `model.User` CRUD). `userModelToProto` maps legacy ClickHouse rows → `apiobjects.User`.
 - 0.7i: **Legacy /api/\* routes** wired onto the unified fallback as a transitional bridge so pre-Stage-0.8 hulactl and the existing e2e suites keep working. Every admin endpoint the old `router/router.go` served is back, now served by the net/http ServeMux on the same unified listener. Deleted once Stage 0.8 migrates hulactl to /api/v1/*.
+- 0.7j: **All five TOTP RPCs live** on AuthService — TotpStatus, TotpSetup, TotpVerifySetup, TotpDisable, TotpValidate. Delegate to `model.GetAdminTotp` / `UpsertAdminTotp` / `VerifyRecoveryCode` plus `utils.EncryptTOTPSecret` / `DecryptTOTPSecret` / `GenerateRecoveryCodes` / `HashRecoveryCodes`. `callerUsername(ctx)` helper pulls the authenticated identity from authware Claims.
 
 Progress notes:
 - Enrichment wiring landed in 0.9e.
