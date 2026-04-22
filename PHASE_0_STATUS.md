@@ -126,11 +126,11 @@ Commit: `a2e9416`
 
 | Stage | Estimate | Notes |
 |-------|----------|-------|
-| 0.7 finishers | 1–2 days | Auth Unimplemented RPCs (user CRUD + TOTP + invite + password-reset + RefreshToken + OIDC login + GrantServerAccess family); unified-server TLS polish (ACME / per-host SNI); register WebDAV + backend per-host proxies on the fallback mux. |
-| 0.8 Migrate hulactl to gRPC clients | 2 days | After 0.7. |
+| 0.7 finishers | 0.5–1 day | Unified-server TLS polish (ACME / per-host SNI). Bolt-gated auth RPCs can slide to Phase 1. |
+| 0.8 hulactl migration | 1 day | Phase 0.8a landed the gRPC client infrastructure (DialGRPC + per-service method wrappers). Remaining: switch hulactl's command-dispatch to prefer Grpc* methods, fall back to HTTP for WebDAV (staging-update / staging-mount). |
 | 0.11 Tests + docs + sign-off | 2 days | Update 12 existing e2e suites; add 8 new; update integration harness; DEPLOYMENT.md, test/ABOUT.md, MIGRATION_0.md. |
 
-**Remaining effort**: ~5–6 working days.
+**Remaining effort**: ~3–4 working days.
 
 ## Recommended next-session plan
 
