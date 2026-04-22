@@ -17,7 +17,9 @@ package auth
 
 import (
 	"context"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
@@ -283,4 +285,233 @@ func looksLikeUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// callerUsername pulls the caller's username from the authware Claims
+// in context. Returns an Unauthenticated error if no claims are present.
+func callerUsername(ctx context.Context) (string, error) {
+	claims, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
+	if !ok || claims == nil {
+		return "", status.Error(codes.Unauthenticated, "no claims in context")
+	}
+	if claims.Username != "" {
+		return claims.Username, nil
+	}
+	return claims.Subject, nil
+}
+
+// TotpStatus reports whether TOTP is enrolled / pending / enforced for
+// the authenticated caller. Public: any authenticated user can ask
+// about their own TOTP state.
+func (s *Server) TotpStatus(ctx context.Context, req *authspec.TotpStatusRequest) (*authspec.TotpStatusResponse, error) {
+	username, err := callerUsername(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "totp lookup: %v", err)
+	}
+	resp := &authspec.TotpStatusResponse{Status: "ok"}
+	if rec != nil {
+		resp.TotpEnabled = rec.TotpEnabled
+		resp.TotpPendingSetup = rec.TotpPendingSetup
+		resp.RecoveryCodesRemaining = int32(len(rec.TotpRecoveryCodesHashed))
+		if !rec.TotpEnabledAt.IsZero() {
+			resp.TotpEnabledAt = timestamppb.New(rec.TotpEnabledAt)
+		}
+	}
+	return resp, nil
+}
+
+// TotpSetup begins TOTP enrollment for the authenticated caller.
+// Returns the secret, provisioning URI, and fresh recovery codes.
+// Mirrors handler.TotpSetup.
+func (s *Server) TotpSetup(ctx context.Context, req *authspec.TotpSetupRequest) (*authspec.TotpSetupResponse, error) {
+	conf := config.GetConfig()
+	if conf == nil {
+		return nil, status.Error(codes.FailedPrecondition, "config not loaded")
+	}
+	encKey, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey)
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "TOTP not configured: %v", err)
+	}
+	username, err := callerUsername(ctx)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "totp lookup: %v", err)
+	}
+	if existing != nil && existing.TotpEnabled {
+		return nil, status.Error(codes.AlreadyExists, "TOTP already enabled; disable first to re-enroll")
+	}
+	issuer := conf.TotpIssuer
+	if issuer == "" {
+		issuer = "Hulation"
+	}
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: issuer, AccountName: username})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "generate TOTP: %v", err)
+	}
+	encrypted, err := utils.EncryptTOTPSecret(key.Secret(), encKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encrypt secret: %v", err)
+	}
+	recCodes, err := utils.GenerateRecoveryCodes(8)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "recovery codes: %v", err)
+	}
+	hashed, err := utils.HashRecoveryCodes(recCodes)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "hash recovery codes: %v", err)
+	}
+	rec := &model.AdminTotpRecord{
+		Username:                username,
+		TotpEnabled:             false,
+		TotpPendingSetup:        true,
+		TotpSecretEncrypted:     encrypted,
+		TotpRecoveryCodesHashed: hashed,
+	}
+	if err := model.UpsertAdminTotp(model.GetDB(), rec); err != nil {
+		return nil, status.Errorf(codes.Internal, "save TOTP: %v", err)
+	}
+	return &authspec.TotpSetupResponse{
+		Status:          "ok",
+		Secret:          key.Secret(),
+		ProvisioningUri: key.URL(),
+		RecoveryCodes:   recCodes,
+	}, nil
+}
+
+// TotpVerifySetup completes enrollment by verifying the first
+// authenticator code. Mirrors handler.TotpVerifySetup.
+func (s *Server) TotpVerifySetup(ctx context.Context, req *authspec.TotpVerifySetupRequest) (*authspec.TotpVerifySetupResponse, error) {
+	if req.GetCode() == "" {
+		return nil, status.Error(codes.InvalidArgument, "code is required")
+	}
+	conf := config.GetConfig()
+	encKey, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey)
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "TOTP not configured: %v", err)
+	}
+	username, err := callerUsername(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil || rec == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no pending TOTP setup")
+	}
+	if !rec.TotpPendingSetup {
+		return nil, status.Error(codes.FailedPrecondition, "no pending TOTP setup")
+	}
+	secret, err := utils.DecryptTOTPSecret(rec.TotpSecretEncrypted, encKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decrypt secret: %v", err)
+	}
+	if !totp.Validate(req.GetCode(), secret) {
+		return nil, status.Error(codes.Unauthenticated, "invalid code")
+	}
+	rec.TotpEnabled = true
+	rec.TotpPendingSetup = false
+	rec.TotpEnabledAt = time.Now()
+	if err := model.UpsertAdminTotp(model.GetDB(), rec); err != nil {
+		return nil, status.Errorf(codes.Internal, "save TOTP: %v", err)
+	}
+	aLog.Infof("TOTP enabled for %s", username)
+	return &authspec.TotpVerifySetupResponse{Status: "totp_enabled"}, nil
+}
+
+// TotpDisable turns off TOTP for the authenticated caller. Requires a
+// valid current TOTP code.
+func (s *Server) TotpDisable(ctx context.Context, req *authspec.TotpDisableRequest) (*authspec.TotpDisableResponse, error) {
+	if req.GetCode() == "" {
+		return nil, status.Error(codes.InvalidArgument, "code is required")
+	}
+	conf := config.GetConfig()
+	encKey, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey)
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "TOTP not configured: %v", err)
+	}
+	username, err := callerUsername(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil || rec == nil || !rec.TotpEnabled {
+		return nil, status.Error(codes.FailedPrecondition, "TOTP not enabled")
+	}
+	secret, err := utils.DecryptTOTPSecret(rec.TotpSecretEncrypted, encKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decrypt secret: %v", err)
+	}
+	if !totp.Validate(req.GetCode(), secret) {
+		return nil, status.Error(codes.Unauthenticated, "invalid code")
+	}
+	rec.TotpEnabled = false
+	rec.TotpPendingSetup = false
+	rec.TotpSecretEncrypted = ""
+	rec.TotpRecoveryCodesHashed = nil
+	rec.TotpEnabledAt = time.Time{}
+	if err := model.UpsertAdminTotp(model.GetDB(), rec); err != nil {
+		return nil, status.Errorf(codes.Internal, "save TOTP: %v", err)
+	}
+	aLog.Infof("TOTP disabled for %s", username)
+	return &authspec.TotpDisableResponse{Status: "totp_disabled"}, nil
+}
+
+// TotpValidate validates a code (or recovery code) using a totp_pending
+// token. On success returns a full JWT via model.NewJWTClaimsCommit.
+// Mirrors handler.TotpValidate.
+func (s *Server) TotpValidate(ctx context.Context, req *authspec.TotpValidateRequest) (*authspec.TotpValidateResponse, error) {
+	if req.GetTotpPendingToken() == "" || req.GetCode() == "" {
+		return nil, status.Error(codes.InvalidArgument, "totp_pending_token and code are required")
+	}
+	ok, perms, err := model.VerifyJWTClaims(model.GetDB(), req.GetTotpPendingToken())
+	if err != nil || !ok {
+		return nil, status.Error(codes.Unauthenticated, "invalid token")
+	}
+	if !perms.HasCap("totp_pending") {
+		return nil, status.Error(codes.Unauthenticated, "not a totp-pending token")
+	}
+	username := perms.UserID
+
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil || rec == nil || !rec.TotpEnabled {
+		return nil, status.Error(codes.FailedPrecondition, "TOTP not enabled")
+	}
+
+	if req.GetIsRecoveryCode() {
+		matched, verr := model.VerifyRecoveryCode(model.GetDB(), rec, req.GetCode())
+		if verr != nil {
+			return nil, status.Errorf(codes.Internal, "verify recovery: %v", verr)
+		}
+		if !matched {
+			return nil, status.Error(codes.Unauthenticated, "invalid recovery code")
+		}
+	} else {
+		conf := config.GetConfig()
+		encKey, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey)
+		if err != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "TOTP not configured: %v", err)
+		}
+		secret, err := utils.DecryptTOTPSecret(rec.TotpSecretEncrypted, encKey)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "decrypt secret: %v", err)
+		}
+		if !totp.Validate(req.GetCode(), secret) {
+			return nil, status.Error(codes.Unauthenticated, "invalid code")
+		}
+	}
+
+	// Issue a full JWT (admin flag — LoginAdmin sets it; TOTP validation
+	// upgrades the totp_pending token to a full one with the same admin
+	// privilege).
+	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), username, &model.LoginOpts{IsAdmin: true})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "issue jwt: %v", err)
+	}
+	return &authspec.TotpValidateResponse{Status: "ok", Token: jwt}, nil
 }
