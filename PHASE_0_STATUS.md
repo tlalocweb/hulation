@@ -31,9 +31,8 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
 **Remaining work in 0.7**:
-1. **Auth Unimplemented RPCs** — invite, password-reset, RefreshToken, OIDC login (LoginOIDC / LoginWithCode / LoginWithSecret), PatchUser, UpdateUserPassword, SetUserSysAdmin, SearchUsers, GrantServerAccess family. TOTP landed in 0.7j. The pattern is set; each RPC is a bounded add.
+1. **Auth RPCs gated on Bolt / mail** — invite flow, email validation, SetInitialPassword, ValidatePasswordResetToken, CheckUserPermission / GetUserPermissions (admin), TotpAdminReset, GrantServerAccess / RevokeServerAccess / ListServerAccess. All Bolt-or-mail dependent; can slide into early Phase 1.
 2. **Unified server TLS polish** — RunUnified today requires static `hula_ssl.cert` and `hula_ssl.key`. Port ACME + per-host SNI cert selection from the legacy path.
-3. **Backend per-host proxies** — old Fiber path routed `/` for each configured server to `backend.ProxyHandler`. Need a host-matching HTTP middleware that wraps the ServeMux fallback and dispatches to `backend.ProxyHandler` for configured host+virtualPath combinations.
 
 **Completed in 0.7**:
 - 0.7a–d: Forms, Landers, BadActor, Site, Staging, Auth-skeleton gRPC impls.
@@ -43,6 +42,11 @@ Six of seven services fully ported; Auth has a live skeleton.
 - 0.7h: **WebDAV wired onto the unified fallback** at `/api/staging/{serverid}/dav[/...]`. Four more auth RPCs live: `ListUsers`, `CreateUser`, `GetUser`, `DeleteUser` (delegating to `model.User` CRUD). `userModelToProto` maps legacy ClickHouse rows → `apiobjects.User`.
 - 0.7i: **Legacy /api/\* routes** wired onto the unified fallback as a transitional bridge so pre-Stage-0.8 hulactl and the existing e2e suites keep working. Every admin endpoint the old `router/router.go` served is back, now served by the net/http ServeMux on the same unified listener. Deleted once Stage 0.8 migrates hulactl to /api/v1/*.
 - 0.7j: **All five TOTP RPCs live** on AuthService — TotpStatus, TotpSetup, TotpVerifySetup, TotpDisable, TotpValidate. Delegate to `model.GetAdminTotp` / `UpsertAdminTotp` / `VerifyRecoveryCode` plus `utils.EncryptTOTPSecret` / `DecryptTOTPSecret` / `GenerateRecoveryCodes` / `HashRecoveryCodes`. `callerUsername(ctx)` helper pulls the authenticated identity from authware Claims.
+- 0.7k: **Backend per-host proxies** land on the unified server via an HTTP middleware. `server/unified_backend.go` walks `cfg.Servers`, creates a `backend.NewProxyHandler` per ready backend, and dispatches matching (Host, path-prefix) requests before the rest of the pipeline. Plus four more auth RPCs: `PatchUser`, `SearchUsers`, `RefreshToken` all live; `UpdateUserPassword` + `SetUserSysAdmin` explicitly deferred (require Bolt user store).
+- 0.7L: **OIDC login RPCs** — `LoginWithSecret`, `LoginOIDC`, `LoginWithCode` delegate to the ProviderManager. `firstOIDCProvider()` picks a default for `LoginOIDC` (the proto shape doesn't carry a provider name). `LoginWithCode` uses a local `loginWithCoder` type assertion since the method lives on the concrete OIDC provider type.
+- 0.7m: **RequestPasswordReset** — always returns `success` (prevents email enumeration); actual email dispatch + token issuance deferred to the Bolt user-store + mail-integration follow-up.
+
+**AuthService RPCs live: 20 of ~30.** Remaining (each a bounded add, mostly gated on the Bolt user store or mail integration): InviteUser / ResendInviteUser, ValidateEmail / ResendValidationEmail / AdminValidateUserEmail, SetInitialPassword, ValidatePasswordResetToken, CheckUserPermission / GetUserPermissions, TotpAdminReset, GrantServerAccess / RevokeServerAccess / ListServerAccess, plus tenant-scoped variants unused in hula v1.
 
 Progress notes:
 - Enrichment wiring landed in 0.9e.
