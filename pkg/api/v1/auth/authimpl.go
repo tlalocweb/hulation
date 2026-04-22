@@ -265,6 +265,146 @@ func (s *Server) DeleteUser(ctx context.Context, req *authspec.DeleteUserRequest
 	return &authspec.DeleteUserResponse{Status: "ok"}, nil
 }
 
+// PatchUser applies non-empty fields from the request onto the existing
+// user row. Matches the PATCH semantics of the legacy
+// handler.ModifyUser: empty fields are left unchanged.
+func (s *Server) PatchUser(ctx context.Context, req *authspec.PatchUserRequest) (*authspec.PatchUserResponse, error) {
+	id := req.GetIdentity()
+	if id == "" {
+		return nil, status.Error(codes.InvalidArgument, "identity is required")
+	}
+	var u *model.User
+	var err error
+	if looksLikeUUID(id) {
+		u, err = model.GetUserById(model.GetDB(), id)
+	} else {
+		u, err = model.GetUserByEmail(model.GetDB(), id)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "lookup user: %v", err)
+	}
+	if u == nil {
+		if !req.GetCreateIfNotExists() {
+			return nil, status.Errorf(codes.NotFound, "user %q not found", id)
+		}
+		// Create from scratch.
+		email := id
+		if pu := req.GetUser(); pu != nil && pu.GetEmail() != "" {
+			email = pu.GetEmail()
+		}
+		first, last := splitName(req.GetUser().GetDisplayName())
+		u, err = model.CreateNewUser(model.GetDB(), email, first, last)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "create user: %v", err)
+		}
+	} else if pu := req.GetUser(); pu != nil {
+		changed := false
+		if pu.GetEmail() != "" && pu.GetEmail() != u.Email {
+			u.Email = pu.GetEmail()
+			changed = true
+		}
+		if pu.GetDisplayName() != "" {
+			first, last := splitName(pu.GetDisplayName())
+			if first != u.FirstName {
+				u.FirstName = first
+				changed = true
+			}
+			if last != u.LastName {
+				u.LastName = last
+				changed = true
+			}
+		}
+		if changed {
+			if err := model.GetDB().Save(u).Error; err != nil {
+				return nil, status.Errorf(codes.Internal, "save user: %v", err)
+			}
+		}
+	}
+	return &authspec.PatchUserResponse{Status: "ok", User: userModelToProto(u)}, nil
+}
+
+// SearchUsers returns users whose email matches the given pattern.
+// Simple LIKE-style substring match; no regex in Phase 0.
+func (s *Server) SearchUsers(ctx context.Context, req *authspec.SearchUsersRequest) (*authspec.SearchUsersResponse, error) {
+	pattern := req.GetUsername()
+	var users []model.User
+	db := model.GetDB()
+	if pattern == "" {
+		if err := db.Find(&users).Error; err != nil {
+			return nil, status.Errorf(codes.Internal, "search users: %v", err)
+		}
+	} else {
+		// email is the "username" axis for hula's legacy User.
+		if err := db.Where("email LIKE ?", "%"+pattern+"%").Find(&users).Error; err != nil {
+			return nil, status.Errorf(codes.Internal, "search users: %v", err)
+		}
+	}
+	out := &authspec.SearchUsersResponse{
+		Status: "ok",
+		Users:  make([]*apiobjects.User, 0, len(users)),
+	}
+	for i := range users {
+		out.Users = append(out.Users, userModelToProto(&users[i]))
+	}
+	return out, nil
+}
+
+// UpdateUserPassword updates a user's password. In the legacy hula
+// model, user passwords are managed separately (argon2 hashes stored
+// in a parallel structure, not on the User row). Phase 0 wires this to
+// the same path `handler.UpdateAdminHash` exposes — but only for the
+// admin user. Non-admin password updates require the Bolt user store.
+func (s *Server) UpdateUserPassword(ctx context.Context, req *authspec.UpdateUserPasswordRequest) (*authspec.UpdateUserPasswordResponse, error) {
+	if req.GetUserId() == "" || req.GetNewPassword() == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and new_password are required")
+	}
+	// Only the admin (root) user has password storage today (in
+	// cfg.Admin.Hash). The legacy flow rewrote config via hulactl, not
+	// through an API endpoint. For Phase 0 we return Unimplemented for
+	// non-admin users and document the migration requirement. Admin
+	// password update over this RPC would require persisting back to
+	// config.yaml, which is outside Phase 0's scope.
+	return nil, status.Error(codes.Unimplemented, "password update requires Bolt user store (Phase 1)")
+}
+
+// SetUserSysAdmin flips the sysadmin flag on a user. In the legacy
+// ClickHouse user model there's no sysadmin column — admin privilege
+// is entirely configured via cfg.Admin. Deferred to the Bolt user store
+// migration.
+func (s *Server) SetUserSysAdmin(ctx context.Context, req *authspec.SetUserSysAdminRequest) (*authspec.SetUserSysAdminResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "sysadmin flag requires Bolt user store (Phase 1)")
+}
+
+// RefreshToken reissues a JWT with updated permissions. Phase 0
+// implementation: verify the current token, decode its subject, and
+// issue a fresh token via model.NewJWTClaimsCommit. Does not check
+// the permissions-stale flag (that's a Bolt-store feature).
+func (s *Server) RefreshToken(ctx context.Context, req *authspec.RefreshTokenRequest) (*authspec.RefreshTokenResponse, error) {
+	claims, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
+	if !ok || claims == nil {
+		return nil, status.Error(codes.Unauthenticated, "no claims in context")
+	}
+	var userid string
+	if claims.Username != "" {
+		userid = claims.Username
+	} else {
+		userid = claims.Subject
+	}
+	if userid == "" {
+		return nil, status.Error(codes.Unauthenticated, "no user identity in claims")
+	}
+	isAdmin := hasRole(claims.Roles, "admin") || hasRole(claims.Roles, "root")
+	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), userid, &model.LoginOpts{IsAdmin: isAdmin})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "issue jwt: %v", err)
+	}
+	return &authspec.RefreshTokenResponse{
+		Status:             "ok",
+		Token:              jwt,
+		PermissionsChanged: false,
+	}, nil
+}
+
 func splitName(full string) (first, last string) {
 	for i := 0; i < len(full); i++ {
 		if full[i] == ' ' {

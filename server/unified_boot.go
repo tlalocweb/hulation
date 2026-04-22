@@ -144,6 +144,12 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// host-level dispatch.
 	RegisterFallbackRoutes(srv)
 
+	// Per-host backend proxies (Docker containers configured under a
+	// server's `backends:` block). Dispatched by HTTP middleware that
+	// matches on (Host, path-prefix) and hands off to
+	// httputil.ReverseProxy before the rest of the pipeline runs.
+	registerBackendProxies(srv, cfg)
+
 	unifiedLog.Infof("Unified server constructed on %s (gRPC + REST gateway + ServeMux fallback)", addr)
 	return srv, nil
 }
