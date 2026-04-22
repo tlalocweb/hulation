@@ -27,7 +27,7 @@ func snapToProto(snap sitedeploy.BuildStateSnapshot) *sitespec.BuildInfo {
 	bi := &sitespec.BuildInfo{
 		BuildId:    snap.BuildID,
 		ServerId:   snap.ServerID,
-		Status:     string(snap.Status),
+		Status:     snap.Status.String(),
 		LogExcerpt: strings.Join(snap.Logs, "\n"),
 		QueuedAt:   timestamppb.New(snap.StartedAt),
 		StartedAt:  timestamppb.New(snap.StartedAt),
