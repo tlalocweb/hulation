@@ -59,27 +59,41 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	//   2. ACME auto-issuance via cfg.HulaSSL.ACME.
 	//   3. Both (static as fallback, ACME for covered hostnames).
 	// At least one must be configured or the boot fails.
-	var tlsCert, tlsKey string
 	var getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
+	// After config.Load*, HulaSSL.Cert/Key hold PEM CONTENT (not paths),
+	// so we can't pass them to unified.NewServer as TLSCertFile/Key —
+	// those fields feed tls.LoadX509KeyPair which opens the string as a
+	// filename. Go via GetTLSCert (already parsed) and expose it through
+	// the caller-supplied GetCertificate path instead.
+	var staticCert *tls.Certificate
 	if cfg.HulaSSL != nil {
-		tlsCert = cfg.HulaSSL.Cert
-		tlsKey = cfg.HulaSSL.Key
-		if cfg.HulaSSL.ACME != nil {
+		staticCert = cfg.HulaSSL.GetTLSCert()
+		// conftagz eagerly materializes HulaSSL.ACME with defaults, so
+		// the struct being non-nil doesn't mean ACME was actually
+		// requested. Only wire the autocert manager when the user
+		// supplied at least one domain — nothing else makes sense.
+		if cfg.HulaSSL.ACME != nil && len(cfg.HulaSSL.ACME.Domains) > 0 {
 			acfg := cfg.HulaSSL.ACME
 			mgr := &autocert.Manager{
-				Prompt: autocert.AcceptTOS,
-				Cache:  autocert.DirCache(acfg.CacheDir),
-				Email:  acfg.Email,
-			}
-			if len(acfg.Domains) > 0 {
-				mgr.HostPolicy = autocert.HostWhitelist(acfg.Domains...)
+				Prompt:     autocert.AcceptTOS,
+				Cache:      autocert.DirCache(acfg.CacheDir),
+				Email:      acfg.Email,
+				HostPolicy: autocert.HostWhitelist(acfg.Domains...),
 			}
 			getCert = mgr.GetCertificate
 			unifiedLog.Infof("ACME enabled: cache=%q email=%q domains=%v", acfg.CacheDir, acfg.Email, acfg.Domains)
 		}
 	}
-	if (tlsCert == "" || tlsKey == "") && getCert == nil {
+	if staticCert != nil && getCert == nil {
+		// Promote the pre-loaded static cert into the dynamic-selector
+		// slot. Per-host certs attached via AddHostCertificate below
+		// still win SNI before this fallback runs.
+		getCert = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return staticCert, nil
+		}
+	}
+	if staticCert == nil && getCert == nil {
 		// Fallback: no static cert AND no ACME manager. Generate an
 		// in-memory self-signed cert for the admin listener. Matches
 		// the legacy Fiber behaviour and keeps local / dev / test
@@ -107,8 +121,6 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
-		TLSCertFile:    tlsCert,
-		TLSKeyFile:     tlsKey,
 		GetCertificate: getCert,
 	})
 	if err != nil {
