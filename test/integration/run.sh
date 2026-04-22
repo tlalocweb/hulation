@@ -157,7 +157,6 @@ servers:
     id: testsite1
     aliases:
       - "127.0.0.1"
-    ignore_port_in_host: true
     publish_port: true
     http_scheme: https
     root: /var/hula/site
@@ -231,13 +230,19 @@ docker compose -p "$COMPOSE_PROJECT" up -d 2>/dev/null
 # Wait for hula to be ready
 echo -n "  Waiting for hula"
 for i in $(seq 1 60); do
-    if curl11 -o /dev/null -w "%{http_code}" "https://${DOMAIN}:${PORT}/" 2>/dev/null | grep -q "200"; then
+    probe=$(curl11 -o /dev/null -w "%{http_code}" "https://${DOMAIN}:${PORT}/" 2>&1 || true)
+    if echo "$probe" | grep -q "200"; then
         echo " ready (${i}s)"
         break
     fi
+    if [ "$i" -eq 10 ]; then
+        echo ""
+        echo "  [debug] probe at 10s: $probe"
+    fi
     if [ "$i" -eq 60 ]; then
         echo " TIMEOUT"
-        echo "--- Hula logs ---"
+        echo "--- Hula logs (saved full to /tmp/hula-full.log) ---"
+        docker logs "${COMPOSE_PROJECT}-hula" >/tmp/hula-full.log 2>&1
         docker logs "${COMPOSE_PROJECT}-hula" 2>&1 | tail -30
         fail "Hula did not start within 60s"
         exit 1

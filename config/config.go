@@ -977,9 +977,15 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// conftagz may create empty pointer structs from default tags.
-	// Reset HulaSSL if it was not explicitly configured.
+	// Reset HulaSSL if it was not explicitly configured. An empty
+	// CloudflareOriginCA pointer (no API token, no zone ID) counts as
+	// "not configured" — conftagz auto-populates it from default tags
+	// even when the user's YAML didn't set it.
+	cfaEmpty := cfg.HulaSSL != nil &&
+		(cfg.HulaSSL.CloudflareOriginCA == nil ||
+			(cfg.HulaSSL.CloudflareOriginCA.APIToken == "" && cfg.HulaSSL.CloudflareOriginCA.ZoneID == ""))
 	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" &&
-		cfg.HulaSSL.CloudflareOriginCA == nil &&
+		cfaEmpty &&
 		(cfg.HulaSSL.ACME == nil || cfg.HulaSSL.ACME.Email == "") {
 		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
 		cfg.HulaSSL = nil

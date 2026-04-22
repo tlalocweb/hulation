@@ -40,7 +40,8 @@ type Server struct {
 	logger                 *log.TaggedLogger
 	externalCert           *tls.Certificate // External/well-known CA cert for API clients
 	internalCert           *tls.Certificate // Internal CA cert for izcragent mTLS
-	customHandlers         map[string]http.HandlerFunc // Custom HTTP handlers for specific paths
+	customHandlers         map[string]http.HandlerFunc // Custom HTTP handlers — exact path match
+	customMux              *http.ServeMux              // Go 1.22+ pattern ServeMux for path-parameter routes
 	// dynamicGetCert is a caller-supplied TLS cert source consulted AFTER
 	// per-host static certs and BEFORE the externalCert fallback. Primary
 	// use: ACME autocert.Manager.GetCertificate.
@@ -155,6 +156,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		internalCert:     internalCert,
 		hostCerts:        make(map[string]*tls.Certificate),
 		customHandlers:   make(map[string]http.HandlerFunc),
+		customMux:        http.NewServeMux(),
 		dynamicGetCert:   cfg.GetCertificate,
 	}
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
@@ -221,10 +223,19 @@ func (s *Server) AttachRegistryMiddleware(middleware func(http.Handler) http.Han
 	s.logger.Infof("Registry middleware attached")
 }
 
-// AttachHTTPMiddleware sets HTTP middleware that will wrap REST API requests
-// The middleware function should accept an http.Handler and return a wrapped http.Handler
+// AttachHTTPMiddleware appends HTTP middleware that will wrap REST API
+// requests. Multiple calls compose — the most-recently-attached
+// middleware is outermost (runs first), so later handlers can decide
+// to pass control to earlier ones via next.ServeHTTP.
 func (s *Server) AttachHTTPMiddleware(middleware func(http.Handler) http.Handler) {
-	s.httpMiddleware = middleware
+	if s.httpMiddleware == nil {
+		s.httpMiddleware = middleware
+	} else {
+		prev := s.httpMiddleware
+		s.httpMiddleware = func(next http.Handler) http.Handler {
+			return middleware(prev(next))
+		}
+	}
 	s.logger.Infof("HTTP middleware attached")
 }
 
@@ -258,10 +269,20 @@ func (s *Server) AttachStaticHandler(handler *static.StaticHandler) {
 	s.logger.Infof("Static file handler attached for hosts: %v", handler.Hosts())
 }
 
-// RegisterCustomHandler registers a custom HTTP handler for a specific path
-// This is useful for OAuth callbacks and other non-gRPC endpoints
+// RegisterCustomHandler registers a custom HTTP handler for a specific
+// path. Patterns may use Go 1.22+ ServeMux syntax including method
+// prefixes ("POST /v/sub/{formid}") and path parameters; those are
+// dispatched by an internal http.ServeMux that preserves those
+// semantics. Plain paths without method prefix or parameters hit a
+// simpler map (exact-match) for the common case.
 func (s *Server) RegisterCustomHandler(path string, handler http.HandlerFunc) {
-	s.customHandlers[path] = handler
+	// Route to ServeMux when the pattern uses method prefix or path
+	// parameters; otherwise store in the map for O(1) exact lookup.
+	if strings.ContainsAny(path, " {") {
+		s.customMux.HandleFunc(path, handler)
+	} else {
+		s.customHandlers[path] = handler
+	}
 	s.logger.Infof("Custom HTTP handler registered for path: %s", path)
 }
 
@@ -301,7 +322,8 @@ func (s *Server) LoadHostCertificate(hostname, certFile, keyFile string) error {
 // 6. DEFAULT: 404 for unmatched requests
 // This follows the izcr pattern
 func (s *Server) grpcHandlerOrPassFunc() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Core dispatcher: gRPC → customHandlers → gateway → registry → static → 404.
+	core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 1. HIGHEST PRIORITY: Check if this is a gRPC request
 		if r.ProtoMajor == 2 && strings.Contains(r.Header.Get("Content-Type"), "application/grpc") {
 			if s.grpcServer != nil {
@@ -313,19 +335,21 @@ func (s *Server) grpcHandlerOrPassFunc() http.Handler {
 			return
 		}
 
-		// 2. Custom HTTP handlers (e.g., OAuth callbacks)
+		// 2. Custom HTTP handlers (e.g., OAuth callbacks). Exact path
+		// map first, then the pattern-capable ServeMux for registrations
+		// that use method prefix or {param} placeholders.
 		if handler, ok := s.customHandlers[r.URL.Path]; ok {
 			handler(w, r)
+			return
+		}
+		if _, pattern := s.customMux.Handler(r); pattern != "" {
+			s.customMux.ServeHTTP(w, r)
 			return
 		}
 
 		// 3. REST API via grpc-gateway (paths starting with /api/)
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			handler := http.Handler(s.gatewayMux)
-			if s.httpMiddleware != nil {
-				handler = s.httpMiddleware(handler)
-			}
-			handler.ServeHTTP(w, r)
+			s.gatewayMux.ServeHTTP(w, r)
 			return
 		}
 
@@ -361,6 +385,16 @@ func (s *Server) grpcHandlerOrPassFunc() http.Handler {
 		// 5. DEFAULT: 404 for unmatched requests
 		http.NotFound(w, r)
 	})
+
+	// Wrap the core dispatcher with any attached HTTP middleware so host-
+	// level routers (per-host backend proxies, static-site serving,
+	// visitor-tracking endpoints registered by the caller) see every
+	// incoming request — not just /api/* — and can decide to handle it
+	// themselves or pass through to the core router via next.
+	if s.httpMiddleware != nil {
+		return s.httpMiddleware(core)
+	}
+	return core
 }
 
 // Start begins serving HTTPS requests (both gRPC and REST)

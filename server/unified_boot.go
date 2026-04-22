@@ -79,7 +79,24 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		}
 	}
 	if (tlsCert == "" || tlsKey == "") && getCert == nil {
-		return nil, fmt.Errorf("hula_ssl: set cert/key files, acme.domains, or both — none is configured")
+		// Fallback: no static cert AND no ACME manager. Generate an
+		// in-memory self-signed cert for the admin listener. Matches
+		// the legacy Fiber behaviour and keeps local / dev / test
+		// harnesses working without explicit cert config. Production
+		// deployments should configure hula_ssl.cert/key or ACME.
+		unifiedLog.Warnf("hula_ssl not configured; generating self-signed certificate for admin listener")
+		hosts := []string{"localhost", "127.0.0.1", "::1"}
+		if cfg.HulaHost != "" {
+			hosts = append(hosts, cfg.HulaHost)
+		}
+		hosts = append(hosts, cfg.HulaAliases...)
+		selfCert, scerr := GenerateSelfSignedCert(hosts)
+		if scerr != nil {
+			return nil, fmt.Errorf("generate self-signed cert: %w", scerr)
+		}
+		getCert = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return selfCert, nil
+		}
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -173,6 +190,11 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// httputil.ReverseProxy before the rest of the pipeline runs.
 	registerBackendProxies(srv, cfg)
 
+	// Per-host static file serving (server.Root directory). Attached
+	// AFTER backend proxies so backend paths like /api take priority
+	// over static files when both are configured on the same host.
+	registerStaticSites(srv, cfg)
+
 	// Per-server static TLS certs. Each configured server can ship its
 	// own cert+key; the unified server's SNI selector maps Host →
 	// certificate at handshake time. Servers without static cert files
@@ -183,19 +205,27 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		if s == nil || s.SSL == nil || s.Host == "" {
 			continue
 		}
-		if s.SSL.Cert == "" || s.SSL.Key == "" {
+		// After config load, SSL.Cert/Key hold PEM content (not file
+		// paths) because config.LoadSSLConfig has already read them.
+		// Call LoadSSLConfig opportunistically in case SSL wasn't
+		// processed during server-setup pass, then use the parsed
+		// *tls.Certificate directly.
+		if s.SSL.GetTLSCert() == nil {
+			if lerr := s.SSL.LoadSSLConfig(); lerr != nil {
+				unifiedLog.Warnf("per-host SSL load %s: %v", s.Host, lerr)
+				continue
+			}
+		}
+		cert := s.SSL.GetTLSCert()
+		if cert == nil {
 			continue
 		}
-		if err := srv.LoadHostCertificate(s.Host, s.SSL.Cert, s.SSL.Key); err != nil {
-			unifiedLog.Warnf("LoadHostCertificate %s: %v", s.Host, err)
-			continue
-		}
-		// Aliases share the same cert.
+		srv.AddHostCertificate(s.Host, cert)
 		for _, alias := range s.Aliases {
 			if alias == "" {
 				continue
 			}
-			_ = srv.LoadHostCertificate(alias, s.SSL.Cert, s.SSL.Key)
+			srv.AddHostCertificate(alias, cert)
 		}
 	}
 
