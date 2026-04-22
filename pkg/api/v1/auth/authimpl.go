@@ -86,6 +86,35 @@ func (s *Server) LoginAdmin(ctx context.Context, req *authspec.LoginAdminRequest
 
 func ptr(s string) *string { return &s }
 
+// RequestPasswordReset acknowledges a password-reset request. Phase 0
+// implementation always returns status="success" to prevent email-
+// enumeration attacks. Actual email dispatch happens in a later phase
+// once hula has a mail integration wired in. The user's email is
+// logged at INFO for operator visibility.
+func (s *Server) RequestPasswordReset(ctx context.Context, req *authspec.RequestPasswordResetRequest) (*authspec.RequestPasswordResetResponse, error) {
+	email := req.GetEmail()
+	if email == "" {
+		// Still return success to avoid leaking that the request shape
+		// is being validated. Empty-input is indistinguishable from
+		// any other invalid input.
+		return &authspec.RequestPasswordResetResponse{Status: "success"}, nil
+	}
+	// Look up whether the user exists. Result intentionally not leaked
+	// in the response — the server logs it locally.
+	u, err := model.GetUserByEmail(model.GetDB(), email)
+	if err != nil {
+		aLog.Errorf("RequestPasswordReset: lookup %s: %v", email, err)
+	} else if u == nil {
+		aLog.Infof("RequestPasswordReset: no user for email %q (response still success)", email)
+	} else {
+		// TODO: issue a password-reset token, stash it on the user
+		// row, send email. Phase 0 skips the mail side; the token
+		// model is part of the upcoming Bolt user-store migration.
+		aLog.Infof("RequestPasswordReset: reset requested for %s (email dispatch deferred)", u.Email)
+	}
+	return &authspec.RequestPasswordResetResponse{Status: "success"}, nil
+}
+
 // LoginWithSecret is the username+password login path for non-OIDC
 // providers (e.g., internal/local). Delegates to the named provider.
 func (s *Server) LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (*authspec.LoginWithSecretResponse, error) {
