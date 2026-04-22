@@ -26,6 +26,14 @@ type Client struct {
 	path   string                            // path
 	Output func(string, ...any) (int, error) // defaults to fmt.Printf
 	ErrOut func(string, ...any) (int, error) // defaults to fmt.Printf
+
+	// gRPC client state (populated by DialGRPC). Nil until the caller
+	// opts into the gRPC path.
+	grpc *grpcState
+	// InsecureSkipTLSVerify: skip server-cert verification on gRPC
+	// connections. Useful for self-signed certs in dev / test. Only
+	// honored if set before DialGRPC.
+	InsecureSkipTLSVerify bool
 }
 
 func (c *Client) out(format string, a ...any) {
