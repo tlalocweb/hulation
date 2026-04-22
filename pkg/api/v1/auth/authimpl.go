@@ -26,6 +26,7 @@ import (
 	apiobjects "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
+	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	"github.com/tlalocweb/hulation/utils"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -84,6 +85,78 @@ func (s *Server) LoginAdmin(ctx context.Context, req *authspec.LoginAdminRequest
 }
 
 func ptr(s string) *string { return &s }
+
+// LoginWithSecret is the username+password login path for non-OIDC
+// providers (e.g., internal/local). Delegates to the named provider.
+func (s *Server) LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (*authspec.LoginWithSecretResponse, error) {
+	providerName := req.GetProvider()
+	if providerName == "" {
+		providerName = "internal"
+	}
+	pm := authprovider.GetProviderManager()
+	p, err := pm.GetProvider(providerName)
+	if err != nil || p == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "provider %q not configured", providerName)
+	}
+	return p.LoginWithSecret(ctx, req)
+}
+
+// LoginOIDC starts an OIDC login. Returns a redirect URL + instructions
+// for the caller to visit, plus a one-time token used to correlate
+// with the subsequent LoginWithCode call.
+//
+// Hula picks the first configured OIDC provider when the request
+// doesn't specify one (the proto doesn't carry a provider field —
+// izcr's legacy shape).
+func (s *Server) LoginOIDC(ctx context.Context, req *authspec.LoginOIDCRequest) (*authspec.LoginOIDCResponse, error) {
+	p := firstOIDCProvider()
+	if p == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no OIDC provider configured")
+	}
+	return p.LoginOIDC(ctx, req)
+}
+
+// LoginWithCode completes an OIDC login using the code returned by the
+// identity provider's callback. provider must name one of the
+// configured OIDC providers.
+func (s *Server) LoginWithCode(ctx context.Context, req *authspec.LoginWithCodeRequest) (*authspec.LoginWithCodeResponse, error) {
+	providerName := req.GetProvider()
+	if providerName == "" {
+		return nil, status.Error(codes.InvalidArgument, "provider is required")
+	}
+	pm := authprovider.GetProviderManager()
+	p, err := pm.GetProvider(providerName)
+	if err != nil || p == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "provider %q not configured", providerName)
+	}
+	// The provider-base interface exposes the three login methods but
+	// not LoginWithCode directly (izcr's OIDC provider implements it as
+	// a method on its concrete type). Check if the provider implements
+	// the optional interface via type assertion.
+	if cp, ok := p.(loginWithCoder); ok {
+		return cp.LoginWithCode(ctx, req)
+	}
+	return nil, status.Error(codes.Unimplemented, "provider does not support LoginWithCode")
+}
+
+// firstOIDCProvider returns the first registered provider whose type is
+// "oidc". Order is registration order.
+func firstOIDCProvider() authprovider.AuthProvider {
+	pm := authprovider.GetProviderManager()
+	for _, p := range pm.GetProviders() {
+		if p.Type() == "oidc" {
+			return p
+		}
+	}
+	return nil
+}
+
+// loginWithCoder is the optional interface OIDC providers implement to
+// complete the authorization-code exchange. Matches izcr's oidc
+// provider's method signature.
+type loginWithCoder interface {
+	LoginWithCode(ctx context.Context, req *authspec.LoginWithCodeRequest) (*authspec.LoginWithCodeResponse, error)
+}
 
 // ListAuthProviders returns the configured auth providers so the UI can
 // render login buttons. Public (noauth annotation in the proto).
