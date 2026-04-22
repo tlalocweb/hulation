@@ -173,6 +173,32 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// httputil.ReverseProxy before the rest of the pipeline runs.
 	registerBackendProxies(srv, cfg)
 
+	// Per-server static TLS certs. Each configured server can ship its
+	// own cert+key; the unified server's SNI selector maps Host →
+	// certificate at handshake time. Servers without static cert files
+	// (e.g. ACME-only or Cloudflare Origin CA) are skipped here — those
+	// flows plug in via the GetCertificate path or the static root
+	// above.
+	for _, s := range cfg.Servers {
+		if s == nil || s.SSL == nil || s.Host == "" {
+			continue
+		}
+		if s.SSL.Cert == "" || s.SSL.Key == "" {
+			continue
+		}
+		if err := srv.LoadHostCertificate(s.Host, s.SSL.Cert, s.SSL.Key); err != nil {
+			unifiedLog.Warnf("LoadHostCertificate %s: %v", s.Host, err)
+			continue
+		}
+		// Aliases share the same cert.
+		for _, alias := range s.Aliases {
+			if alias == "" {
+				continue
+			}
+			_ = srv.LoadHostCertificate(alias, s.SSL.Cert, s.SSL.Key)
+		}
+	}
+
 	unifiedLog.Infof("Unified server constructed on %s (gRPC + REST gateway + ServeMux fallback)", addr)
 	return srv, nil
 }

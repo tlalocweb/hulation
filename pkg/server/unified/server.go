@@ -166,22 +166,19 @@ func NewServer(cfg *Config) (*Server, error) {
 		NextProtos: []string{"h2", "http/1.1"}, // Support HTTP/2 for gRPC
 	}
 
-	// The GetCertificate callback is used whenever we have:
-	//   - a caller-supplied dynamic source (ACME, custom), OR
-	//   - an internal cert that needs SNI-aware selection, OR
-	//   - per-host static certs attached later via AttachStaticHandler.
-	// Otherwise, fall back to a plain static certificate.
-	if cfg.GetCertificate != nil || internalCert != nil || len(server.hostCerts) > 0 {
-		tlsConfig.GetCertificate = func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return server.selectCertificate(clientHello)
-		}
-		if cfg.GetCertificate != nil {
-			unifiedLogger.Infof("Dynamic certificate selection enabled (caller-supplied GetCertificate, e.g. ACME)")
-		} else {
-			unifiedLogger.Infof("Dynamic certificate selection enabled for internal/external connections")
-		}
+	// Always use the dynamic selector. selectCertificate handles the
+	// full priority pipeline: per-host SNI → internal mTLS → caller-
+	// supplied GetCertificate (e.g. ACME) → static external cert. This
+	// lets callers add per-host certs AFTER NewServer via
+	// AddHostCertificate / AttachStaticHandler without rewriting the
+	// TLS config.
+	tlsConfig.GetCertificate = func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return server.selectCertificate(clientHello)
+	}
+	if cfg.GetCertificate != nil {
+		unifiedLogger.Infof("Dynamic certificate selection enabled (caller-supplied GetCertificate, e.g. ACME)")
 	} else {
-		tlsConfig.Certificates = []tls.Certificate{externalCert}
+		unifiedLogger.Infof("Dynamic certificate selection enabled")
 	}
 
 	// Enable mTLS if ClientCAs is configured
@@ -266,6 +263,33 @@ func (s *Server) AttachStaticHandler(handler *static.StaticHandler) {
 func (s *Server) RegisterCustomHandler(path string, handler http.HandlerFunc) {
 	s.customHandlers[path] = handler
 	s.logger.Infof("Custom HTTP handler registered for path: %s", path)
+}
+
+// AddHostCertificate registers a per-host TLS certificate. Requests
+// whose SNI ServerName matches the given hostname receive this cert;
+// all other SNIs fall through to the rest of the selection pipeline
+// (internal cert → dynamicGetCert → static externalCert).
+//
+// Must be called AFTER NewServer and BEFORE Start. The server's TLS
+// config is already set up to consult selectCertificate when any
+// per-host cert is registered.
+func (s *Server) AddHostCertificate(hostname string, cert *tls.Certificate) {
+	if cert == nil || hostname == "" {
+		return
+	}
+	s.hostCerts[hostname] = cert
+	s.logger.Infof("Host TLS certificate registered for: %s", hostname)
+}
+
+// LoadHostCertificate loads a cert+key pair from disk and registers it
+// for the given hostname. Convenience wrapper over AddHostCertificate.
+func (s *Server) LoadHostCertificate(hostname, certFile, keyFile string) error {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("load cert for %s: %w", hostname, err)
+	}
+	s.AddHostCertificate(hostname, &cert)
+	return nil
 }
 
 // grpcHandlerOrPassFunc routes requests with five-tier priority:
