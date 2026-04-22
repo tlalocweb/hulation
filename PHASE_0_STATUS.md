@@ -122,30 +122,44 @@ Commit: `a2e9416`
 - `pkg/apispec/v1/auth/auth.proto` — three new RPCs: `GrantServerAccess`, `RevokeServerAccess`, `ListServerAccess`. `ServerAccessRole` enum (VIEWER/MANAGER). `ServerAccessEntry` message.
 - Implementations land with the rest of the AuthService in stage 0.7.
 
-## Remaining stages (2 of 11)
+## Remaining stages
 
 | Stage | Estimate | Notes |
 |-------|----------|-------|
-| 0.7 finishers | 0.5–1 day | Unified-server TLS polish (ACME / per-host SNI). Bolt-gated auth RPCs can slide to Phase 1. |
-| 0.8 hulactl migration | 1 day | Phase 0.8a landed the gRPC client infrastructure (DialGRPC + per-service method wrappers). Remaining: switch hulactl's command-dispatch to prefer Grpc* methods, fall back to HTTP for WebDAV (staging-update / staging-mount). |
-| 0.11 Tests + docs + sign-off | 2 days | Update 12 existing e2e suites; add 8 new; update integration harness; DEPLOYMENT.md, test/ABOUT.md, MIGRATION_0.md. |
+| 0.7 polish | ~0.5 day | Unified-server TLS (ACME / per-host SNI). Static-cert deployments are production-ready now; ACME is a targeted follow-up. |
+| 0.8 hulactl migration | ~1 day | 0.8a shipped the gRPC client infrastructure. Remaining: hulactl command-dispatch switch to prefer `Grpc*` methods per command. Purely mechanical. |
+| 0.11 final | ~0.5 day | One more suite (15 sso-google, needs dex mock); final sign-off checklist run. |
 
-**Remaining effort**: ~3–4 working days.
+**Remaining effort**: ~2 working days.
 
-## Recommended next-session plan
+## Final sign-off checklist (Phase 0 → Phase 1)
 
-1. **Stage 0.7** — focused work for ~1 week. Start with the smallest services (status, badactor) to stabilize the unified-server + authware dispatch, then the CRUD ones (forms, landers), then the build-triggering ones (site, staging-build), ending with auth (biggest). Flip Fiber off when only non-gRPC endpoints (WebDAV, visitor, scripts, /hulastatus) remain; migrate those onto the unified ServeMux fallback and delete `handler/fiber_adapter.go` + the `gofiber`/`fasthttp` go.mod entries.
+These are the items that must ALL pass before declaring Phase 0 closed. Run in this order — items at the top catch problems that make later items spurious.
 
-   Key wiring points to remember:
-   - `server/unified_boot.go` registers services. Add one `RegisterXService` line per ported service.
-   - Claims population: `pkg/server/authware/tokens/factory.go` NewJWTClaimsCommit — set `claims.AllowedServers` from `access.AllowedServerIDs(user)`.
-   - Enrichment: `handler/visitor.go` Hello/HelloIframe/HelloNoScript — call `enrich.ClassifyReferrer`, `enrich.ParseUTM`, `enrich.ParseUA`, `enrich.SessionIDForVisitor` just before `ev.CommitTo(...)`. Write into events_v1 columns.
-   - ClickHouse schema: call `clickhouse.Apply(ctx, db, cfg.Analytics.EventsTTLDays)` once in server startup before any event write.
+- [ ] `go build .` produces a working hula binary.
+- [ ] `go test ./pkg/...` is green (enrich, access, clickhouse, any new tests).
+- [ ] `go vet ./pkg/... ./server ./handler ./model ./badactor ./config ./app` clean.
+- [ ] `grep -rln 'gofiber\|valyala/fasthttp' --include='*.go' .` returns only `.gopath/` cached entries (no in-tree refs).
+- [ ] `make protobuf` regenerates cleanly with no uncommitted diff.
+- [ ] `./test/e2e/run.sh` passes all 16 suites (01-14 + 16-20; 15 still pending).
+- [ ] `./test/integration/run.sh` passes.
+- [ ] Inside a running hula container: `ss -tlnp | grep LISTEN | grep -v clickhouse` shows exactly one HTTPS listener.
+- [ ] Smoke test: `curl --http2 -v https://host/hulastatus` reports HTTP/2.
+- [ ] Smoke test: `grpcurl -insecure host:443 list` shows every hulation service.
+- [ ] Smoke test: admin login via `hulactl auth` produces a JWT; `hulactl badactors` uses it successfully.
+- [ ] `MIGRATION_0.md` reflects final state (no stale "Phase 0 remaining" language).
+- [ ] `PHASE_0_STATUS.md` all stages marked ✅ or explicitly deferred to Phase 1.
+- [ ] Branch merged to main (or fast-forwardable).
 
-2. **Stage 0.8** after 0.7 — rewrite `client/` over generated gRPC stubs, keep hulactl's on-disk `hulactl.yaml` format, token in `authorization: Bearer …` metadata.
+Items intentionally deferred to Phase 1 (these are NOT blocking Phase 0 sign-off):
 
-3. **Stage 0.11** — update e2e + integration harnesses for the new `/api/v1/*` paths; new suites for grpc-smoke, rest-gateway, sso-google (dex mock), rbac, analytics-foundation, events-migration, http2, single-listener. Close with the sign-off checklist in PLAN_0.md §14.4.
+- Bolt user-store migration (replaces ClickHouse `users` table). Enables: InviteUser, password-reset tokens, SetInitialPassword, email validation, GrantServerAccess persistence, SetUserSysAdmin, fine-grained ACL reads.
+- Email dispatch integration (invite flow + password-reset email).
+- Analytics query APIs (Summary, Timeseries, Pages, Sources, Geography, Devices, Events, Forms, Visitors, Realtime).
+- Svelte + shadcn analytics UI.
+- ACME + per-host SNI cert selection on the unified listener.
+- `clickhouse.Apply()` migration-runner call in `Run()` to land the explicit `events_v1` DDL (current behaviour: GORM AutoMigrate handles the new columns).
 
 ## Pre-existing issues noticed
 
-- `store/bolt.go` has references to undefined types (`FindRequest`, `FlagRequest`, etc.) causing `go build ./...` to fail at HEAD. Pre-exists Phase 0 work. Triage before Phase 1.
+- `store/bolt.go` (legacy hula store, not the new `pkg/store/raft`) has undefined-type errors at HEAD. Pre-exists Phase 0. `go build .` works; `go build ./...` fails on the `store/` and `model/` (config-test) packages. Triage before Phase 1.
