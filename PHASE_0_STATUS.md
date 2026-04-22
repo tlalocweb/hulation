@@ -15,7 +15,10 @@ Commits: `349ca7f` (0.9a), `44f8344` (0.9b+c+d), `6c96f2e` (0.9e).
 
 Enrichment flows through the full ingest path — session IDs, channel classification, UTM attribution, UA parsing, cached geo — all land on every event. Non-blocking on the hot path.
 
-### Stage 0.7 (~85% done) — Handler ports to gRPC ⚠️
+### Stage 0.7 — Handler ports to gRPC ✅
+Phase-0-scope tasks done; Bolt-gated auth RPCs deferred to Phase 1.
+
+
 Commits: `5867de4` (Forms + Landers), `9eb7877` (BadActor), `6791293` (Site + Staging), `8349514` (Auth skeleton).
 
 Six of seven services fully ported; Auth has a live skeleton.
@@ -30,9 +33,9 @@ Six of seven services fully ported; Auth has a live skeleton.
 - `model/lander.go`: `ListLanders(db)` added.
 - `server/unified_boot.go`: all seven services registered on the unified listener (gRPC + REST gateway).
 
-**Remaining work in 0.7**:
-1. **Auth RPCs gated on Bolt / mail** — invite flow, email validation, SetInitialPassword, ValidatePasswordResetToken, CheckUserPermission / GetUserPermissions (admin), TotpAdminReset, GrantServerAccess / RevokeServerAccess / ListServerAccess. All Bolt-or-mail dependent; can slide into early Phase 1.
-2. **Unified server TLS polish** — RunUnified today requires static `hula_ssl.cert` and `hula_ssl.key`. Port ACME + per-host SNI cert selection from the legacy path.
+**Deferred to Phase 1**:
+- Auth RPCs gated on the Bolt user store or mail dispatch: invite flow, email validation, `SetInitialPassword`, `ValidatePasswordResetToken`, `CheckUserPermission` / `GetUserPermissions` (admin), `TotpAdminReset`, `GrantServerAccess` / `RevokeServerAccess` / `ListServerAccess`, tenant-scoped variants.
+- Cloudflare Origin CA per-server flow on the unified listener (lower priority — specialised case).
 
 **Completed in 0.7**:
 - 0.7a–d: Forms, Landers, BadActor, Site, Staging, Auth-skeleton gRPC impls.
@@ -45,6 +48,8 @@ Six of seven services fully ported; Auth has a live skeleton.
 - 0.7k: **Backend per-host proxies** land on the unified server via an HTTP middleware. `server/unified_backend.go` walks `cfg.Servers`, creates a `backend.NewProxyHandler` per ready backend, and dispatches matching (Host, path-prefix) requests before the rest of the pipeline. Plus four more auth RPCs: `PatchUser`, `SearchUsers`, `RefreshToken` all live; `UpdateUserPassword` + `SetUserSysAdmin` explicitly deferred (require Bolt user store).
 - 0.7L: **OIDC login RPCs** — `LoginWithSecret`, `LoginOIDC`, `LoginWithCode` delegate to the ProviderManager. `firstOIDCProvider()` picks a default for `LoginOIDC` (the proto shape doesn't carry a provider name). `LoginWithCode` uses a local `loginWithCoder` type assertion since the method lives on the concrete OIDC provider type.
 - 0.7m: **RequestPasswordReset** — always returns `success` (prevents email enumeration); actual email dispatch + token issuance deferred to the Bolt user-store + mail-integration follow-up.
+- 0.7n: **ACME** — unified.Config now accepts a `GetCertificate` callback. `BootUnifiedServer` plugs an `autocert.Manager` when `hula_ssl.acme` is configured (static cert, ACME-only, or both modes all work).
+- 0.7o: **Per-host SNI** — `unified.Server.AddHostCertificate` / `LoadHostCertificate` APIs; `BootUnifiedServer` walks `cfg.Servers[*].SSL` and registers per-server certs + alias certs. The handshake-time SNI ServerName drives selection.
 
 **AuthService RPCs live: 20 of ~30.** Remaining (each a bounded add, mostly gated on the Bolt user store or mail integration): InviteUser / ResendInviteUser, ValidateEmail / ResendValidationEmail / AdminValidateUserEmail, SetInitialPassword, ValidatePasswordResetToken, CheckUserPermission / GetUserPermissions, TotpAdminReset, GrantServerAccess / RevokeServerAccess / ListServerAccess, plus tenant-scoped variants unused in hula v1.
 
@@ -126,11 +131,10 @@ Commit: `a2e9416`
 
 | Stage | Estimate | Notes |
 |-------|----------|-------|
-| 0.7 polish | ~0.5 day | Unified-server TLS (ACME / per-host SNI). Static-cert deployments are production-ready now; ACME is a targeted follow-up. |
 | 0.8 hulactl migration | ~1 day | 0.8a shipped the gRPC client infrastructure. Remaining: hulactl command-dispatch switch to prefer `Grpc*` methods per command. Purely mechanical. |
 | 0.11 final | ~0.5 day | One more suite (15 sso-google, needs dex mock); final sign-off checklist run. |
 
-**Remaining effort**: ~2 working days.
+**Remaining effort**: ~1.5 working days.
 
 ## Final sign-off checklist (Phase 0 → Phase 1)
 
