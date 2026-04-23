@@ -15,24 +15,29 @@ import (
 	"context"
 
 	"github.com/tlalocweb/hulation/config"
+	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
 	apiobjects "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	"github.com/tlalocweb/hulation/pkg/server/authware/access"
 )
 
 // analyticsACLLookup returns a function the analytics service can call
-// per-RPC to find the caller's allowed server ids.
-func analyticsACLLookup(cfg *config.Config) func(ctx context.Context) []string {
-	return func(ctx context.Context) []string {
+// per-RPC to find the caller's ACL resolution.
+func analyticsACLLookup(cfg *config.Config) func(ctx context.Context) analyticsimpl.ACLResolution {
+	return func(ctx context.Context) analyticsimpl.ACLResolution {
 		claims, _ := ctx.Value(authware.ClaimsKey).(*authware.Claims)
 		if claims == nil {
-			return nil
+			return analyticsimpl.ACLResolution{}
 		}
-		// Admin + root roles bypass the per-user ACL — they see every
-		// configured server. Same check the Phase-0 JWT factory uses
-		// when minting admin tokens.
+		// Admin + root roles are superadmin — they can query any
+		// server_id (including seed fixtures outside the configured
+		// set). The builder still scopes each query to the requested
+		// server_id(s); superadmin just skips the intersection step.
 		if hasRole(claims.Roles, "admin") || hasRole(claims.Roles, "root") {
-			return allConfiguredServerIDs(cfg)
+			return analyticsimpl.ACLResolution{
+				Allowed:    allConfiguredServerIDs(cfg),
+				Superadmin: true,
+			}
 		}
 		// Non-admin: the authware/access helpers would walk this user's
 		// RoleAssignments — but Phase-0 left the Bolt user store
@@ -47,7 +52,9 @@ func analyticsACLLookup(cfg *config.Config) func(ctx context.Context) []string {
 		allowed := access.AllowedServerIDs(user)
 		// Intersect with configured servers so stale grants can't
 		// reference servers that no longer exist.
-		return intersectStrings(allowed, allConfiguredServerIDs(cfg))
+		return analyticsimpl.ACLResolution{
+			Allowed: intersectStrings(allowed, allConfiguredServerIDs(cfg)),
+		}
 	}
 }
 

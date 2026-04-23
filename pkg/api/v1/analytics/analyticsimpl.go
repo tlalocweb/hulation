@@ -16,15 +16,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// ACLResolution is what the handler's ACL hook returns: the allowed
+// set of server ids + a flag for "this caller is superadmin, let them
+// query anything". Superadmin bypasses the intersection check so
+// server ids outside the configured set (e.g., seed fixtures) still
+// resolve for admin users.
+type ACLResolution struct {
+	Allowed    []string
+	Superadmin bool
+}
+
 // Server implements analyticsspec.AnalyticsServiceServer.
 type Server struct {
 	analyticsspec.UnimplementedAnalyticsServiceServer
 
-	// aclLookup returns the set of server IDs the caller is allowed to
-	// query. Admin callers get a "ids-from-config" list (see newACLLookup
-	// in server/unified_boot.go). Non-admin callers get their per-user
-	// ACL intersected with the config list.
-	aclLookup func(ctx context.Context) []string
+	// aclLookup returns the caller's ACL resolution. Admin callers get
+	// Superadmin=true; non-admin callers get their per-user ACL list.
+	aclLookup func(ctx context.Context) ACLResolution
 
 	// dbFn returns the ClickHouse *sql.DB. Injected so tests can pass a
 	// mock.
@@ -33,9 +41,9 @@ type Server struct {
 
 // New constructs an AnalyticsService implementation.
 //
-//	aclLookup   — returns the caller's allowed-server-id list from ctx.
+//	aclLookup   — returns the caller's ACL resolution from ctx.
 //	db          — returns the ClickHouse *sql.DB; typically model.GetSQLDB.
-func New(aclLookup func(ctx context.Context) []string, db func() *sql.DB) *Server {
+func New(aclLookup func(ctx context.Context) ACLResolution, db func() *sql.DB) *Server {
 	return &Server{aclLookup: aclLookup, dbFn: db}
 }
 
@@ -47,8 +55,13 @@ func (s *Server) builder(ctx context.Context) (*query.Builder, error) {
 	if _, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims); !ok {
 		return nil, status.Error(codes.Unauthenticated, "no claims in context")
 	}
-	allowed := s.aclLookup(ctx)
-	return query.New().WithAllowedServerIDs(allowed), nil
+	res := s.aclLookup(ctx)
+	b := query.New()
+	if res.Superadmin {
+		b = b.WithSuperadmin()
+	}
+	b = b.WithAllowedServerIDs(res.Allowed)
+	return b, nil
 }
 
 // Summary returns visitor + pageview totals plus bounce rate and

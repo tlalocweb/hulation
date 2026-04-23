@@ -35,21 +35,41 @@ import (
 // Builder assembles analytics SQL from proto Filters plus the caller's
 // ACL-restricted set of server ids.
 type Builder struct {
-	allowed []string // intersected ACL — mandatory.
+	allowed []string // intersected ACL — mandatory unless superadmin.
+	// superadmin callers bypass the intersection against the allowed
+	// list (admin sees every server, not just the configured subset).
+	// Still emits a server_id IN (...) clause populated from the
+	// request's server_ids so queries don't accidentally cross tenants.
+	superadmin bool
+	// aclSet tracks whether the caller has installed either an ACL or
+	// superadmin so Build* can detect the "never called" programmer
+	// error.
+	aclSet bool
 }
 
 // New returns a Builder with no ACL set. Callers MUST follow up with
-// WithAllowedServerIDs before requesting any SQL, or every Build* call
-// will return ErrNoACL.
+// WithAllowedServerIDs or WithSuperadmin before requesting any SQL, or
+// every Build* call will return ErrNoACL.
 func New() *Builder {
 	return &Builder{}
 }
 
 // WithAllowedServerIDs installs the caller's ACL-intersected server id
 // list. A nil / empty slice means "no access" — queries will still be
-// built but produce no rows (server_id IN () never matches).
+// built but produce no rows (server_id IN ('') never matches).
 func (b *Builder) WithAllowedServerIDs(ids []string) *Builder {
 	b.allowed = append([]string(nil), ids...)
+	b.aclSet = true
+	return b
+}
+
+// WithSuperadmin marks the caller as superadmin — any server_id the
+// request references is allowed. Still populates the server_id IN (...)
+// clause so queries stay per-tenant scoped; just doesn't intersect
+// against a configured allow-list.
+func (b *Builder) WithSuperadmin() *Builder {
+	b.superadmin = true
+	b.aclSet = true
 	return b
 }
 
@@ -98,7 +118,7 @@ type chipFilter struct {
 // the internal working state. Returns an error when the filter is
 // unusable — missing range, unparseable time, empty ACL intersection.
 func (b *Builder) resolve(f *analyticsspec.Filters, serverID string) (*filterCtx, error) {
-	if b.allowed == nil {
+	if !b.aclSet {
 		return nil, ErrNoACL
 	}
 	if f == nil {
@@ -128,12 +148,17 @@ func (b *Builder) resolve(f *analyticsspec.Filters, serverID string) (*filterCtx
 
 	// Build the effective allowed server set: intersect (b.allowed) with
 	// (explicit server_id request) and/or (filters.server_ids).
+	// Superadmin bypasses intersection — any requested id is allowed.
 	requested := []string{}
 	if serverID != "" {
 		requested = append(requested, serverID)
 	}
 	requested = append(requested, f.ServerIds...)
-	ctx.allowedIDs = intersect(b.allowed, requested)
+	if b.superadmin {
+		ctx.allowedIDs = requested
+	} else {
+		ctx.allowedIDs = intersect(b.allowed, requested)
+	}
 
 	// Drill-down chips. onMV flags follow the MV state-table schemas in
 	// migrations/0002_events_mvs.sql.
