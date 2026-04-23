@@ -241,6 +241,12 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// GetMyPermissions to see the caller's identity.
 	srv.AttachHTTPMiddleware(AdminBearerHTTPMiddleware)
 
+	// Analytics: CSV export + per-user rate limiting. Only affects
+	// /api/v1/analytics/* requests; everything else passes through.
+	// Must attach AFTER AdminBearerHTTPMiddleware so the rate limiter
+	// can key off authware.Claims populated upstream.
+	srv.AttachHTTPMiddleware(analyticsHTTPMiddleware)
+
 	// Per-host backend proxies (Docker containers configured under a
 	// server's `backends:` block). Dispatched by HTTP middleware that
 	// matches on (Host, path-prefix) and hands off to
