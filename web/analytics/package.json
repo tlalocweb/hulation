@@ -15,7 +15,11 @@
     "@sveltejs/adapter-static": "^3.0.8",
     "@sveltejs/kit": "^2.20.2",
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "@types/d3": "^7.4.3",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.13.0",
+    "@types/topojson-client": "^3.1.5",
+    "@types/topojson-specification": "^1.0.5",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.3",
     "svelte": "^4.2.19",
@@ -25,5 +29,10 @@
     "typescript": "^5.7.3",
     "vite": "^5.4.14",
     "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   }
 }
