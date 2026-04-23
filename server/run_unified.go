@@ -24,6 +24,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/sitedeploy"
 )
 
@@ -85,6 +86,24 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	}
 	if err := model.PreloadDefinedForms(model.GetDB()); err != nil {
 		return fmt.Errorf("preload forms: %w", err)
+	}
+
+	// Apply ClickHouse migrations — brings up the MV state tables and
+	// materialized views that the analytics query builder reads from.
+	// Phase 0 defined the SQL files; Phase 1 wires the runner into boot.
+	// Non-fatal on failure — analytics endpoints fall back to raw
+	// events when the MVs aren't present, and an ops team may not want
+	// DDL running unattended on an unhealthy cluster.
+	if db := model.GetSQLDB(); db != nil {
+		ttl := 0 // zero → runner picks DefaultEventsTTLDays
+		if conf.Analytics != nil {
+			ttl = conf.Analytics.EventsTTLDays
+		}
+		if err := clickhouse.Apply(ctx, db, ttl); err != nil {
+			log.Warnf("ClickHouse migrations failed to apply: %s", err.Error())
+		} else {
+			log.Infof("ClickHouse schema + migrations applied")
+		}
 	}
 
 	if conf.BadActors != nil && !conf.BadActors.Disable {
