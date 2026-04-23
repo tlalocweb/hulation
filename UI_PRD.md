@@ -477,41 +477,71 @@ based on requested date range and granularity.
 
 ## 12. Backend API
 
-All endpoints require JWT auth. Each endpoint accepts a `serverIds[]` query
-param (filtered against user's allowed servers). All time-series endpoints
-accept `from`, `to` (ISO 8601), `granularity` (hour|day|week), and a
-`compare` flag (previous period or year-over-year).
+All endpoints require JWT auth (admin bearer token today; Phase-2 adds
+SSO-issued tokens). Every endpoint takes a mandatory `server_id` query
+param. Table-shaped endpoints additionally accept `filters.from`,
+`filters.to` (ISO 8601), `filters.granularity` (hour|day|week), a
+`filters.compare` flag (previous period / year-over-year — wired but
+deltas currently return -1 sentinels), and the full chip set:
+`filters.country`, `filters.device`, `filters.source`,
+`filters.path`, `filters.event_code`, `filters.goal`,
+`filters.browser`, `filters.os`, `filters.channel`,
+`filters.utm_source`, `filters.utm_medium`, `filters.utm_campaign`,
+`filters.region`, `filters.city`. Filters compose AND-wise on the
+ClickHouse query.
 
-| Endpoint | Returns |
-|----------|---------|
-| `GET /api/analytics/summary` | KPI cards (visitors, pageviews, bounce, avg duration) |
-| `GET /api/analytics/timeseries` | { buckets: [{ts, visitors, pageviews, ...}] } |
-| `GET /api/analytics/pages` | Top pages table |
-| `GET /api/analytics/sources` | Top sources table |
-| `GET /api/analytics/geography` | Top countries + optional region drill |
-| `GET /api/analytics/devices` | Device / browser / OS breakdowns |
-| `GET /api/analytics/events` | Event counts, filterable by code |
-| `GET /api/analytics/forms` | Forms + submissions with conv. rate |
-| `GET /api/analytics/visitors` | Visitor directory (paginated) |
-| `GET /api/analytics/visitor/:id` | Visitor profile with full event timeline |
-| `GET /api/analytics/realtime` | Active visitors in last 5 min + recent events |
-| `GET /api/analytics/goals` | Goal counts and conversion rates |
-| CRUD `/api/analytics/goals/*` | Goal config |
-| CRUD `/api/analytics/reports/*` | Scheduled report config |
-| `POST /api/analytics/reports/:id/preview` | Render a report for inline preview |
-| `POST /api/analytics/reports/:id/send-now` | Force-fire a report |
-| CRUD `/api/analytics/access/*` | User-server ACL |
+Every table-shaped endpoint accepts `?format=csv` for CSV export
+(RFC 4180, `Content-Disposition: attachment`).
+
+Paths shipped by Phase 1 (all under `/api/v1/*`, served by grpc-gateway
+from the `AnalyticsService` proto; browser JSON field names are
+proto-snake_case because the gateway is configured with
+`UseProtoNames=true`):
+
+| Endpoint | Returns | Phase |
+|----------|---------|-------|
+| `GET /api/v1/analytics/summary` | KPI scalars (visitors, pageviews, bounce_rate, avg_session_duration_seconds, plus `*_delta_pct` sentinels) | 1 |
+| `GET /api/v1/analytics/timeseries` | `{ buckets: [{ ts, visitors, pageviews }] }` | 1 |
+| `GET /api/v1/analytics/pages` | `{ rows: [...] }` — accepts `limit` (default 50, cap 1000) + `offset` | 1 |
+| `GET /api/v1/analytics/sources` | `{ rows: [...] }` — accepts `group_by` (`channel`/`referer_host`/`utm_source`), `limit`, `offset` | 1 |
+| `GET /api/v1/analytics/geography` | `{ rows: [...] }` — country by default; drills to region when `filters.country` is set; rows carry a `percent` field | 1 |
+| `GET /api/v1/analytics/devices` | `{ device_category: [...], browser: [...], os: [...] }` — three parallel tables | 1 |
+| `GET /api/v1/analytics/events` | `{ rows: [...] }` — per-code count, unique_visitors, first_seen, last_seen | 1 |
+| `GET /api/v1/analytics/forms` | `{ rows: [] }` — **stub**; body pending form-submission events with a discoverable form_id | 1 (stub) |
+| `GET /api/v1/analytics/visitors` | Paginated directory (`limit`, `offset`) | 1 |
+| `GET /api/v1/analytics/visitor/{visitor_id}` | Profile header + up-to-1000-event timeline + related ips/cookies/aliases | 1 |
+| `GET /api/v1/analytics/realtime` | Active visitors in last 5 min + 50 recent events + top pages + top sources (5-second server-side cache) | 1 |
+| `GET /api/v1/analytics/goals` | Goal counts and conversion rates | Phase 3 |
+| CRUD `/api/v1/analytics/goals/*` | Goal config | Phase 3 |
+| CRUD `/api/v1/analytics/reports/*` | Scheduled report config | Phase 3 |
+| `POST /api/v1/analytics/reports/{id}/preview` | Render a report for inline preview | Phase 3 |
+| `POST /api/v1/analytics/reports/{id}/send-now` | Force-fire a report | Phase 3 |
+| CRUD `/api/v1/analytics/access/*` | User-server ACL admin | Phase 3 |
 
 All filter chips in the UI become query params. Example:
 
 ```
-GET /api/analytics/pages
-    ?serverIds=tlaloc,tlaloc-staging
-    &from=2026-04-14T00:00Z
-    &to=2026-04-21T00:00Z
-    &country=DE
-    &device=mobile
+GET /api/v1/analytics/pages
+    ?server_id=tlaloc
+    &filters.from=2026-04-14T00:00:00Z
+    &filters.to=2026-04-21T00:00:00Z
+    &filters.country=DE
+    &filters.device=mobile
+    &limit=50
 ```
+
+Auth and ACL:
+- Admin JWTs (role `admin` or `root`) are treated as superadmin; they
+  can query any `server_id`.
+- Non-admin callers are intersected against `pkg/server/authware/access`
+  (per-user RoleAssignment records). Phase 1 ships this path but the
+  store is empty until the Bolt user rewrite lands in Phase 3, so
+  non-admin queries effectively return no rows today.
+
+Rate limiting:
+- Per-user token bucket keyed on the authware claim username.
+- Burst 10 qps, sustained 30/min.
+- Over-quota responses: 429 with `Retry-After: 2`.
 
 ## 13. UI Tech Stack
 
