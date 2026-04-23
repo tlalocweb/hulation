@@ -22,12 +22,14 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
+	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
@@ -202,6 +204,16 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	authspec.RegisterAuthServiceServer(grpcSrv, authSvc)
 	if err := authspec.RegisterAuthServiceHandlerServer(ctx, gwMux, authSvc); err != nil {
 		return nil, fmt.Errorf("register auth handler: %w", err)
+	}
+
+	// Analytics — Phase-1 read endpoints backed by ClickHouse. The ACL
+	// lookup grants admin callers every configured server id; non-admin
+	// callers fall back to the authware/access helpers (stub until the
+	// Bolt user store ships — admin-only flows continue to work).
+	analyticsSvc := analyticsimpl.New(analyticsACLLookup(cfg), analyticsimpl.DefaultDB)
+	analyticsspec.RegisterAnalyticsServiceServer(grpcSrv, analyticsSvc)
+	if err := analyticsspec.RegisterAnalyticsServiceHandlerServer(ctx, gwMux, analyticsSvc); err != nil {
+		return nil, fmt.Errorf("register analytics handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.

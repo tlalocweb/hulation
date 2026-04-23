@@ -500,5 +500,33 @@ else
     fail "No visitors found in ClickHouse"
 fi
 
+# -------------------------------------------------------
+# Test 7: Analytics API smoke (Phase 1 stage 1.3)
+# -------------------------------------------------------
+echo "--- Test: Analytics API (REST gateway) ---"
+# Build a 48h window ending now so Summary picks raw events.
+ANALYTICS_TO=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+ANALYTICS_FROM=$(date -u -d '2 days ago' +'%Y-%m-%dT%H:%M:%SZ')
+SUMMARY_RESP=$(curl11 -X GET "https://${DOMAIN}:${PORT}/api/v1/analytics/summary?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}" \
+    -H "Authorization: Bearer ${JWT}" 2>&1 || true)
+if ! echo "$SUMMARY_RESP" | grep -q '"visitors"'; then
+    echo "        summary body: $(echo "$SUMMARY_RESP" | head -c 400)"
+fi
+assert_contains "$SUMMARY_RESP" '"visitors"' "/api/v1/analytics/summary returns visitors field"
+assert_contains "$SUMMARY_RESP" '"pageviews"' "/api/v1/analytics/summary returns pageviews field"
+
+TIMESERIES_RESP=$(curl11 -X GET "https://${DOMAIN}:${PORT}/api/v1/analytics/timeseries?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}&filters.granularity=hour" \
+    -H "Authorization: Bearer ${JWT}" 2>&1 || true)
+assert_contains "$TIMESERIES_RESP" '"buckets"' "/api/v1/analytics/timeseries returns buckets array"
+
+# Without a token, Summary must refuse (Unauthenticated → 401 at the gateway).
+STATUS=$(curl11 -o /dev/null -w "%{http_code}" \
+    "https://${DOMAIN}:${PORT}/api/v1/analytics/summary?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}")
+if [ "$STATUS" != "200" ]; then
+    pass "/api/v1/analytics/summary rejects unauthenticated caller (status $STATUS)"
+else
+    fail "/api/v1/analytics/summary should reject unauthenticated caller"
+fi
+
 echo ""
 echo "=== Done ==="

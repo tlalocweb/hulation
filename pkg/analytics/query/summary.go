@@ -28,26 +28,31 @@ func (b *Builder) BuildSummary(f *analyticsspec.Filters, serverID string) (*Buil
 	if err != nil {
 		return nil, err
 	}
-	// KPI computations need session-level aggregation; raw events is
-	// the only source that carries it today. Once mv_sessions exposes
-	// bounce / duration as aggregate functions this can switch over.
+	// KPI computations need session-level aggregation. Raw events is
+	// the only source that carries enough detail. Once mv_sessions
+	// exposes bounce / duration as aggregate functions this can switch
+	// over.
+	//
+	// Query shape: inner subquery groups by session_id so every session
+	// is a single row carrying (visitor, pageview count, duration). The
+	// outer SELECT then aggregates across sessions — no need for window
+	// functions or DISTINCT counts inside the aggregation.
 	where, params := ctx.whereClause("when", "server_id", false)
 	sql := fmt.Sprintf(`
 SELECT
-    uniqExact(belongs_to) AS visitors,
-    countIf(code = 1) AS pageviews,
-    countIf(session_pageviews = 1) / nullIf(sessions, 0) AS bounce_rate,
+    uniqExact(visitor_id) AS visitors,
+    sum(session_pageviews) AS pageviews,
+    countIf(session_pageviews = 1) / nullIf(count(), 0) AS bounce_rate,
     avg(session_duration_seconds) AS avg_session_duration_seconds
 FROM (
     SELECT
-        belongs_to,
         session_id,
-        code,
-        count() OVER (PARTITION BY session_id) AS session_pageviews,
-        dateDiff('second', min(when) OVER (PARTITION BY session_id), max(when) OVER (PARTITION BY session_id)) AS session_duration_seconds,
-        count(DISTINCT session_id) OVER () AS sessions
+        any(belongs_to) AS visitor_id,
+        countIf(code = 1) AS session_pageviews,
+        dateDiff('second', min(when), max(when)) AS session_duration_seconds
     FROM events
     WHERE %s
+    GROUP BY session_id
 )`, where)
 	return &Built{SQL: sql, Params: params}, nil
 }
