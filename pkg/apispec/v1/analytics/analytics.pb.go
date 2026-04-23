@@ -44,12 +44,21 @@ type Filters struct {
 	// compare: "previous" | "previous_year" | ""
 	Compare string `protobuf:"bytes,5,opt,name=compare,proto3" json:"compare,omitempty"`
 	// drill-down chip filters
-	Country       string `protobuf:"bytes,6,opt,name=country,proto3" json:"country,omitempty"`
-	Device        string `protobuf:"bytes,7,opt,name=device,proto3" json:"device,omitempty"`
-	Source        string `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
-	Path          string `protobuf:"bytes,9,opt,name=path,proto3" json:"path,omitempty"`
-	EventCode     string `protobuf:"bytes,10,opt,name=event_code,json=eventCode,proto3" json:"event_code,omitempty"`
-	Goal          string `protobuf:"bytes,11,opt,name=goal,proto3" json:"goal,omitempty"`
+	Country   string `protobuf:"bytes,6,opt,name=country,proto3" json:"country,omitempty"`
+	Device    string `protobuf:"bytes,7,opt,name=device,proto3" json:"device,omitempty"` // "mobile" | "tablet" | "desktop"
+	Source    string `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"` // referer host or channel name
+	Path      string `protobuf:"bytes,9,opt,name=path,proto3" json:"path,omitempty"`
+	EventCode string `protobuf:"bytes,10,opt,name=event_code,json=eventCode,proto3" json:"event_code,omitempty"`
+	Goal      string `protobuf:"bytes,11,opt,name=goal,proto3" json:"goal,omitempty"`
+	// Additional drill-down chips (wired 1:1 to ClickHouse columns).
+	Browser       string `protobuf:"bytes,12,opt,name=browser,proto3" json:"browser,omitempty"`
+	Os            string `protobuf:"bytes,13,opt,name=os,proto3" json:"os,omitempty"`
+	Channel       string `protobuf:"bytes,14,opt,name=channel,proto3" json:"channel,omitempty"` // "direct" | "search" | "social" | "referral" | "email"
+	UtmSource     string `protobuf:"bytes,15,opt,name=utm_source,json=utmSource,proto3" json:"utm_source,omitempty"`
+	UtmMedium     string `protobuf:"bytes,16,opt,name=utm_medium,json=utmMedium,proto3" json:"utm_medium,omitempty"`
+	UtmCampaign   string `protobuf:"bytes,17,opt,name=utm_campaign,json=utmCampaign,proto3" json:"utm_campaign,omitempty"`
+	Region        string `protobuf:"bytes,18,opt,name=region,proto3" json:"region,omitempty"` // geography sub-drill (admin region)
+	City          string `protobuf:"bytes,19,opt,name=city,proto3" json:"city,omitempty"`     // geography sub-drill (city)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,6 +166,62 @@ func (x *Filters) GetEventCode() string {
 func (x *Filters) GetGoal() string {
 	if x != nil {
 		return x.Goal
+	}
+	return ""
+}
+
+func (x *Filters) GetBrowser() string {
+	if x != nil {
+		return x.Browser
+	}
+	return ""
+}
+
+func (x *Filters) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *Filters) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *Filters) GetUtmSource() string {
+	if x != nil {
+		return x.UtmSource
+	}
+	return ""
+}
+
+func (x *Filters) GetUtmMedium() string {
+	if x != nil {
+		return x.UtmMedium
+	}
+	return ""
+}
+
+func (x *Filters) GetUtmCampaign() string {
+	if x != nil {
+		return x.UtmCampaign
+	}
+	return ""
+}
+
+func (x *Filters) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *Filters) GetCity() string {
+	if x != nil {
+		return x.City
 	}
 	return ""
 }
@@ -478,14 +543,37 @@ func (x *TimeseriesResponse) GetBuckets() []*TimeseriesBucket {
 	return nil
 }
 
+// TableRow is the shared row shape across Pages, Sources, Geography,
+// Events, and FormsReport. Each report populates only the fields that
+// apply to its dimension; unset numeric fields serialise to zero, which
+// the UI tolerates.
 type TableRow struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Visitors      int64                  `protobuf:"varint,2,opt,name=visitors,proto3" json:"visitors,omitempty"`
-	Pageviews     int64                  `protobuf:"varint,3,opt,name=pageviews,proto3" json:"pageviews,omitempty"`
-	BounceRate    float64                `protobuf:"fixed64,4,opt,name=bounce_rate,json=bounceRate,proto3" json:"bounce_rate,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Key        string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Visitors   int64                  `protobuf:"varint,2,opt,name=visitors,proto3" json:"visitors,omitempty"`
+	Pageviews  int64                  `protobuf:"varint,3,opt,name=pageviews,proto3" json:"pageviews,omitempty"`
+	BounceRate float64                `protobuf:"fixed64,4,opt,name=bounce_rate,json=bounceRate,proto3" json:"bounce_rate,omitempty"`
+	// Pages report.
+	UniquePageviews      int64   `protobuf:"varint,5,opt,name=unique_pageviews,json=uniquePageviews,proto3" json:"unique_pageviews,omitempty"`
+	AvgTimeOnPageSeconds float64 `protobuf:"fixed64,6,opt,name=avg_time_on_page_seconds,json=avgTimeOnPageSeconds,proto3" json:"avg_time_on_page_seconds,omitempty"`
+	Entrances            int64   `protobuf:"varint,7,opt,name=entrances,proto3" json:"entrances,omitempty"`
+	Exits                int64   `protobuf:"varint,8,opt,name=exits,proto3" json:"exits,omitempty"`
+	// Sources report.
+	PagesPerVisit float64 `protobuf:"fixed64,9,opt,name=pages_per_visit,json=pagesPerVisit,proto3" json:"pages_per_visit,omitempty"`
+	GoalConvRate  float64 `protobuf:"fixed64,10,opt,name=goal_conv_rate,json=goalConvRate,proto3" json:"goal_conv_rate,omitempty"`
+	// Geography report.
+	Percent float64 `protobuf:"fixed64,11,opt,name=percent,proto3" json:"percent,omitempty"`
+	// Events report.
+	Count          int64  `protobuf:"varint,12,opt,name=count,proto3" json:"count,omitempty"`
+	UniqueVisitors int64  `protobuf:"varint,13,opt,name=unique_visitors,json=uniqueVisitors,proto3" json:"unique_visitors,omitempty"`
+	FirstSeen      string `protobuf:"bytes,14,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen       string `protobuf:"bytes,15,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// FormsReport report.
+	Submits                int64   `protobuf:"varint,16,opt,name=submits,proto3" json:"submits,omitempty"`
+	ConversionRate         float64 `protobuf:"fixed64,17,opt,name=conversion_rate,json=conversionRate,proto3" json:"conversion_rate,omitempty"`
+	AvgTimeToSubmitSeconds float64 `protobuf:"fixed64,18,opt,name=avg_time_to_submit_seconds,json=avgTimeToSubmitSeconds,proto3" json:"avg_time_to_submit_seconds,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *TableRow) Reset() {
@@ -546,10 +634,111 @@ func (x *TableRow) GetBounceRate() float64 {
 	return 0
 }
 
+func (x *TableRow) GetUniquePageviews() int64 {
+	if x != nil {
+		return x.UniquePageviews
+	}
+	return 0
+}
+
+func (x *TableRow) GetAvgTimeOnPageSeconds() float64 {
+	if x != nil {
+		return x.AvgTimeOnPageSeconds
+	}
+	return 0
+}
+
+func (x *TableRow) GetEntrances() int64 {
+	if x != nil {
+		return x.Entrances
+	}
+	return 0
+}
+
+func (x *TableRow) GetExits() int64 {
+	if x != nil {
+		return x.Exits
+	}
+	return 0
+}
+
+func (x *TableRow) GetPagesPerVisit() float64 {
+	if x != nil {
+		return x.PagesPerVisit
+	}
+	return 0
+}
+
+func (x *TableRow) GetGoalConvRate() float64 {
+	if x != nil {
+		return x.GoalConvRate
+	}
+	return 0
+}
+
+func (x *TableRow) GetPercent() float64 {
+	if x != nil {
+		return x.Percent
+	}
+	return 0
+}
+
+func (x *TableRow) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *TableRow) GetUniqueVisitors() int64 {
+	if x != nil {
+		return x.UniqueVisitors
+	}
+	return 0
+}
+
+func (x *TableRow) GetFirstSeen() string {
+	if x != nil {
+		return x.FirstSeen
+	}
+	return ""
+}
+
+func (x *TableRow) GetLastSeen() string {
+	if x != nil {
+		return x.LastSeen
+	}
+	return ""
+}
+
+func (x *TableRow) GetSubmits() int64 {
+	if x != nil {
+		return x.Submits
+	}
+	return 0
+}
+
+func (x *TableRow) GetConversionRate() float64 {
+	if x != nil {
+		return x.ConversionRate
+	}
+	return 0
+}
+
+func (x *TableRow) GetAvgTimeToSubmitSeconds() float64 {
+	if x != nil {
+		return x.AvgTimeToSubmitSeconds
+	}
+	return 0
+}
+
 type PagesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -596,6 +785,27 @@ func (x *PagesRequest) GetServerId() string {
 		return x.ServerId
 	}
 	return ""
+}
+
+func (x *PagesRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *PagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *PagesRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
 }
 
 type PagesResponse struct {
@@ -646,6 +856,10 @@ type SourcesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	GroupBy       string                 `protobuf:"bytes,4,opt,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"`
+	Limit         int32                  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -692,6 +906,34 @@ func (x *SourcesRequest) GetServerId() string {
 		return x.ServerId
 	}
 	return ""
+}
+
+func (x *SourcesRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *SourcesRequest) GetGroupBy() string {
+	if x != nil {
+		return x.GroupBy
+	}
+	return ""
+}
+
+func (x *SourcesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *SourcesRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
 }
 
 type SourcesResponse struct {
@@ -742,6 +984,7 @@ type GeographyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -786,6 +1029,13 @@ func (x *GeographyRequest) GetFilters() *Filters {
 func (x *GeographyRequest) GetServerId() string {
 	if x != nil {
 		return x.ServerId
+	}
+	return ""
+}
+
+func (x *GeographyRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -838,6 +1088,7 @@ type DevicesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -882,6 +1133,13 @@ func (x *DevicesRequest) GetFilters() *Filters {
 func (x *DevicesRequest) GetServerId() string {
 	if x != nil {
 		return x.ServerId
+	}
+	return ""
+}
+
+func (x *DevicesRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -950,6 +1208,7 @@ type EventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -994,6 +1253,13 @@ func (x *EventsRequest) GetFilters() *Filters {
 func (x *EventsRequest) GetServerId() string {
 	if x != nil {
 		return x.ServerId
+	}
+	return ""
+}
+
+func (x *EventsRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -1046,6 +1312,7 @@ type FormsReportRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       *Filters               `protobuf:"bytes,1,opt,name=filters,proto3" json:"filters,omitempty"`
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1090,6 +1357,13 @@ func (x *FormsReportRequest) GetFilters() *Filters {
 func (x *FormsReportRequest) GetServerId() string {
 	if x != nil {
 		return x.ServerId
+	}
+	return ""
+}
+
+func (x *FormsReportRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -1144,6 +1418,7 @@ type VisitorsRequest struct {
 	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Format        string                 `protobuf:"bytes,5,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1204,6 +1479,13 @@ func (x *VisitorsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *VisitorsRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
 }
 
 type VisitorsResponse struct {
@@ -1502,6 +1784,7 @@ type VisitorEvent struct {
 	Referrer      string                 `protobuf:"bytes,4,opt,name=referrer,proto3" json:"referrer,omitempty"`
 	Country       string                 `protobuf:"bytes,5,opt,name=country,proto3" json:"country,omitempty"`
 	Device        string                 `protobuf:"bytes,6,opt,name=device,proto3" json:"device,omitempty"`
+	Ip            string                 `protobuf:"bytes,7,opt,name=ip,proto3" json:"ip,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1574,6 +1857,13 @@ func (x *VisitorEvent) GetCountry() string {
 func (x *VisitorEvent) GetDevice() string {
 	if x != nil {
 		return x.Device
+	}
+	return ""
+}
+
+func (x *VisitorEvent) GetIp() string {
+	if x != nil {
+		return x.Ip
 	}
 	return ""
 }
@@ -1694,7 +1984,7 @@ var File_pkg_apispec_v1_analytics_analytics_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\n" +
-	"(pkg/apispec/v1/analytics/analytics.proto\x12\x15hulation.v1.analytics\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\"\x99\x02\n" +
+	"(pkg/apispec/v1/analytics/analytics.proto\x12\x15hulation.v1.analytics\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\"\xea\x03\n" +
 	"\aFilters\x12\x1d\n" +
 	"\n" +
 	"server_ids\x18\x01 \x03(\tR\tserverIds\x12\x12\n" +
@@ -1709,7 +1999,17 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\n" +
 	"event_code\x18\n" +
 	" \x01(\tR\teventCode\x12\x12\n" +
-	"\x04goal\x18\v \x01(\tR\x04goal\"g\n" +
+	"\x04goal\x18\v \x01(\tR\x04goal\x12\x18\n" +
+	"\abrowser\x18\f \x01(\tR\abrowser\x12\x0e\n" +
+	"\x02os\x18\r \x01(\tR\x02os\x12\x18\n" +
+	"\achannel\x18\x0e \x01(\tR\achannel\x12\x1d\n" +
+	"\n" +
+	"utm_source\x18\x0f \x01(\tR\tutmSource\x12\x1d\n" +
+	"\n" +
+	"utm_medium\x18\x10 \x01(\tR\tutmMedium\x12!\n" +
+	"\futm_campaign\x18\x11 \x01(\tR\vutmCampaign\x12\x16\n" +
+	"\x06region\x18\x12 \x01(\tR\x06region\x12\x12\n" +
+	"\x04city\x18\x13 \x01(\tR\x04city\"g\n" +
 	"\x0eSummaryRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\"\xa0\x03\n" +
@@ -1732,50 +2032,78 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\"W\n" +
 	"\x12TimeseriesResponse\x12A\n" +
-	"\abuckets\x18\x01 \x03(\v2'.hulation.v1.analytics.TimeseriesBucketR\abuckets\"w\n" +
+	"\abuckets\x18\x01 \x03(\v2'.hulation.v1.analytics.TimeseriesBucketR\abuckets\"\xf0\x04\n" +
 	"\bTableRow\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1a\n" +
 	"\bvisitors\x18\x02 \x01(\x03R\bvisitors\x12\x1c\n" +
 	"\tpageviews\x18\x03 \x01(\x03R\tpageviews\x12\x1f\n" +
 	"\vbounce_rate\x18\x04 \x01(\x01R\n" +
-	"bounceRate\"e\n" +
+	"bounceRate\x12)\n" +
+	"\x10unique_pageviews\x18\x05 \x01(\x03R\x0funiquePageviews\x126\n" +
+	"\x18avg_time_on_page_seconds\x18\x06 \x01(\x01R\x14avgTimeOnPageSeconds\x12\x1c\n" +
+	"\tentrances\x18\a \x01(\x03R\tentrances\x12\x14\n" +
+	"\x05exits\x18\b \x01(\x03R\x05exits\x12&\n" +
+	"\x0fpages_per_visit\x18\t \x01(\x01R\rpagesPerVisit\x12$\n" +
+	"\x0egoal_conv_rate\x18\n" +
+	" \x01(\x01R\fgoalConvRate\x12\x18\n" +
+	"\apercent\x18\v \x01(\x01R\apercent\x12\x14\n" +
+	"\x05count\x18\f \x01(\x03R\x05count\x12'\n" +
+	"\x0funique_visitors\x18\r \x01(\x03R\x0euniqueVisitors\x12\x1d\n" +
+	"\n" +
+	"first_seen\x18\x0e \x01(\tR\tfirstSeen\x12\x1b\n" +
+	"\tlast_seen\x18\x0f \x01(\tR\blastSeen\x12\x18\n" +
+	"\asubmits\x18\x10 \x01(\x03R\asubmits\x12'\n" +
+	"\x0fconversion_rate\x18\x11 \x01(\x01R\x0econversionRate\x12:\n" +
+	"\x1aavg_time_to_submit_seconds\x18\x12 \x01(\x01R\x16avgTimeToSubmitSeconds\"\xab\x01\n" +
 	"\fPagesRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"D\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\"D\n" +
 	"\rPagesResponse\x123\n" +
-	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"g\n" +
+	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\xc8\x01\n" +
 	"\x0eSourcesRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"F\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12\x19\n" +
+	"\bgroup_by\x18\x04 \x01(\tR\agroupBy\x12\x14\n" +
+	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x06 \x01(\x05R\x06offset\"F\n" +
 	"\x0fSourcesResponse\x123\n" +
-	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"i\n" +
+	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\x81\x01\n" +
 	"\x10GeographyRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"H\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\"H\n" +
 	"\x11GeographyResponse\x123\n" +
-	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"g\n" +
+	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\x7f\n" +
 	"\x0eDevicesRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"\xc7\x01\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\"\xc7\x01\n" +
 	"\x0fDevicesResponse\x12H\n" +
 	"\x0fdevice_category\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x0edeviceCategory\x129\n" +
 	"\abrowser\x18\x02 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\abrowser\x12/\n" +
-	"\x02os\x18\x03 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x02os\"f\n" +
+	"\x02os\x18\x03 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x02os\"~\n" +
 	"\rEventsRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"E\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\"E\n" +
 	"\x0eEventsResponse\x123\n" +
-	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"k\n" +
+	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\x83\x01\n" +
 	"\x12FormsReportRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
-	"\tserver_id\x18\x02 \x01(\tR\bserverId\"J\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\"J\n" +
 	"\x13FormsReportResponse\x123\n" +
-	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\x96\x01\n" +
+	"\x04rows\x18\x01 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\x04rows\"\xae\x01\n" +
 	"\x0fVisitorsRequest\x128\n" +
 	"\afilters\x18\x01 \x01(\v2\x1e.hulation.v1.analytics.FiltersR\afilters\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x05R\x06offset\"k\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x16\n" +
+	"\x06format\x18\x05 \x01(\tR\x06format\"k\n" +
 	"\x10VisitorsResponse\x12A\n" +
 	"\bvisitors\x18\x01 \x03(\v2%.hulation.v1.analytics.VisitorSummaryR\bvisitors\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\"\x93\x02\n" +
@@ -1802,7 +2130,7 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\btimeline\x18\x02 \x03(\v2#.hulation.v1.analytics.VisitorEventR\btimeline\x12\x10\n" +
 	"\x03ips\x18\x03 \x03(\tR\x03ips\x12\x18\n" +
 	"\acookies\x18\x04 \x03(\tR\acookies\x12\x18\n" +
-	"\aaliases\x18\x05 \x03(\tR\aaliases\"\x9d\x01\n" +
+	"\aaliases\x18\x05 \x03(\tR\aaliases\"\xad\x01\n" +
 	"\fVisitorEvent\x12\x0e\n" +
 	"\x02ts\x18\x01 \x01(\tR\x02ts\x12\x1d\n" +
 	"\n" +
@@ -1810,7 +2138,8 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1a\n" +
 	"\breferrer\x18\x04 \x01(\tR\breferrer\x12\x18\n" +
 	"\acountry\x18\x05 \x01(\tR\acountry\x12\x16\n" +
-	"\x06device\x18\x06 \x01(\tR\x06device\".\n" +
+	"\x06device\x18\x06 \x01(\tR\x06device\x12\x0e\n" +
+	"\x02ip\x18\a \x01(\tR\x02ip\".\n" +
 	"\x0fRealtimeRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\"\xfd\x01\n" +
 	"\x10RealtimeResponse\x12,\n" +

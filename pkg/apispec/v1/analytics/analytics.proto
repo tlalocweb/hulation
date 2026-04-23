@@ -85,11 +85,20 @@ message Filters {
   string compare = 5;
   // drill-down chip filters
   string country = 6;
-  string device = 7;
-  string source = 8;
+  string device = 7;     // "mobile" | "tablet" | "desktop"
+  string source = 8;     // referer host or channel name
   string path = 9;
   string event_code = 10;
   string goal = 11;
+  // Additional drill-down chips (wired 1:1 to ClickHouse columns).
+  string browser = 12;
+  string os = 13;
+  string channel = 14;   // "direct" | "search" | "social" | "referral" | "email"
+  string utm_source = 15;
+  string utm_medium = 16;
+  string utm_campaign = 17;
+  string region = 18;    // geography sub-drill (admin region)
+  string city = 19;      // geography sub-drill (city)
 }
 
 message SummaryRequest { Filters filters = 1; string server_id = 2; }
@@ -115,36 +124,59 @@ message TimeseriesBucket {
 message TimeseriesRequest { Filters filters = 1; string server_id = 2; }
 message TimeseriesResponse { repeated TimeseriesBucket buckets = 1; }
 
+// TableRow is the shared row shape across Pages, Sources, Geography,
+// Events, and FormsReport. Each report populates only the fields that
+// apply to its dimension; unset numeric fields serialise to zero, which
+// the UI tolerates.
 message TableRow {
   string key = 1;
   int64 visitors = 2;
   int64 pageviews = 3;
   double bounce_rate = 4;
+  // Pages report.
+  int64 unique_pageviews = 5;
+  double avg_time_on_page_seconds = 6;
+  int64 entrances = 7;
+  int64 exits = 8;
+  // Sources report.
+  double pages_per_visit = 9;
+  double goal_conv_rate = 10;
+  // Geography report.
+  double percent = 11;
+  // Events report.
+  int64 count = 12;
+  int64 unique_visitors = 13;
+  string first_seen = 14;
+  string last_seen = 15;
+  // FormsReport report.
+  int64 submits = 16;
+  double conversion_rate = 17;
+  double avg_time_to_submit_seconds = 18;
 }
 
-message PagesRequest { Filters filters = 1; string server_id = 2; }
+message PagesRequest { Filters filters = 1; string server_id = 2; string format = 3; int32 limit = 4; int32 offset = 5; }
 message PagesResponse { repeated TableRow rows = 1; }
 
-message SourcesRequest { Filters filters = 1; string server_id = 2; }
+message SourcesRequest { Filters filters = 1; string server_id = 2; string format = 3; string group_by = 4; int32 limit = 5; int32 offset = 6; }
 message SourcesResponse { repeated TableRow rows = 1; }
 
-message GeographyRequest { Filters filters = 1; string server_id = 2; }
+message GeographyRequest { Filters filters = 1; string server_id = 2; string format = 3; }
 message GeographyResponse { repeated TableRow rows = 1; }
 
-message DevicesRequest { Filters filters = 1; string server_id = 2; }
+message DevicesRequest { Filters filters = 1; string server_id = 2; string format = 3; }
 message DevicesResponse {
   repeated TableRow device_category = 1;
   repeated TableRow browser = 2;
   repeated TableRow os = 3;
 }
 
-message EventsRequest { Filters filters = 1; string server_id = 2; }
+message EventsRequest { Filters filters = 1; string server_id = 2; string format = 3; }
 message EventsResponse { repeated TableRow rows = 1; }
 
-message FormsReportRequest { Filters filters = 1; string server_id = 2; }
+message FormsReportRequest { Filters filters = 1; string server_id = 2; string format = 3; }
 message FormsReportResponse { repeated TableRow rows = 1; }
 
-message VisitorsRequest { Filters filters = 1; string server_id = 2; int32 limit = 3; int32 offset = 4; }
+message VisitorsRequest { Filters filters = 1; string server_id = 2; int32 limit = 3; int32 offset = 4; string format = 5; }
 message VisitorsResponse {
   repeated VisitorSummary visitors = 1;
   int32 total = 2;
@@ -178,6 +210,7 @@ message VisitorEvent {
   string referrer = 4;
   string country = 5;
   string device = 6;
+  string ip = 7;
 }
 
 message RealtimeRequest { string server_id = 1; }
