@@ -26,7 +26,7 @@ runner_shell "curl -sk \
     -H 'User-Agent: ${UA_CHROME}' \
     -H 'Referer: ${REF_GOOGLE}' \
     -X GET \
-    'https://${HULA_HOST}/v/hulahello.html?h=tlaloc&u=https%3A%2F%2F${SITE_HOST}%2Fwelcome'" \
+    'https://${HULA_HOST}/v/hula_hello.html?h=testsite&u=https%3A%2F%2F${SITE_HOST}%2Fwelcome'" \
     >/dev/null 2>&1 || true
 
 # Give the async commit a moment to hit ClickHouse.

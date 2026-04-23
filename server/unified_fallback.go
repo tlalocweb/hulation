@@ -121,54 +121,71 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 // router/router.go — same handlers, same paths, no Fiber. Transitional
 // only; removed once hulactl and the e2e harness move to /api/v1/*.
 func registerLegacyAPIRoutes(srv *unified.Server) {
-	// Auth (login is the critical one — hulactl needs it to bootstrap).
+	// verifier matches handler.JWTVerifier — returns parsed permissions
+	// as interface{} so the handler package stays model-free.
+	verifier := func(token string) (bool, interface{}, error) {
+		ok, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+		if err != nil || !ok {
+			return false, nil, err
+		}
+		if !perms.HasCap("admin") {
+			return false, nil, nil
+		}
+		return true, perms, nil
+	}
+	admin := func(h handler.Handler) http.HandlerFunc {
+		return handler.WrapAdminForNetHTTP(h, verifier)
+	}
+
+	// Auth. Login/logout are noauth (bootstrap); the rest require a valid
+	// admin bearer token so handlers can read jwt/perms from ctx.Locals.
 	srv.RegisterCustomHandler("POST /api/auth/login", handler.WrapForNetHTTP(handler.Login))
 	srv.RegisterCustomHandler("POST /api/auth/logout", handler.WrapForNetHTTP(handler.Logout))
-	srv.RegisterCustomHandler("GET /api/auth/ok", handler.WrapForNetHTTP(handler.StatusAuthOK))
-	srv.RegisterCustomHandler("POST /api/auth/user", handler.WrapForNetHTTP(handler.NewUser))
-	srv.RegisterCustomHandler("GET /api/auth/user/{userlookup}", handler.WrapForNetHTTP(handler.GetUser))
-	srv.RegisterCustomHandler("PATCH /api/auth/user/{userid}", handler.WrapForNetHTTP(handler.ModifyUser))
+	srv.RegisterCustomHandler("GET /api/auth/ok", admin(handler.StatusAuthOK))
+	srv.RegisterCustomHandler("POST /api/auth/user", admin(handler.NewUser))
+	srv.RegisterCustomHandler("GET /api/auth/user/{userlookup}", admin(handler.GetUser))
+	srv.RegisterCustomHandler("PATCH /api/auth/user/{userid}", admin(handler.ModifyUser))
 
 	// Status probe paths. The /api/ namespace is admin-scoped, so unlike
 	// /hulastatus (liveness, unauth) this one requires a valid admin
 	// bearer token — matches what hulactl and monitoring probes expect.
-	srv.RegisterCustomHandler("GET /api/status", adminOnly(handler.WrapForNetHTTP(handler.Status)))
+	srv.RegisterCustomHandler("GET /api/status", admin(handler.Status))
 
 	// TOTP — validate is noauth; the rest assume a valid token.
 	srv.RegisterCustomHandler("POST /api/auth/totp/validate", handler.WrapForNetHTTP(handler.TotpValidate))
-	srv.RegisterCustomHandler("POST /api/auth/totp/setup", handler.WrapForNetHTTP(handler.TotpSetup))
-	srv.RegisterCustomHandler("POST /api/auth/totp/verify-setup", handler.WrapForNetHTTP(handler.TotpVerifySetup))
-	srv.RegisterCustomHandler("POST /api/auth/totp/disable", handler.WrapForNetHTTP(handler.TotpDisable))
-	srv.RegisterCustomHandler("GET /api/auth/totp/status", handler.WrapForNetHTTP(handler.TotpStatus))
+	srv.RegisterCustomHandler("POST /api/auth/totp/setup", admin(handler.TotpSetup))
+	srv.RegisterCustomHandler("POST /api/auth/totp/verify-setup", admin(handler.TotpVerifySetup))
+	srv.RegisterCustomHandler("POST /api/auth/totp/disable", admin(handler.TotpDisable))
+	srv.RegisterCustomHandler("GET /api/auth/totp/status", admin(handler.TotpStatus))
 
 	// Forms.
-	srv.RegisterCustomHandler("POST /api/form/create", handler.WrapForNetHTTP(handler.FormCreate))
-	srv.RegisterCustomHandler("PATCH /api/form/{formid}", handler.WrapForNetHTTP(handler.FormModify))
-	srv.RegisterCustomHandler("DELETE /api/form/{formid}", handler.WrapForNetHTTP(handler.FormDelete))
+	srv.RegisterCustomHandler("POST /api/form/create", admin(handler.FormCreate))
+	srv.RegisterCustomHandler("PATCH /api/form/{formid}", admin(handler.FormModify))
+	srv.RegisterCustomHandler("DELETE /api/form/{formid}", admin(handler.FormDelete))
 
 	// Landers.
-	srv.RegisterCustomHandler("POST /api/lander/create", handler.WrapForNetHTTP(handler.LanderCreate))
-	srv.RegisterCustomHandler("PATCH /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderModify))
-	srv.RegisterCustomHandler("DELETE /api/lander/{landerid}", handler.WrapForNetHTTP(handler.LanderDelete))
+	srv.RegisterCustomHandler("POST /api/lander/create", admin(handler.LanderCreate))
+	srv.RegisterCustomHandler("PATCH /api/lander/{landerid}", admin(handler.LanderModify))
+	srv.RegisterCustomHandler("DELETE /api/lander/{landerid}", admin(handler.LanderDelete))
 
 	// Site deployment.
-	srv.RegisterCustomHandler("POST /api/site/trigger-build", handler.WrapForNetHTTP(handler.TriggerBuild))
-	srv.RegisterCustomHandler("GET /api/site/build-status/{buildid}", handler.WrapForNetHTTP(handler.BuildStatus))
-	srv.RegisterCustomHandler("GET /api/site/builds/{serverid}", handler.WrapForNetHTTP(handler.ListBuilds))
+	srv.RegisterCustomHandler("POST /api/site/trigger-build", admin(handler.TriggerBuild))
+	srv.RegisterCustomHandler("GET /api/site/build-status/{buildid}", admin(handler.BuildStatus))
+	srv.RegisterCustomHandler("GET /api/site/builds/{serverid}", admin(handler.ListBuilds))
 
 	// Staging build (WebDAV registered separately below).
-	srv.RegisterCustomHandler("POST /api/staging/build", handler.WrapForNetHTTP(handler.StagingBuild))
+	srv.RegisterCustomHandler("POST /api/staging/build", admin(handler.StagingBuild))
 
 	// Bad actor admin — only registered when the feature is enabled.
 	if badactor.IsEnabled() {
-		srv.RegisterCustomHandler("GET /api/badactor/list", handler.WrapForNetHTTP(badactor.ListBadActors))
-		srv.RegisterCustomHandler("DELETE /api/badactor/block/{ip}", handler.WrapForNetHTTP(badactor.EvictBadActor))
-		srv.RegisterCustomHandler("POST /api/badactor/block", handler.WrapForNetHTTP(badactor.ManualBlock))
-		srv.RegisterCustomHandler("GET /api/badactor/allowlist", handler.WrapForNetHTTP(badactor.ListAllowlistHandler))
-		srv.RegisterCustomHandler("POST /api/badactor/allowlist", handler.WrapForNetHTTP(badactor.AddToAllowlistHandler))
-		srv.RegisterCustomHandler("DELETE /api/badactor/allowlist/{ip}", handler.WrapForNetHTTP(badactor.RemoveFromAllowlistHandler))
-		srv.RegisterCustomHandler("GET /api/badactor/stats", handler.WrapForNetHTTP(badactor.BadActorStats))
-		srv.RegisterCustomHandler("GET /api/badactor/signatures", handler.WrapForNetHTTP(badactor.ListSignaturesHandler))
+		srv.RegisterCustomHandler("GET /api/badactor/list", admin(badactor.ListBadActors))
+		srv.RegisterCustomHandler("DELETE /api/badactor/block/{ip}", admin(badactor.EvictBadActor))
+		srv.RegisterCustomHandler("POST /api/badactor/block", admin(badactor.ManualBlock))
+		srv.RegisterCustomHandler("GET /api/badactor/allowlist", admin(badactor.ListAllowlistHandler))
+		srv.RegisterCustomHandler("POST /api/badactor/allowlist", admin(badactor.AddToAllowlistHandler))
+		srv.RegisterCustomHandler("DELETE /api/badactor/allowlist/{ip}", admin(badactor.RemoveFromAllowlistHandler))
+		srv.RegisterCustomHandler("GET /api/badactor/stats", admin(badactor.BadActorStats))
+		srv.RegisterCustomHandler("GET /api/badactor/signatures", admin(badactor.ListSignaturesHandler))
 	}
 }
 
@@ -183,22 +200,3 @@ func verifyJWTAdmin(token string) (valid bool, isAdmin bool, err error) {
 	return true, perms.HasCap("admin"), nil
 }
 
-// adminOnly rejects the request with 401 unless the Authorization header
-// carries a valid admin bearer token. Used to gate transitional legacy
-// /api/* routes that mirror legacy Fiber's admin group.
-func adminOnly(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		authz := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if len(authz) <= len(prefix) || authz[:len(prefix)] != prefix {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		valid, admin, verr := verifyJWTAdmin(authz[len(prefix):])
-		if verr != nil || !valid || !admin {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next(w, r)
-	}
-}

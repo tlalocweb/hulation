@@ -7,6 +7,11 @@
 # A staging-build triggers hugo inside it via EXEC_BUILD protocol.
 
 sb_out=$(hulactl staging-build testsite-staging 2>&1 || true)
+if ! echo "$sb_out" | grep -q "Staging build"; then
+    echo "        --- sb_out full ---"
+    echo "$sb_out" | sed 's/^/        | /'
+    echo "        --- end ---"
+fi
 assert_contains "$sb_out" "Staging build" "staging-build returns status"
 
 if echo "$sb_out" | grep -qE "error|failed"; then

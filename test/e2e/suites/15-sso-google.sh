@@ -29,11 +29,11 @@ fi
 # --- Full flow, runs when dex is present ---
 
 # 1. ListAuthProviders should surface 'google' (the dex-fronted provider).
-plist=$(curl_in_network -s "https://${HULA_HOST}/api/v1/auth/providers" || true)
+plist=$(curl_test -s "https://${HULA_HOST}/api/v1/auth/providers" || true)
 assert_contains "$plist" "google" "ListAuthProviders surfaces google entry"
 
 # 2. Kick off LoginOIDC. hula returns a redirect URL pointing at dex.
-oidc_start=$(curl_in_network -s -X POST \
+oidc_start=$(curl_test -s -X POST \
     -H 'Content-Type: application/json' \
     -d '{"username":"test@example.com","onetimetoken":"suite15-ott"}' \
     "https://${HULA_HOST}/api/v1/auth/oidc" || true)
@@ -57,7 +57,7 @@ if [ -z "$code" ]; then
 fi
 
 # 5. Finish the OIDC handshake. LoginWithCode should return a JWT.
-login_done=$(curl_in_network -s -X POST \
+login_done=$(curl_test -s -X POST \
     -H 'Content-Type: application/json' \
     -d "{\"provider\":\"google\",\"code\":\"$code\",\"onetimetoken\":\"suite15-ott\"}" \
     "https://${HULA_HOST}/api/v1/auth/code" || true)

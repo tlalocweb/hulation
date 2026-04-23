@@ -12,7 +12,10 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"golang.org/x/crypto/acme/autocert"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
@@ -122,6 +125,22 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
 		GetCertificate: getCert,
+		GRPCServerOptions: []grpc.ServerOption{
+			grpc.UnaryInterceptor(AdminBearerInterceptor()),
+		},
+		MuxOptions: []runtime.ServeMuxOption{
+			// Emit proto field names as-is (snake_case) and keep default
+			// values in the response. hulactl + the e2e harness expect
+			// snake_case keys; the grpc-gateway default of lowerCamelCase
+			// ("isAdmin") would break both.
+			runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
+				MarshalOptions: protojson.MarshalOptions{
+					UseProtoNames:   true,
+					EmitUnpopulated: true,
+				},
+				UnmarshalOptions: protojson.UnmarshalOptions{DiscardUnknown: true},
+			}),
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create unified server: %w", err)
@@ -202,6 +221,13 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// subsystems at startup time — not here, because they need
 	// host-level dispatch.
 	RegisterFallbackRoutes(srv)
+
+	// Populate authware.Claims on the request context from any Bearer
+	// token. The gRPC UnaryInterceptor only fires for native gRPC
+	// calls; grpc-gateway calls Handler implementations directly so
+	// the gateway path needs this HTTP-level equivalent for WhoAmI and
+	// GetMyPermissions to see the caller's identity.
+	srv.AttachHTTPMiddleware(AdminBearerHTTPMiddleware)
 
 	// Per-host backend proxies (Docker containers configured under a
 	// server's `backends:` block). Dispatched by HTTP middleware that

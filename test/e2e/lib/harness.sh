@@ -82,8 +82,20 @@ hulactl() {
 # Run an arbitrary shell command inside the hulactl-runner container.
 # Overrides the entrypoint so the hulactl.yaml volume and other runner volumes
 # are available to the shell.
+#
+# The compose entrypoint installs curl/jq/ca-certificates + sets /etc/hosts
+# aliases; since --entrypoint skips that script, we have to re-run its
+# important bits (ca-certificates install + hostname mapping) before the
+# user's command or every test that needs hula.test.local resolution fails.
 runner_shell() {
-    dcq run --rm -T --entrypoint /bin/sh hulactl-runner -c "$*"
+    dcq run --rm -T --entrypoint /bin/sh hulactl-runner -c '
+        if ! command -v curl >/dev/null 2>&1; then
+          apk add --no-cache ca-certificates curl jq >/dev/null 2>&1
+        fi
+        update-ca-certificates >/dev/null 2>&1
+        HULA_IP=$(getent hosts hula | awk "{print \$1}")
+        echo "$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        '"$*"
 }
 
 # Run the `auth` command non-interactively using HULACTL_IDENTITY and

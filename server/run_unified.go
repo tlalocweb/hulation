@@ -145,6 +145,12 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 			stagingMgr := sitedeploy.NewStagingManager(buildMgr.DockerClient())
 			sitedeploy.SetGlobalStagingManager(stagingMgr)
 			log.Infof("Site deploy build manager initialized")
+			// Launch long-lived staging containers for every server
+			// configured with `hula_build: staging`. The legacy Fiber
+			// boot path did this; the unified rewrite dropped the call
+			// and staging-* commands nil-return from GetStagingContainer
+			// without it.
+			go stagingMgr.StartupStaging(conf.Servers)
 		}
 	}
 

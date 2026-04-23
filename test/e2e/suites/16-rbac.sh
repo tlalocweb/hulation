@@ -12,11 +12,11 @@
 #   3. GetMyPermissions echoes the caller's JWT permissions.
 
 # Unauthenticated ListAuthProviders (via REST gateway).
-plist=$(curl_in_network -s "https://${HULA_HOST}/api/v1/auth/providers" || true)
+plist=$(curl_test -s "https://${HULA_HOST}/api/v1/auth/providers" || true)
 assert_contains "$plist" "providers" "ListAuthProviders returns 'providers' field"
 
 # WhoAmI without a token → 401 (via REST gateway).
-status_code=$(curl_in_network -s -o /dev/null -w '%{http_code}' \
+status_code=$(curl_test -s -o /dev/null -w '%{http_code}' \
     "https://${HULA_HOST}/api/v1/auth/whoami" || true)
 assert_eq "$status_code" "401" "WhoAmI without token returns 401"
 
@@ -25,7 +25,7 @@ assert_eq "$status_code" "401" "WhoAmI without token returns 401"
 admin_token=$(runner_shell 'cat /root/.hula/hulactl.yaml' 2>/dev/null \
     | grep -oE 'token: [^ ]+' | head -1 | awk '{print $2}' || true)
 if [ -n "$admin_token" ]; then
-    whoami=$(curl_in_network -s \
+    whoami=$(curl_test -s \
         -H "Authorization: Bearer ${admin_token}" \
         "https://${HULA_HOST}/api/v1/auth/whoami" || true)
     assert_contains "$whoami" '"ok"' "WhoAmI with admin token returns ok"
@@ -36,7 +36,7 @@ fi
 
 # GetMyPermissions with the admin token → the admin role list.
 if [ -n "$admin_token" ]; then
-    perms=$(curl_in_network -s \
+    perms=$(curl_test -s \
         -H "Authorization: Bearer ${admin_token}" \
         "https://${HULA_HOST}/api/v1/auth/me/permissions" || true)
     assert_contains "$perms" "allow_permissions" "GetMyPermissions returns allow_permissions field"
