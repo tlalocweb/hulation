@@ -1,32 +1,36 @@
 <script lang="ts">
-  // Stage 2.1 landing scaffold — populated with real Overview UI in
-  // stage 2.4. Visible enough that `pnpm build` has something to
-  // render, and the theme + Tailwind layers are exercised.
-  import { version } from '$app/environment';
+  // Overview placeholder — real KPI cards + main timeline land in
+  // stage 2.4.
+  import { filters } from '$lib/filters';
 </script>
 
-<main class="mx-auto max-w-5xl px-6 py-20">
-  <header class="mb-10">
-    <h1 class="text-4xl font-semibold tracking-tight">Hula Analytics</h1>
-    <p class="mt-2 text-muted-foreground">
-      Phase 2 scaffolding. Reports land in stages 2.4–2.7.
+<section class="space-y-6">
+  <header>
+    <h1 class="text-2xl font-semibold tracking-tight">Overview</h1>
+    <p class="text-sm text-muted-foreground">
+      Phase 2 stage 2.2 — filter bar + URL state wired. Reports populate in 2.4.
     </p>
   </header>
 
-  <section class="grid grid-cols-1 gap-4 md:grid-cols-2">
-    <article class="rounded-lg border bg-card p-6 text-card-foreground">
-      <h2 class="mb-1 text-lg font-medium">Backend</h2>
-      <p class="text-sm text-muted-foreground">
-        Analytics API at <code class="font-mono text-xs">/api/v1/analytics/*</code> —
-        Phase 1 is live.
-      </p>
-    </article>
-    <article class="rounded-lg border bg-card p-6 text-card-foreground">
-      <h2 class="mb-1 text-lg font-medium">Build</h2>
-      <p class="text-sm text-muted-foreground">
-        SvelteKit static adapter; version
-        <code class="font-mono text-xs">{version}</code>.
-      </p>
-    </article>
-  </section>
-</main>
+  <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+    {#each ['Visitors', 'Pageviews', 'Bounce rate', 'Avg session'] as label}
+      <article class="rounded-lg border bg-card p-5 text-card-foreground">
+        <p class="text-sm text-muted-foreground">{label}</p>
+        <p class="mt-1 text-3xl font-semibold tracking-tight tabular-nums">—</p>
+        <p class="mt-2 h-6 text-xs text-muted-foreground">sparkline · stage 2.3</p>
+      </article>
+    {/each}
+  </div>
+
+  <article class="rounded-lg border bg-card p-5 text-card-foreground">
+    <h2 class="mb-2 text-base font-medium">Timeline</h2>
+    <div class="flex h-56 items-center justify-center text-sm text-muted-foreground">
+      LineChart · stage 2.3
+    </div>
+  </article>
+
+  <article class="rounded-lg border bg-card p-5 text-card-foreground">
+    <h2 class="mb-2 text-base font-medium">Current filter state</h2>
+    <pre class="overflow-x-auto text-xs text-muted-foreground">{JSON.stringify($filters, null, 2)}</pre>
+  </article>
+</section>
