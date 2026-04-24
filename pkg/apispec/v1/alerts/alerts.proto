@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+// AlertsService — threshold-alert CRUD + recent-fires listing.
+//
+// An Alert is a persistent rule evaluated on a 1-minute ticker by the
+// Phase-4 evaluator goroutine (pkg/alerts/evaluator). When a rule
+// fires, the evaluator writes an AlertEvent row to Bolt, renders an
+// email body, and hands it to pkg/mailer for delivery (reusing the
+// Phase-3 mailer).
+//
+// Kinds (AlertKind):
+//   GOAL_COUNT_ABOVE      — conversions for target_goal_id in the last
+//                           window_minutes > threshold.
+//   PAGE_TRAFFIC_DELTA    — pageviews to target_path in the current
+//                           window_minutes vs the same window one
+//                           week ago; fires when |delta_pct| > threshold.
+//   FORM_SUBMISSION_RATE  — submissions to target_form_id per minute
+//                           exceed threshold (spam burst detector).
+//   BAD_ACTOR_RATE        — bad-actor hits/minute > threshold.
+//   BUILD_FAILED          — any build_failed event in window (threshold
+//                           ignored).
+//
+// Writes require server.<id>.admin; reads require
+// server.<id>.analytics.read so non-admins can see the rules that
+// govern the inbox they already receive.
+
+package hulation.v1.alerts;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts;alertsspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service AlertsService {
+  rpc CreateAlert(CreateAlertRequest) returns (Alert) {
+    option (google.api.http) = {
+      post: "/api/v1/alerts/{server_id}"
+      body: "alert"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc UpdateAlert(UpdateAlertRequest) returns (Alert) {
+    option (google.api.http) = {
+      patch: "/api/v1/alerts/{server_id}/{alert_id}"
+      body: "alert"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc DeleteAlert(DeleteAlertRequest) returns (DeleteAlertResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/alerts/{server_id}/{alert_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/alerts/{server_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetAlert(GetAlertRequest) returns (Alert) {
+    option (google.api.http) = {
+      get: "/api/v1/alerts/{server_id}/{alert_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // ListAlertEvents returns the recent fire history for one alert.
+  rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/alerts/{server_id}/{alert_id}/events"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+}
+
+enum AlertKind {
+  ALERT_KIND_UNSPECIFIED         = 0;
+  ALERT_KIND_GOAL_COUNT_ABOVE    = 1;
+  ALERT_KIND_PAGE_TRAFFIC_DELTA  = 2;
+  ALERT_KIND_FORM_SUBMISSION_RATE = 3;
+  ALERT_KIND_BAD_ACTOR_RATE      = 4;
+  ALERT_KIND_BUILD_FAILED        = 5;
+}
+
+message Alert {
+  string id = 1;
+  string server_id = 2;
+  string name = 3;
+  string description = 4;
+
+  AlertKind kind = 5;
+
+  // Numeric threshold. Meaning depends on kind:
+  //   GOAL_COUNT_ABOVE     — min conversions in window before firing
+  //   PAGE_TRAFFIC_DELTA   — absolute percent change (e.g., 50.0 for ±50%)
+  //   FORM_SUBMISSION_RATE — submissions per minute
+  //   BAD_ACTOR_RATE       — bad-actor hits per minute
+  //   BUILD_FAILED         — ignored
+  double threshold = 6;
+
+  // How far back to look. 60 = "last hour".
+  int32 window_minutes = 7;
+
+  // Target selector — only one applies per kind.
+  string target_goal_id = 8;    // GOAL_COUNT_ABOVE
+  string target_path = 9;       // PAGE_TRAFFIC_DELTA
+  string target_form_id = 10;   // FORM_SUBMISSION_RATE
+
+  repeated string recipients = 11;
+
+  // Minimum gap between successive fires. Prevents alert storms —
+  // if the rule still evaluates true on the next tick but
+  // cooldown hasn't elapsed, the evaluator skips.
+  int32 cooldown_minutes = 12;
+
+  bool enabled = 20;
+  google.protobuf.Timestamp created_at = 30;
+  google.protobuf.Timestamp updated_at = 31;
+  google.protobuf.Timestamp last_fired_at = 32;
+}
+
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_SUCCESS     = 1;
+  DELIVERY_STATUS_RETRYING    = 2;
+  DELIVERY_STATUS_FAILED      = 3;
+  DELIVERY_STATUS_MAILER_UNCONFIGURED = 4;
+}
+
+message AlertEvent {
+  string id = 1;
+  string alert_id = 2;
+  google.protobuf.Timestamp fired_at = 3;
+  double observed_value = 4;
+  double threshold = 5;
+  repeated string recipients = 6;
+  DeliveryStatus delivery_status = 7;
+  string error = 8;
+}
+
+message CreateAlertRequest { string server_id = 1; Alert alert = 2; }
+
+message UpdateAlertRequest { string server_id = 1; string alert_id = 2; Alert alert = 3; }
+
+message DeleteAlertRequest { string server_id = 1; string alert_id = 2; }
+message DeleteAlertResponse { bool ok = 1; }
+
+message ListAlertsRequest { string server_id = 1; }
+message ListAlertsResponse { repeated Alert alerts = 1; }
+
+message GetAlertRequest { string server_id = 1; string alert_id = 2; }
+
+message ListAlertEventsRequest {
+  string server_id = 1;
+  string alert_id = 2;
+  int32 limit = 3;
+}
+
+message ListAlertEventsResponse {
+  repeated AlertEvent events = 1;
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	alertsimpl "github.com/tlalocweb/hulation/pkg/api/v1/alerts"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
@@ -31,6 +32,7 @@ import (
 	reportsimpl "github.com/tlalocweb/hulation/pkg/api/v1/reports"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
+	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
@@ -235,6 +237,14 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	reportsspec.RegisterReportsServiceServer(grpcSrv, reportsSvc)
 	if err := reportsspec.RegisterReportsServiceHandlerServer(ctx, gwMux, reportsSvc); err != nil {
 		return nil, fmt.Errorf("register reports handler: %w", err)
+	}
+
+	// Alerts — Phase 4.6. CRUD + ListAlertEvents. The evaluator
+	// goroutine that actually fires rules lands in stage 4.7.
+	alertsSvc := alertsimpl.New()
+	alertsspec.RegisterAlertsServiceServer(grpcSrv, alertsSvc)
+	if err := alertsspec.RegisterAlertsServiceHandlerServer(ctx, gwMux, alertsSvc); err != nil {
+		return nil, fmt.Errorf("register alerts handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.

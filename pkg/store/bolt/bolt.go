@@ -32,6 +32,9 @@ const (
 	BucketGoals        = "goals"          // key = goalID, value = JSON Goal proto
 	BucketReports      = "reports"        // key = reportID, value = JSON ScheduledReport proto
 	BucketReportRuns   = "report_runs"    // key = runID, value = JSON ReportRun proto
+	BucketAlerts       = "alerts"         // key = alertID, value = JSON Alert proto
+	BucketAlertEvents  = "alert_events"   // key = eventID, value = JSON AlertEvent proto
+	BucketAuditForget  = "audit_forget"   // key = visitorID|ts, value = JSON ForgetAuditRow
 )
 
 var (
@@ -72,6 +75,9 @@ func Open(path string) (*bolt.DB, error) {
 			BucketGoals,
 			BucketReports,
 			BucketReportRuns,
+			BucketAlerts,
+			BucketAlertEvents,
+			BucketAuditForget,
 		} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(b)); e != nil {
 				return fmt.Errorf("bucket %s: %w", b, e)
