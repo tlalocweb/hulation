@@ -28,6 +28,7 @@ import (
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	goalsimpl "github.com/tlalocweb/hulation/pkg/api/v1/goals"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
+	reportsimpl "github.com/tlalocweb/hulation/pkg/api/v1/reports"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
@@ -36,6 +37,7 @@ import (
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
 	goalsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/goals"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
+	reportsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/reports"
 	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
 	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
@@ -225,6 +227,14 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	goalsspec.RegisterGoalsServiceServer(grpcSrv, goalsSvc)
 	if err := goalsspec.RegisterGoalsServiceHandlerServer(ctx, gwMux, goalsSvc); err != nil {
 		return nil, fmt.Errorf("register goals handler: %w", err)
+	}
+
+	// Reports — Phase 3.4. CRUD + Preview live; SendNow + ListRuns
+	// land with the dispatcher in stage 3.5.
+	reportsSvc := reportsimpl.New()
+	reportsspec.RegisterReportsServiceServer(grpcSrv, reportsSvc)
+	if err := reportsspec.RegisterReportsServiceHandlerServer(ctx, gwMux, reportsSvc); err != nil {
+		return nil, fmt.Errorf("register reports handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
