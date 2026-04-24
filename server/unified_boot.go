@@ -26,6 +26,7 @@ import (
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
+	goalsimpl "github.com/tlalocweb/hulation/pkg/api/v1/goals"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
@@ -33,6 +34,7 @@ import (
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
+	goalsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/goals"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
 	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
 	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
@@ -214,6 +216,15 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	analyticsspec.RegisterAnalyticsServiceServer(grpcSrv, analyticsSvc)
 	if err := analyticsspec.RegisterAnalyticsServiceHandlerServer(ctx, gwMux, analyticsSvc); err != nil {
 		return nil, fmt.Errorf("register analytics handler: %w", err)
+	}
+
+	// Goals — Phase 3.3. CRUD only for now; ListConversions + TestGoal
+	// inherit Unimplemented until the query-builder goal-rule evaluator
+	// lands in 3.3b.
+	goalsSvc := goalsimpl.New()
+	goalsspec.RegisterGoalsServiceServer(grpcSrv, goalsSvc)
+	if err := goalsspec.RegisterGoalsServiceHandlerServer(ctx, gwMux, goalsSvc); err != nil {
+		return nil, fmt.Errorf("register goals handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
