@@ -24,6 +24,7 @@ import (
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
 	alertsimpl "github.com/tlalocweb/hulation/pkg/api/v1/alerts"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
+	mobileimpl "github.com/tlalocweb/hulation/pkg/api/v1/mobile"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
@@ -34,6 +35,7 @@ import (
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
 	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
+	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
@@ -45,6 +47,7 @@ import (
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
+	"github.com/tlalocweb/hulation/utils"
 
 	"gopkg.in/yaml.v3"
 )
@@ -245,6 +248,18 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	alertsspec.RegisterAlertsServiceServer(grpcSrv, alertsSvc)
 	if err := alertsspec.RegisterAlertsServiceHandlerServer(ctx, gwMux, alertsSvc); err != nil {
 		return nil, fmt.Errorf("register alerts handler: %w", err)
+	}
+
+	// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
+	// device registration. Delegates the analytics math to the
+	// already-registered analyticsSvc; device storage rides on Bolt
+	// via pkg/mobile/tokenbox for token sealing.
+	mobileSvc := mobileimpl.New(analyticsSvc.Summary, analyticsSvc.Timeseries, func() ([]byte, error) {
+		return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
+	})
+	mobilespec.RegisterMobileServiceServer(grpcSrv, mobileSvc)
+	if err := mobilespec.RegisterMobileServiceHandlerServer(ctx, gwMux, mobileSvc); err != nil {
+		return nil, fmt.Errorf("register mobile handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
