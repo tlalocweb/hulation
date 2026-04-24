@@ -20,6 +20,7 @@
     { href: 'sources', label: 'Sources' },
     { href: 'geography', label: 'Geography' },
     { href: 'devices', label: 'Devices' },
+    { href: 'events', label: 'Events' },
     { href: 'visitors', label: 'Visitors' },
   ];
 
