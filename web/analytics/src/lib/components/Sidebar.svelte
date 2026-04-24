@@ -20,6 +20,7 @@
     { href: 'sources', label: 'Sources' },
     { href: 'geography', label: 'Geography' },
     { href: 'devices', label: 'Devices' },
+    { href: 'visitors', label: 'Visitors' },
   ];
 
   const adminItems = [
