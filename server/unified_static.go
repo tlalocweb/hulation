@@ -72,6 +72,8 @@ func registerStaticSites(srv *unified.Server, cfg *config.Config) {
 			if strings.HasPrefix(p, "/api/") ||
 				strings.HasPrefix(p, "/v/") ||
 				strings.HasPrefix(p, "/scripts/") ||
+				strings.HasPrefix(p, "/analytics/") ||
+				p == "/analytics" ||
 				p == "/hulastatus" {
 				log.Debugf("static-mw: passthrough for service path %s", p)
 				next.ServeHTTP(w, r)
