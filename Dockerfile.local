@@ -1,3 +1,12 @@
+FROM node:22-alpine AS ui-build
+# Phase-2 UI build stage: produces web/analytics/build/ that the
+# final image serves at /analytics/*.
+WORKDIR /ui
+COPY hulation/web/analytics/package.json hulation/web/analytics/pnpm-lock.yaml ./
+RUN corepack enable && corepack prepare pnpm@10.33.2 --activate && pnpm install --frozen-lockfile
+COPY hulation/web/analytics/ ./
+RUN pnpm build
+
 FROM golang:1.25-alpine AS build
 LABEL org.opencontainers.image.source=https://github.com/tlalocweb/hulation
 LABEL org.opencontainers.image.description="Hula - the modern web server for DM and CDP services"
@@ -17,9 +26,10 @@ RUN go build -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaver
 
 FROM alpine:3.19
 RUN apk add --no-cache git ca-certificates
-RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts /var/hula/sitedeploy
+RUN mkdir -p /etc/hula /var/hula /hula /var/hula/public /var/hula/scripts /var/hula/sitedeploy /hula/web/analytics
 ADD hulation/docker-example-config.yaml /etc/hula/config.yaml
 COPY --from=build /src/hulation/hula /hula/hula
 COPY --from=build /src/hulation/hulactl /hula/hulactl
 COPY --from=build /src/hulation/scripts /hula/scripts
+COPY --from=ui-build /ui/build /hula/web/analytics
 ENTRYPOINT [ "/hula/hula", "-config", "/etc/hula/config.yaml" ]

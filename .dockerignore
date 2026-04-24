@@ -22,3 +22,11 @@ hulation/builder-images
 hulation/*.sh
 hulation/.env
 hulation/.env.*
+
+# Frontend build artefacts. node_modules is regenerated inside the
+# ui-build stage from package.json + pnpm-lock.yaml; the build/
+# directory ships only via the Dockerfile COPY.
+hulation/web/analytics/node_modules
+hulation/web/analytics/.svelte-kit
+hulation/web/analytics/build
+hulation/web/analytics/dist

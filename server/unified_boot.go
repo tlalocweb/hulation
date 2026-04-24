@@ -258,6 +258,11 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// over static files when both are configured on the same host.
 	registerStaticSites(srv, cfg)
 
+	// Phase-2 analytics dashboard — serves the SvelteKit build tree
+	// at /analytics/* and a tiny config shim at /analytics/config.json
+	// that the UI reads on boot. No-op when the bundle isn't present.
+	registerAnalyticsUI(srv, cfg)
+
 	// Per-server static TLS certs. Each configured server can ship its
 	// own cert+key; the unified server's SNI selector maps Host →
 	// certificate at handshake time. Servers without static cert files
