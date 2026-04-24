@@ -978,14 +978,26 @@ func LoadConfig(filename string) (*Config, error) {
 
 	// conftagz may create empty pointer structs from default tags.
 	// Reset HulaSSL if it was not explicitly configured. An empty
-	// CloudflareOriginCA pointer (no API token, no zone ID) counts as
-	// "not configured" — conftagz auto-populates it from default tags
-	// even when the user's YAML didn't set it.
-	cfaEmpty := cfg.HulaSSL != nil &&
-		(cfg.HulaSSL.CloudflareOriginCA == nil ||
-			(cfg.HulaSSL.CloudflareOriginCA.APIToken == "" && cfg.HulaSSL.CloudflareOriginCA.ZoneID == ""))
+	// CloudflareOriginCA pointer (no API token, no zone ID, no env
+	// vars naming one) counts as "not configured" — conftagz auto-
+	// populates it from default tags even when the user's YAML
+	// didn't set it.
+	//
+	// Env-var lookup matters here because the YAML form
+	// `hula_ssl: { cloudflare_origin_ca: {} }` is a valid, intentional
+	// config that inherits api_token + zone_id from env vars further
+	// down in the processing pipeline (line ~1478). Resetting HulaSSL
+	// to nil here would make hula fall through to a self-signed cert
+	// at boot, breaking Cloudflare's origin pull.
+	cfaUsed := false
+	if cfg.HulaSSL != nil && cfg.HulaSSL.CloudflareOriginCA != nil {
+		cfca := cfg.HulaSSL.CloudflareOriginCA
+		cfaUsed = cfca.APIToken != "" || cfca.ZoneID != "" ||
+			os.Getenv("CLOUDFLARE_API_TOKEN_hula") != "" ||
+			os.Getenv("CLOUDFLARE_ZONE_ID_hula") != ""
+	}
 	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" &&
-		cfaEmpty &&
+		!cfaUsed &&
 		(cfg.HulaSSL.ACME == nil || cfg.HulaSSL.ACME.Email == "") {
 		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
 		cfg.HulaSSL = nil

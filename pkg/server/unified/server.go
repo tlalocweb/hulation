@@ -618,11 +618,18 @@ func (l *protocolDetectingListener) Accept() (net.Conn, error) {
 	// Create a peeking connection to read the first byte without consuming it
 	peekConn := &peekableConn{Conn: conn}
 
-	// Read the first byte to detect protocol
+	// Read the first byte to detect protocol. A client that RSTs
+	// before sending any bytes (scanners, half-open probes, TLS
+	// handshake errors mid-peek) lands here — wrap in temporaryError
+	// so http.Server.Serve keeps the outer listener alive. The Phase-0
+	// version returned the raw err, which Go's Serve treats as fatal
+	// and propagates into closing the listener, taking the whole
+	// process off-line.
 	firstByte, err := peekConn.Peek()
 	if err != nil {
 		conn.Close()
-		return nil, err
+		l.logger.Debugf("protocol peek failed: %v", err)
+		return nil, &temporaryError{msg: "protocol peek failed: " + err.Error()}
 	}
 
 	// TLS handshake starts with 0x16 (handshake) followed by version bytes
