@@ -16,9 +16,8 @@ import (
 
 	"github.com/tlalocweb/hulation/config"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
-	apiobjects "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
-	"github.com/tlalocweb/hulation/pkg/server/authware/access"
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 )
 
 // analyticsACLLookup returns a function the analytics service can call
@@ -39,17 +38,16 @@ func analyticsACLLookup(cfg *config.Config) func(ctx context.Context) analyticsi
 				Superadmin: true,
 			}
 		}
-		// Non-admin: the authware/access helpers would walk this user's
-		// RoleAssignments — but Phase-0 left the Bolt user store
-		// unwired, so we synthesise a User object carrying the Claims
-		// permissions list and let access.AllowedServerIDs do its job.
-		// When Phase-1 deploys with populated grants this still works;
-		// until then non-admin callers see nothing (by design).
-		user := &apiobjects.User{
-			Uuid:     claims.Subject,
-			Username: claims.Username,
+		// Non-admin: read per-user grants from the Phase-3 Bolt store.
+		// Until a given user has been granted something via the admin
+		// UI or hulactl, they see no servers — by design, matches the
+		// "silent empty result" contract from Phase 1.
+		allowed, err := hulabolt.AllowedServerIDsForUser(claims.Subject)
+		if err != nil {
+			// Bolt unavailable or read error: log via the query builder
+			// (it degrades to an empty ACL) but don't leak details.
+			return analyticsimpl.ACLResolution{}
 		}
-		allowed := access.AllowedServerIDs(user)
 		// Intersect with configured servers so stale grants can't
 		// reference servers that no longer exist.
 		return analyticsimpl.ACLResolution{

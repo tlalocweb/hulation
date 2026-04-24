@@ -24,6 +24,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/sitedeploy"
 )
@@ -86,6 +87,15 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	}
 	if err := model.PreloadDefinedForms(model.GetDB()); err != nil {
 		return fmt.Errorf("preload forms: %w", err)
+	}
+
+	// BoltDB store — identity/ACL/goals/reports data that doesn't
+	// belong in ClickHouse. Opened once; lives as a process global
+	// until Close(). Non-fatal when the path can't be created (e.g.,
+	// running `hulactl` style utilities that don't need persistence)
+	// so degrade gracefully.
+	if _, err := hulabolt.Open(""); err != nil {
+		log.Warnf("Bolt store unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
 	}
 
 	// Apply ClickHouse migrations — brings up the MV state tables and
