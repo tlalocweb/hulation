@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"time"
 
+	"github.com/tlalocweb/hulation/model"
 	goalsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/goals"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"google.golang.org/grpc/codes"
@@ -186,9 +187,120 @@ func (s *Server) GetGoal(ctx context.Context, req *goalsspec.GetGoalRequest) (*g
 	return storedToProto(*g), nil
 }
 
-// ListConversions + TestGoal land in a follow-up: both need the
-// pkg/analytics/query builder + a rule evaluator that translates
-// StoredGoal into a WHERE clause. CRUD is sufficient for the admin
-// UI to author rules and see them listed.
+// ListConversions still inherits Unimplemented — that needs the
+// per-goal conversions aggregate MV which lands alongside the alerts
+// engine in Phase 4.
+
+// TestGoal dry-runs a goal rule against the last N days of raw events.
+// Returns the count of matching events + the total events scanned so
+// the admin UI can show "would fire X / scanned Y".
 //
-// Inherit Unimplemented from UnimplementedGoalsServiceServer.
+// This does not write anything: no is_goal flag is set on matching
+// rows, no conversions row is inserted. Safe to call repeatedly.
+//
+// Scale assumption: called once per goal-author-click, not on a loop.
+// Scans are bounded by server_id + a TTL-clamped time window, so even
+// on a large events table the query is cheap (partition pruning +
+// ORDER BY (when, server_id, ...) makes this a range scan).
+func (s *Server) TestGoal(ctx context.Context, req *goalsspec.TestGoalRequest) (*goalsspec.TestGoalResponse, error) {
+	if req.GetServerId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "server_id is required")
+	}
+	g := req.GetGoal()
+	if g == nil {
+		return nil, status.Error(codes.InvalidArgument, "goal is required")
+	}
+	days := req.GetDays()
+	if days <= 0 {
+		days = 7
+	}
+	if days > 90 {
+		days = 90 // cap scan to 90d — dry-run is a UX affordance, not a report
+	}
+
+	db := model.GetSQLDB()
+	if db == nil {
+		return nil, status.Error(codes.FailedPrecondition, "ClickHouse not available")
+	}
+
+	since := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+
+	where, args, err := goalWhereClause(g)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "goal rule: %s", err)
+	}
+
+	// Total events scanned = all events for this server in the window;
+	// would_fire = subset that matches the rule.
+	const qScanned = `SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ?`
+	var scanned int64
+	if err := db.QueryRowContext(ctx, qScanned, req.GetServerId(), since).Scan(&scanned); err != nil {
+		return nil, status.Errorf(codes.Internal, "scan count: %s", err)
+	}
+
+	qMatch := `SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND ` + where
+	matchArgs := append([]any{req.GetServerId(), since}, args...)
+	var fired int64
+	if err := db.QueryRowContext(ctx, qMatch, matchArgs...).Scan(&fired); err != nil {
+		return nil, status.Errorf(codes.Internal, "match count: %s", err)
+	}
+
+	return &goalsspec.TestGoalResponse{
+		WouldFire:     fired,
+		ScannedEvents: scanned,
+	}, nil
+}
+
+// EventCode values mirrored from model/event.go. Only the subset
+// referenced by goal rules (Form + Lander) is listed — the others
+// aren't needed for match generation.
+const (
+	eventCodeFormSubmission = 0x00000020
+	eventCodeLanderHit      = 0x00000100
+)
+
+// goalWhereClause translates a proto Goal into a SQL fragment + args.
+// Returned fragment must be safe to concatenate onto a larger WHERE
+// clause — it's parameterised via `?` placeholders and never
+// interpolates user-controlled strings.
+//
+// For the FORM and LANDER kinds we look for the form/lander id inside
+// the `data` column — the ingest path stores those as a small JSON
+// blob. A substring match is good enough for a dry-run preview; the
+// ingest-side evaluator does the same thing.
+func goalWhereClause(g *goalsspec.Goal) (string, []any, error) {
+	switch g.GetKind() {
+	case goalsspec.GoalKind_GOAL_KIND_URL_VISIT:
+		rx := g.GetRuleUrlRegex()
+		if rx == "" {
+			return "", nil, errEmptyRule("rule_url_regex")
+		}
+		return "match(url_path, ?)", []any{rx}, nil
+
+	case goalsspec.GoalKind_GOAL_KIND_EVENT:
+		code := g.GetRuleEventCode()
+		if code == 0 {
+			return "", nil, errEmptyRule("rule_event_code")
+		}
+		return "code = ?", []any{code}, nil
+
+	case goalsspec.GoalKind_GOAL_KIND_FORM:
+		fid := g.GetRuleFormId()
+		if fid == "" {
+			return "", nil, errEmptyRule("rule_form_id")
+		}
+		return "code = ? AND position(data, ?) > 0", []any{int64(eventCodeFormSubmission), fid}, nil
+
+	case goalsspec.GoalKind_GOAL_KIND_LANDER:
+		lid := g.GetRuleLanderId()
+		if lid == "" {
+			return "", nil, errEmptyRule("rule_lander_id")
+		}
+		return "code = ? AND position(data, ?) > 0", []any{int64(eventCodeLanderHit), lid}, nil
+	}
+	return "", nil, errEmptyRule("kind")
+}
+
+type errEmptyRule string
+
+func (e errEmptyRule) Error() string { return string(e) + " is required for this goal kind" }
