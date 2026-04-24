@@ -25,6 +25,8 @@ import (
 
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/mailer"
+	"github.com/tlalocweb/hulation/pkg/mobile/tokenbox"
+	"github.com/tlalocweb/hulation/pkg/notifier"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 )
 
@@ -250,7 +252,10 @@ func (e *Evaluator) countPageviews(ctx context.Context, serverID, path string, f
 }
 
 // fire writes an AlertEvent row, updates LastFiredAt on the alert, and
-// hands a rendered email to the mailer.
+// hands a rendered envelope to the notifier (email + push fan-out).
+// Falls back to the legacy mailer-only path when the notifier
+// global isn't set — lets the evaluator keep working on a partially-
+// configured host.
 func (e *Evaluator) fire(a hulabolt.StoredAlert, observed float64) {
 	eventID := newID()
 	recipients := append([]string(nil), a.Recipients...)
@@ -258,7 +263,28 @@ func (e *Evaluator) fire(a hulabolt.StoredAlert, observed float64) {
 	status := "success"
 	errText := ""
 
-	if e.m == nil {
+	// Prefer the notifier composite. When unavailable, fall through
+	// to the mailer-only path preserved from Phase 4.
+	if n := notifier.Global(); n != nil {
+		report, _ := n.Deliver(context.Background(), buildEnvelope(eventID, a, observed, recipients))
+		switch {
+		case report.AnyOK():
+			// delivered on at least one channel
+		case !report.AllConfigured():
+			status = "mailer_unconfigured"
+		default:
+			status = "failed"
+			// Collect the first non-nil error as the displayed
+			// message. Full per-channel detail lives in the
+			// StoredNotificationSend row (stage 5a.5 future work).
+			for _, c := range report.Results {
+				if c.Err != nil {
+					errText = c.Err.Error()
+					break
+				}
+			}
+		}
+	} else if e.m == nil {
 		status = "mailer_unconfigured"
 	} else {
 		err := e.m.Send(context.Background(), mailer.Message{
@@ -298,6 +324,113 @@ func (e *Evaluator) fire(a hulabolt.StoredAlert, observed float64) {
 		evalLog.Errorf("alert %s: update last_fired_at: %s", a.ID, err)
 	}
 	evalLog.Infof("alert %s (%s) fired: observed=%.2f threshold=%.2f status=%s", a.ID, a.Kind, observed, a.Threshold, status)
+}
+
+// tokenKey is the AES-GCM master key used by the tokenbox to open
+// sealed push tokens. The evaluator needs to open tokens when
+// resolving recipients → DeviceAddrs. Set at boot by
+// server.RunUnified; nil leaves push delivery disabled (email-only).
+var tokenKey []byte
+
+// SetTokenKey installs the process-wide master key. Separate from
+// Start() so the evaluator package doesn't depend on the TOTP-key
+// loader directly.
+func SetTokenKey(k []byte) { tokenKey = k }
+
+// buildEnvelope turns an alert fire + email recipient list into a
+// notifier.Envelope. Email DeviceAddrs come from the alert's raw
+// Recipients[]; push DeviceAddrs come from every Active device
+// registered to each recipient user, if push is enabled in their
+// notification prefs and they're not in quiet hours.
+//
+// Recipient lookup uses ListNotificationPrefs indirectly: we resolve
+// email → user_id by iterating user rows. For Phase 5a we match on
+// the notification_prefs.user_id only — full user-directory lookup
+// by email lives in pkg/store/bolt when stage 5a.7 lands it.
+// Today we best-effort match the recipient email to a prefs row
+// keyed on user_id == email (works for the canned admin user); any
+// missing match falls through as email-only.
+func buildEnvelope(id string, a hulabolt.StoredAlert, observed float64, emails []string) notifier.Envelope {
+	env := notifier.Envelope{
+		ID:        id,
+		Subject:   fmt.Sprintf("[hula alert] %s", a.Name),
+		HTMLBody:  renderAlertBody(a, observed),
+		ShortText: fmt.Sprintf("%s fired: %.2f vs %.2f", a.Name, observed, a.Threshold),
+	}
+	for _, e := range emails {
+		env.Recipients = append(env.Recipients, notifier.DeviceAddr{
+			Channel: notifier.ChannelEmail,
+			Email:   e,
+			UserID:  e, // best-effort — see buildEnvelope doc comment
+		})
+		if tokenKey == nil {
+			continue
+		}
+		prefs, _ := hulabolt.GetNotificationPrefs(e)
+		if !prefs.PushEnabled {
+			continue
+		}
+		if quietNow(prefs) {
+			continue
+		}
+		devs, err := hulabolt.ListDevicesForUser(e)
+		if err != nil {
+			continue
+		}
+		for _, d := range devs {
+			if !d.Active || len(d.TokenCipher) == 0 {
+				continue
+			}
+			plain, err := tokenbox.Open(d.TokenCipher, tokenKey)
+			if err != nil {
+				// Tampered or wrong key — skip; the admin UI's
+				// "forget device" flow handles remediation.
+				continue
+			}
+			ch := notifier.ChannelAPNS
+			if d.Platform == "fcm" {
+				ch = notifier.ChannelFCM
+			}
+			env.Recipients = append(env.Recipients, notifier.DeviceAddr{
+				Channel:   ch,
+				UserID:    d.UserID,
+				DeviceID:  d.ID,
+				PushToken: plain,
+			})
+		}
+	}
+	return env
+}
+
+// quietNow returns true when `now` in prefs.Timezone falls inside
+// the prefs.QuietHoursStart..End window. Handles midnight-spanning
+// ranges (e.g. 22:00 → 07:00).
+func quietNow(prefs hulabolt.StoredNotificationPrefs) bool {
+	if prefs.QuietHoursStart == "" || prefs.QuietHoursEnd == "" {
+		return false
+	}
+	loc, err := time.LoadLocation(prefs.Timezone)
+	if err != nil || loc == nil {
+		return false
+	}
+	now := time.Now().In(loc)
+	start, err := time.ParseInLocation("15:04", prefs.QuietHoursStart, loc)
+	if err != nil {
+		return false
+	}
+	end, err := time.ParseInLocation("15:04", prefs.QuietHoursEnd, loc)
+	if err != nil {
+		return false
+	}
+	// Promote parsed-time to today-in-loc so date components match.
+	y, m, d := now.Date()
+	start = time.Date(y, m, d, start.Hour(), start.Minute(), 0, 0, loc)
+	end = time.Date(y, m, d, end.Hour(), end.Minute(), 0, 0, loc)
+	if start.Before(end) {
+		return !now.Before(start) && now.Before(end)
+	}
+	// Midnight-spanning — quiet if now >= start OR now < end.
+	return !now.Before(start) || now.Before(end)
 }
 
 func renderAlertBody(a hulabolt.StoredAlert, observed float64) string {

@@ -786,6 +786,14 @@ type Config struct {
 	// Mailer — SMTP config for the Phase-3 scheduled-report dispatcher.
 	// Optional; when unset the dispatcher logs reports without sending.
 	Mailer *MailerConfig `yaml:"mailer,omitempty"`
+	// APNS — Apple Push Notification creds for the Phase-5a push
+	// notifier backend. Optional; when unset APNs delivery returns
+	// ErrNotConfigured per recipient and the overall delivery still
+	// succeeds if email delivered.
+	APNS *APNSConfig `yaml:"apns,omitempty"`
+	// FCM — Firebase Cloud Messaging creds for Android push. Same
+	// optionality as APNS.
+	FCM *FCMConfig `yaml:"fcm,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.

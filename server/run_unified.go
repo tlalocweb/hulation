@@ -26,7 +26,12 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
 	"github.com/tlalocweb/hulation/pkg/mailer"
+	"github.com/tlalocweb/hulation/pkg/notifier"
+	"github.com/tlalocweb/hulation/pkg/notifier/apns"
+	"github.com/tlalocweb/hulation/pkg/notifier/email"
+	"github.com/tlalocweb/hulation/pkg/notifier/fcm"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
+	"github.com/tlalocweb/hulation/utils"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/sitedeploy"
@@ -115,9 +120,55 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	}
 	dispatch.Start(ctx, m)
 
-	// Alert rule evaluator — Phase 4.7. Runs on a 1-minute ticker,
-	// evaluates every enabled alert against the kind-specific predicate
-	// and fires via the same mailer used by the report dispatcher.
+	// Notifier composite — Phase 5a.3. Email backend always; APNs +
+	// FCM plug in when creds are present. The APNs + FCM configs
+	// degrade to "not configured" on missing creds, so we register
+	// them unconditionally — per-recipient ErrNotConfigured is how
+	// the downstream evaluator knows to mark delivery status
+	// "mailer_unconfigured" for that channel.
+	composite := notifier.NewComposite(email.New(m))
+	if conf.APNS != nil && conf.APNS.KeyPEMPath != "" {
+		apnsBackend, err := apns.New(apns.Config{
+			TeamID:     conf.APNS.TeamID,
+			KeyID:      conf.APNS.KeyID,
+			KeyPEMPath: conf.APNS.KeyPEMPath,
+			BundleID:   conf.APNS.BundleID,
+			Endpoint:   conf.APNS.Endpoint,
+		})
+		if err != nil {
+			log.Warnf("apns: backend init failed: %s", err.Error())
+		} else {
+			composite.Add(apnsBackend)
+			log.Infof("apns: backend registered (team=%s bundle=%s)", conf.APNS.TeamID, conf.APNS.BundleID)
+		}
+	}
+	if conf.FCM != nil && conf.FCM.ServiceAccountJSONPath != "" {
+		fcmBackend, err := fcm.New(fcm.Config{
+			ProjectID:              conf.FCM.ProjectID,
+			ServiceAccountJSONPath: conf.FCM.ServiceAccountJSONPath,
+		})
+		if err != nil {
+			log.Warnf("fcm: backend init failed: %s", err.Error())
+		} else {
+			composite.Add(fcmBackend)
+			log.Infof("fcm: backend registered (project=%s)", conf.FCM.ProjectID)
+		}
+	}
+	notifier.SetGlobal(composite)
+
+	// Install the master key the evaluator uses to open sealed push
+	// tokens before handing them to the notifier. Same key the TOTP
+	// subsystem uses; see pkg/mobile/tokenbox.
+	if key, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey); err == nil {
+		alertsevaluator.SetTokenKey(key)
+	} else {
+		log.Warnf("alerts evaluator: no TOTP encryption key; push delivery will be disabled")
+	}
+
+	// Alert rule evaluator — Phase 4.7 (now Notifier-backed after
+	// stage 5a.4). Runs on a 1-minute ticker, evaluates every
+	// enabled alert against the kind-specific predicate and fires
+	// via the composite notifier (email + push fan-out).
 	// No-op until alerts are created via AlertsService.
 	if db := model.GetSQLDB(); db != nil {
 		alertsevaluator.Start(ctx, m, db)
