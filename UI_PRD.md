@@ -230,44 +230,77 @@ Three stacked reports on one page:
 
 Each with donut chart + table; drill into browser version or OS version.
 
-### 6.5 Events
+### 6.5 Events (`/events`)
 
-All events (page views, form submits, lander hits, plus any custom events
-that are ever added). Filtered by event-code selector at top.
+Shipped in Phase 4. Per-event-code histogram with drill sheet.
 
-- **Columns**: Event · Count · Unique visitors · First seen · Last seen.
-- **Drill-down**: click event → payload (the `Data` column) histogram,
-  top pages that fired it, top sources.
+- **Columns**: Event code · Count · Unique visitors · % of total.
+  Backed by `GET /api/v1/analytics/events`; "% of total" is computed
+  client-side against `pageviews` to avoid an extra round-trip.
+- **Row click** opens a right-anchored Sheet with:
+  - Fire count + unique-visitor count summary.
+  - A "Filter by this event" button that sets the `event_code` filter
+    chip so every other report narrows to that code.
+- **Deferred**: ranked `Data.*` payload histogram (needs a dedicated
+  `/api/v1/analytics/events/{code}/payload` endpoint — sheet renders
+  an explicit "follow-up" placeholder until then).
+- CSV export via `analytics.csv('events')`.
 
-### 6.6 Forms
+### 6.6 Forms (`/forms`)
 
-Per-form report:
+Shipped in Phase 4.
 
-- **Columns**: Form name · Pageviews of pages containing this form · Submits ·
-  Conversion rate · Avg time-to-submit.
-- **Drill-down**: click form → per-field completion (if we start tracking
-  `StartForm` — currently defined but unused).
+- **Columns**: Form · Viewers · Submissions · Conversion rate · Avg time
+  to submit. Backed by `GET /api/v1/analytics/forms`.
+- **Drill sheet** shows first-seen / last-seen + the numeric detail
+  fields. Per-field fill-order is flagged as a follow-up (needs
+  richer `StartForm` payloads at ingest — still emitted but not yet
+  captured with per-field state).
 
-### 6.7 Visitors
+### 6.7 Visitors (`/visitors`, `/visitors/[id]`)
 
-Directory of visitor profiles. This is the deepest drill-down:
+Shipped in Phase 4. Two pages:
 
-- **Columns**: Visitor ID (truncated) · Email (if aliased) · First seen ·
-  Last seen · Sessions · Pageviews · Events · Top country · Top device.
-- **Row click** → **Visitor profile page**:
-  - Timeline of every event (page views, form submits, lander hits) with
-    timestamps, URLs, referrers, IP, country, device per event.
-  - Related IPs, cookies, aliases.
-  - "Delete visitor" button (GDPR forget — admin only).
+`/visitors` — paginated directory table.
+- **Columns**: Visitor · Last seen · First seen · Sessions · Pageviews
+  · Country · Device.
+- Server-side pagination at 100/page; Page N of M footer.
+- Row click → `/visitors/[id]` drill.
+- CSV export.
 
-### 6.8 Realtime
+`/visitors/[id]` — per-visitor detail.
+- Header: first-seen / last-seen / sessions / pageviews summary.
+- Three KPI tiles: Country · Device · Email.
+- **Timeline** — chronological event list (time · code · URL · country
+  · device). URL clicks set the `path` filter chip and jump to
+  `/pages` so the operator can narrow every report to that URL.
+- **Related identifiers** block: IPs · aliases · cookies.
+- **Admin-only "Forget visitor (GDPR)" button** — shown only when
+  `window.hulaConfig.isAdmin=true`. Calls
+  `POST /api/v1/analytics/visitor/{id}/forget` (stage 4.9). UI shows a
+  confirm dialog that explicitly says "irreversible" — the backend
+  mutation is async-queued against ClickHouse so the row may not
+  disappear synchronously.
 
-Self-refreshing (5-second poll):
+### 6.8 Realtime (`/realtime`)
 
-- Visitors active in the last 5 minutes (counter).
-- World map of current-pageview geo dots.
-- Stream of recent events (latest 50), auto-prepend, auto-trim.
-- Top pages right now, top sources right now.
+Shipped in Phase 4.
+
+- Polls `GET /api/v1/analytics/realtime` every 5 seconds.
+- **`visibilitychange`** listener pauses polling when the tab is
+  hidden and resumes on focus. A live/paused dot in the header
+  shows the state.
+- **KPI row**: Active visitors (5m) · Recent events · Top country.
+- **Top-pages / top-sources** side-by-side lists (key + visitors
+  count, reverse-sorted).
+- **Streaming events table** — last 50 server-returned events with
+  time · code · URL · country · device. Sticky header; 28rem max
+  height; replaces in place (no flash / animation — WCAG 2.1
+  reduced-motion friendly).
+- **Deferred** from the original spec: D3-animated world-map dots
+  of current-pageview geo points. The current event row has country
+  but no lat/lon — a dot map needs ingest-time geocoordinate
+  enrichment.
 
 ## 7. Admin Pages
 
@@ -359,7 +392,45 @@ single current server (matching the rest of the admin UI's per-server
 model). Multi-server reports can be created by cloning a report config
 across servers via the UI.
 
-## 8. Email Reports (Backend)
+### 7.4 Alerts (`/admin/alerts`)
+
+Shipped in Phase 4. Per-server threshold alert rules + recent fires.
+
+- **Table columns**: Name · Kind · Threshold · Window · Last fired ·
+  Enabled. Backed by `GET /api/v1/alerts/{server_id}`.
+- **"+ New alert"** opens a sheet with:
+  - Name (required).
+  - **Kind** (one of five):
+    - `GOAL_COUNT_ABOVE` — fires when conversions for Target Goal in
+      the last `window_minutes` exceed `threshold`.
+    - `PAGE_TRAFFIC_DELTA` — current-window pageviews on Target Path
+      vs the same window one week ago; fires when `|delta_pct| >
+      threshold`. Skips when prior-window is zero (avoids spurious
+      infinite-delta on new pages).
+    - `FORM_SUBMISSION_RATE` — submissions/min to Target Form above
+      threshold (spam-burst detector).
+    - `BAD_ACTOR_RATE` — is_bot hits/min above threshold.
+    - `BUILD_FAILED` — any `build_failed` code in window (threshold
+      ignored).
+  - Kind-conditional Target input: Goal ID / URL path / Form ID.
+  - Numeric `threshold` + `window_minutes` + `cooldown_minutes`.
+  - Recipients (comma- or space-separated emails).
+  - Enabled checkbox.
+- Create → `POST /api/v1/alerts/{server_id}`.
+- Update → `PATCH /api/v1/alerts/{server_id}/{alert_id}` (preserves
+  server-side `last_fired_at`).
+- Delete → `DELETE /api/v1/alerts/{server_id}/{alert_id}`.
+- **Inline "Recent fires" panel** per alert, shown when the row's
+  "Fires" button is clicked. Backed by `GET .../events?limit=25`.
+  Each fire shows a colored dot (success · retrying · failed ·
+  `mailer_unconfigured`) + observed value + threshold + error text
+  when present.
+
+Evaluator details — see §8.2.
+
+## 8. Backend engines
+
+### 8.1 Email Reports dispatcher
 
 Shipped in Phase 3 as `pkg/reports/dispatch` + `pkg/reports/render` +
 `pkg/mailer`. Dispatcher lives as a background goroutine inside hula.
@@ -390,7 +461,53 @@ Shipped in Phase 3 as `pkg/reports/dispatch` + `pkg/reports/render` +
 
 Server-side chart rendering (the original spec's "attach as CIDs" for the
 Detailed variant) is currently inline KPI + tables only — chart PNGs are
-Phase 4 work once the Events/Forms reports land.
+deferred to Phase 5a alongside the mobile notification engine.
+
+### 8.2 Alerts evaluator
+
+Shipped in Phase 4 as `pkg/alerts/evaluator`. Runs as a sibling
+goroutine to the report dispatcher (started in `server/run_unified.go`).
+
+- **Startup**: `evaluator.Start(ctx, mailer, db)` — starts a 1-minute
+  ticker. Fires once at boot so operators don't wait a full minute to
+  see activity after a restart.
+- **Evaluation**: each tick walks all enabled alerts in the Bolt
+  `alerts` bucket. For each, runs the kind-specific predicate against
+  `events_v1` and — if true + cooldown elapsed + throttle budget left
+  — writes a `StoredAlertEvent` row and hands a rendered email to the
+  mailer.
+- **Cooldown**: `CooldownMinutes` per alert (safety default 60m when
+  zero). `LastFiredAt` persists on the alert row so subsequent ticks
+  short-circuit.
+- **Throttle**: `maxFiresPerTick = 10`. Log-warns on throttle so a
+  ClickHouse slowness spike that trips many rules at once can't
+  overload the mailer.
+- **Delivery status** (mapped to `DeliveryStatus` proto enum):
+  - `SUCCESS` — mailer returned nil.
+  - `MAILER_UNCONFIGURED` — SMTP wasn't set up; the alert still
+    persisted as a fire for the admin UI, just not sent.
+  - `FAILED` — mailer returned a non-sentinel error; `error` column
+    holds the message.
+  - `RETRYING` — reserved (Phase 5a adds push-channel retries).
+- **Persistence**: `StoredAlertEvent` in Bolt's `alert_events` bucket.
+  One row per fire attempt, ordered by `FiredAt DESC` for the admin
+  UI's "Recent fires" panel.
+- **Predicates** (current set):
+  - `goal_count_above` — COUNT(is_goal=1 AND goal_id=X) in window >
+    threshold.
+  - `page_traffic_delta` — current pageviews to path vs same window
+    one week ago; fires when `|delta_pct|` > threshold. Skips if the
+    prior-window pageview count is zero.
+  - `form_submission_rate` — submissions/min (code=0x20 +
+    payload contains form_id) > threshold.
+  - `bad_actor_rate` — `is_bot=1` hits/min > threshold.
+  - `build_failed` — any `code = 0x1000` event in window. Threshold
+    ignored; fires on first observation. (The site-deploy pipeline
+    doesn't yet emit this code — wiring is a Phase-5 follow-up.)
+
+Delivery reuses the Phase-3 mailer directly. Phase 5a generalises to
+a `Notifier` interface that wraps the mailer and adds push channels
+without touching evaluator code.
 
 ## 9. Mobile App
 
