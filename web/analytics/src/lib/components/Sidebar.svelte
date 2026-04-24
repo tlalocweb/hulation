@@ -30,6 +30,7 @@
     { href: 'admin/goals', label: 'Goals' },
     { href: 'admin/reports', label: 'Reports' },
     { href: 'admin/alerts', label: 'Alerts' },
+    { href: 'admin/notifications', label: 'Notifications' },
   ];
 
   let isAdmin = false;

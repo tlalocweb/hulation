@@ -25,6 +25,7 @@ import (
 	alertsimpl "github.com/tlalocweb/hulation/pkg/api/v1/alerts"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
 	mobileimpl "github.com/tlalocweb/hulation/pkg/api/v1/mobile"
+	notifyimpl "github.com/tlalocweb/hulation/pkg/api/v1/notify"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
@@ -36,6 +37,7 @@ import (
 	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
+	notifyspec "github.com/tlalocweb/hulation/pkg/apispec/v1/notify"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
@@ -260,6 +262,13 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	mobilespec.RegisterMobileServiceServer(grpcSrv, mobileSvc)
 	if err := mobilespec.RegisterMobileServiceHandlerServer(ctx, gwMux, mobileSvc); err != nil {
 		return nil, fmt.Errorf("register mobile handler: %w", err)
+	}
+
+	// Notify — Phase 5a.7. NotificationPrefs CRUD + TestNotification.
+	notifySvc := notifyimpl.New()
+	notifyspec.RegisterNotifyServiceServer(grpcSrv, notifySvc)
+	if err := notifyspec.RegisterNotifyServiceHandlerServer(ctx, gwMux, notifySvc); err != nil {
+		return nil, fmt.Errorf("register notify handler: %w", err)
 	}
 
 	// Initialize the provider manager from config.Auth.Providers.
