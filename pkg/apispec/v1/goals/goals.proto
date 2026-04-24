@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+// GoalsService — per-server conversion-goal CRUD.
+//
+// A goal is a rule that matches certain events. When the ingest path
+// sees an event that matches an enabled goal, it flags the event
+// (is_goal=1) and writes a row to the conversions aggregate. The
+// analytics read surface uses those flags to populate
+// Sources.goal_conv_rate, Summary conversion counts, and the
+// Phase-3 Goals dashboard.
+//
+// Every mutation carries a `server_id` in the path so the
+// permission annotation can scope by server.
+
+package hulation.v1.goals;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/goals;goalsspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service GoalsService {
+  rpc CreateGoal(CreateGoalRequest) returns (Goal) {
+    option (google.api.http) = {
+      post: "/api/v1/goals/{server_id}"
+      body: "goal"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc UpdateGoal(UpdateGoalRequest) returns (Goal) {
+    option (google.api.http) = {
+      patch: "/api/v1/goals/{server_id}/{goal_id}"
+      body: "goal"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc DeleteGoal(DeleteGoalRequest) returns (DeleteGoalResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/goals/{server_id}/{goal_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc ListGoals(ListGoalsRequest) returns (ListGoalsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/goals/{server_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetGoal(GetGoalRequest) returns (Goal) {
+    option (google.api.http) = {
+      get: "/api/v1/goals/{server_id}/{goal_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // ListConversions returns the time-series + breakdown for a single
+  // goal, filtered by the standard analytics Filters object. Read-only;
+  // non-admin analytics readers can call it.
+  rpc ListConversions(ListConversionsRequest) returns (ListConversionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/goals/{server_id}/{goal_id}/conversions"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // TestGoal dry-runs a goal rule against the last N days of events
+  // WITHOUT writing anything, so the admin UI can show a "would have
+  // fired X times" preview when authoring a goal.
+  rpc TestGoal(TestGoalRequest) returns (TestGoalResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/goals/{server_id}/test"
+      body: "goal"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+}
+
+// GoalKind discriminates the match rule. Each kind reads a different
+// subset of Goal.rule_* fields.
+enum GoalKind {
+  GOAL_KIND_UNSPECIFIED = 0;
+  GOAL_KIND_URL_VISIT   = 1; // matches event.url_path against rule_url_regex
+  GOAL_KIND_EVENT       = 2; // matches event.code == rule_event_code
+  GOAL_KIND_FORM        = 3; // matches event.code == FormSubmission AND data contains rule_form_id
+  GOAL_KIND_LANDER      = 4; // matches event.code == LanderHit AND data contains rule_lander_id
+}
+
+message Goal {
+  string id = 1;
+  string server_id = 2;
+  string name = 3;
+  string description = 4;
+
+  GoalKind kind = 5;
+
+  // Union of per-kind config. Only the one matching `kind` is
+  // read; others are ignored.
+  string rule_url_regex = 10;
+  int64  rule_event_code = 11;
+  string rule_form_id = 12;
+  string rule_lander_id = 13;
+
+  bool enabled = 20;
+  google.protobuf.Timestamp created_at = 30;
+  google.protobuf.Timestamp updated_at = 31;
+}
+
+message CreateGoalRequest { string server_id = 1; Goal goal = 2; }
+
+message UpdateGoalRequest { string server_id = 1; string goal_id = 2; Goal goal = 3; }
+
+message DeleteGoalRequest { string server_id = 1; string goal_id = 2; }
+message DeleteGoalResponse { bool ok = 1; }
+
+message ListGoalsRequest { string server_id = 1; }
+message ListGoalsResponse { repeated Goal goals = 1; }
+
+message GetGoalRequest { string server_id = 1; string goal_id = 2; }
+
+message ListConversionsRequest {
+  string server_id = 1;
+  string goal_id = 2;
+  // Standard analytics filter block. Field-level compatibility with
+  // analyticsspec.Filters is intentional so the UI can reuse the
+  // filter bar state verbatim.
+  Filters filters = 3;
+}
+
+message ListConversionsResponse {
+  int64 total = 1;
+  repeated ConversionBucket buckets = 2;
+}
+
+message ConversionBucket {
+  string ts = 1;
+  int64  count = 2;
+  int64  unique_visitors = 3;
+}
+
+message TestGoalRequest {
+  string server_id = 1;
+  Goal   goal = 2;
+  // How far back to scan. Default 7.
+  int32  days = 3;
+}
+
+message TestGoalResponse {
+  int64 would_fire = 1;
+  int64 scanned_events = 2;
+}
+
+// Minimal Filters mirror. Intentionally a copy of
+// analyticsspec.Filters — avoids a cross-package proto import that
+// complicates the generator pipeline. Keep the field numbers aligned.
+message Filters {
+  repeated string server_ids = 1;
+  string from = 2;
+  string to = 3;
+  string granularity = 4;
+  string compare = 5;
+  string country = 6;
+  string device = 7;
+  string source = 8;
+  string path = 9;
+  string event_code = 10;
+  string goal = 11;
+  string browser = 12;
+  string os = 13;
+  string channel = 14;
+  string utm_source = 15;
+  string utm_medium = 16;
+  string utm_campaign = 17;
+  string region = 18;
+  string city = 19;
+}

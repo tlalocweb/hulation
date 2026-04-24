@@ -1,0 +1,196 @@
+syntax = "proto3";
+
+// ReportsService — scheduled email-report CRUD + preview +
+// send-now + run history.
+//
+// A ScheduledReport is a persistent blueprint: cron expression,
+// timezone, recipients, analytics filter preset, and a template
+// variant ('summary' | 'detailed'). The Phase-3.5 dispatcher
+// goroutine reads all enabled reports on boot, computes
+// `next_fire_at` per cron+tz, and fires them on a 1-minute ticker.
+//
+// Preview returns rendered HTML so the admin UI can iframe-preview
+// before saving. SendNow bypasses the schedule and enqueues an
+// immediate render+send via the same code path.
+//
+// All writes require server.<id>.admin. Reads require
+// server.<id>.analytics.read so non-admins can at least see what
+// they'd receive in their inbox.
+
+package hulation.v1.reports;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/reports;reportsspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service ReportsService {
+  rpc CreateReport(CreateReportRequest) returns (ScheduledReport) {
+    option (google.api.http) = {
+      post: "/api/v1/reports/{server_id}"
+      body: "report"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc UpdateReport(UpdateReportRequest) returns (ScheduledReport) {
+    option (google.api.http) = {
+      patch: "/api/v1/reports/{server_id}/{report_id}"
+      body: "report"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc DeleteReport(DeleteReportRequest) returns (DeleteReportResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/reports/{server_id}/{report_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc ListReports(ListReportsRequest) returns (ListReportsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/reports/{server_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetReport(GetReportRequest) returns (ScheduledReport) {
+    option (google.api.http) = {
+      get: "/api/v1/reports/{server_id}/{report_id}"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // Preview renders the report HTML against the current data window.
+  // Does not send; does not enqueue.
+  rpc PreviewReport(PreviewReportRequest) returns (PreviewReportResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/reports/{server_id}/{report_id}/preview"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // SendNow enqueues an immediate render+send via the dispatcher
+  // pipeline (same code path as a scheduled fire). Returns a
+  // run_id the caller can poll via ListRuns.
+  rpc SendNow(SendNowRequest) returns (SendNowResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/reports/{server_id}/{report_id}/send-now"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  // ListRuns returns the most recent N ReportRun rows for a given
+  // scheduled report. Used by the admin UI's "Last runs" timeline.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/reports/{server_id}/{report_id}/runs"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+}
+
+// TemplateVariant discriminates email body style. 'summary' is the
+// lightweight KPI-cards-only version; 'detailed' includes a main
+// timeline chart + top-N tables.
+enum TemplateVariant {
+  TEMPLATE_VARIANT_UNSPECIFIED = 0;
+  TEMPLATE_VARIANT_SUMMARY     = 1;
+  TEMPLATE_VARIANT_DETAILED    = 2;
+}
+
+message ScheduledReport {
+  string id = 1;
+  string server_id = 2;
+  string name = 3;
+
+  // RFC 5545 style cron expression. Parsed by robfig/cron v3 —
+  // supports standard five-field syntax (min hr dom mon dow).
+  string cron = 4;
+  // IANA timezone (e.g., "America/Los_Angeles"). Required; the
+  // dispatcher refuses to fire reports with an empty or invalid tz.
+  string timezone = 5;
+
+  repeated string recipients = 6;
+
+  TemplateVariant template_variant = 7;
+
+  // Filter preset saved from the UI's filter bar state. The
+  // dispatcher applies these when rendering the report body.
+  Filters filters = 8;
+
+  bool enabled = 9;
+
+  // Server-populated:
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  google.protobuf.Timestamp next_fire_at = 22;
+}
+
+message CreateReportRequest { string server_id = 1; ScheduledReport report = 2; }
+message UpdateReportRequest { string server_id = 1; string report_id = 2; ScheduledReport report = 3; }
+message DeleteReportRequest { string server_id = 1; string report_id = 2; }
+message DeleteReportResponse { bool ok = 1; }
+message ListReportsRequest { string server_id = 1; }
+message ListReportsResponse { repeated ScheduledReport reports = 1; }
+message GetReportRequest { string server_id = 1; string report_id = 2; }
+
+message PreviewReportRequest {
+  string server_id = 1;
+  string report_id = 2;
+  // Optional override filters. When empty the stored report's
+  // filter preset is used.
+  Filters filters = 3;
+}
+message PreviewReportResponse {
+  string html = 1;
+  string subject = 2;
+}
+
+message SendNowRequest { string server_id = 1; string report_id = 2; }
+message SendNowResponse { string run_id = 1; }
+
+message ListRunsRequest {
+  string server_id = 1;
+  string report_id = 2;
+  int32  limit = 3;
+}
+message ListRunsResponse { repeated ReportRun runs = 1; }
+
+// ReportRun — one dispatch attempt. Retries live in `attempt`;
+// status transitions success / failed / retrying.
+message ReportRun {
+  string id = 1;
+  string report_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  string status = 5;     // 'success' | 'failed' | 'retrying'
+  int32  attempt = 6;
+  string error = 7;
+  repeated string recipients = 8;
+}
+
+// Filters mirror — see goals.proto for rationale.
+message Filters {
+  repeated string server_ids = 1;
+  string from = 2;
+  string to = 3;
+  string granularity = 4;
+  string compare = 5;
+  string country = 6;
+  string device = 7;
+  string source = 8;
+  string path = 9;
+  string event_code = 10;
+  string goal = 11;
+  string browser = 12;
+  string os = 13;
+  string channel = 14;
+  string utm_source = 15;
+  string utm_medium = 16;
+  string utm_campaign = 17;
+  string region = 18;
+  string city = 19;
+}
