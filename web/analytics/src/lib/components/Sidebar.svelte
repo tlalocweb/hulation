@@ -15,6 +15,7 @@
   // the analytics pages.
   const reportItems = [
     { href: '', label: 'Overview' },
+    { href: 'realtime', label: 'Realtime' },
     { href: 'pages', label: 'Pages' },
     { href: 'sources', label: 'Sources' },
     { href: 'geography', label: 'Geography' },
