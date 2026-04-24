@@ -56,12 +56,13 @@ func registerAnalyticsUI(srv *unified.Server, cfg *config.Config) {
 	// plus per-route fallbacks, but since the adapter was configured
 	// with fallback: 'index.html', any unknown path under /analytics/
 	// should serve the root document so the client router can handle
-	// routing. We hand to FileServer first (so CSS/JS hashes resolve)
-	// and rewrite 404s into the index.
-	srv.RegisterCustomHandler("/analytics/", spaHandler(root, fs))
+	// routing. Registered as "GET /analytics/" so the unified server's
+	// customMux treats it as a subtree match (Go 1.22 ServeMux
+	// semantics) — any request under /analytics/ reaches the handler.
+	srv.RegisterCustomHandler("GET /analytics/", spaHandler(root, fs))
 
 	// The bare /analytics (no trailing slash) redirects into the app.
-	srv.RegisterCustomHandler("/analytics", func(w http.ResponseWriter, r *http.Request) {
+	srv.RegisterCustomHandler("GET /analytics", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/analytics/", http.StatusTemporaryRedirect)
 	})
 
