@@ -24,6 +24,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
@@ -113,6 +114,16 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		log.Infof("mailer: not configured — scheduled reports render but will not send")
 	}
 	dispatch.Start(ctx, m)
+
+	// Alert rule evaluator — Phase 4.7. Runs on a 1-minute ticker,
+	// evaluates every enabled alert against the kind-specific predicate
+	// and fires via the same mailer used by the report dispatcher.
+	// No-op until alerts are created via AlertsService.
+	if db := model.GetSQLDB(); db != nil {
+		alertsevaluator.Start(ctx, m, db)
+	} else {
+		log.Warnf("alerts evaluator: ClickHouse not available; alert rules will not fire until DB is reachable")
+	}
 
 	// Apply ClickHouse migrations — brings up the MV state tables and
 	// materialized views that the analytics query builder reads from.
