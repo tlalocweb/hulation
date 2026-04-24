@@ -86,6 +86,15 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
 	}
 
+	// Mobile realtime WebSocket — Phase 5a.6. Registers on the
+	// ServeMux fallback because gRPC server-streaming isn't worth
+	// the toolchain load for a single endpoint.
+	srv.RegisterCustomHandler("/api/mobile/v1/events", http.HandlerFunc(HandleMobileWS))
+	// Debug-publish endpoint for the realtime hub — lets the e2e
+	// harness exercise WS propagation before the ingest-path hook
+	// lands. Admin-only via the authware Claims.
+	srv.RegisterCustomHandler("/api/mobile/v1/debug/publish", http.HandlerFunc(HandleMobileDebugPublish))
+
 	// --- Legacy /api/* routes (TRANSITIONAL) ---
 	//
 	// These mirror the old router.SetupRoutesFiber admin routes so

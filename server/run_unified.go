@@ -30,6 +30,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/notifier/apns"
 	"github.com/tlalocweb/hulation/pkg/notifier/email"
 	"github.com/tlalocweb/hulation/pkg/notifier/fcm"
+	"github.com/tlalocweb/hulation/pkg/realtime"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	"github.com/tlalocweb/hulation/utils"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
@@ -155,6 +156,12 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 	}
 	notifier.SetGlobal(composite)
+
+	// Realtime pub/sub hub — Phase 5a.6. Broadcasters:
+	//   * /api/mobile/v1/debug/publish (used by e2e suite 30)
+	//   * TODO: visitor-tracking ingest hook (follow-up)
+	// Subscribers: every connection on /api/mobile/v1/events.
+	realtime.SetGlobal(realtime.New())
 
 	// Install the master key the evaluator uses to open sealed push
 	// tokens before handing them to the notifier. Same key the TOTP
