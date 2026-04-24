@@ -69,6 +69,16 @@ service AnalyticsService {
     option (google.api.http) = { get: "/api/v1/analytics/realtime" };
     option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
+
+  // ForgetVisitor permanently deletes a visitor from events_v1 +
+  // aggregate MVs and writes a GDPR audit trail row. Admin only.
+  rpc ForgetVisitor(ForgetVisitorRequest) returns (ForgetVisitorResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/analytics/visitor/{visitor_id}/forget"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
 }
 
 // Common filter parameters used across report queries. Every analytics RPC
@@ -219,4 +229,19 @@ message RealtimeResponse {
   repeated VisitorEvent recent = 2;
   repeated TableRow top_pages = 3;
   repeated TableRow top_sources = 4;
+}
+
+message ForgetVisitorRequest {
+  string server_id = 1;
+  string visitor_id = 2;
+}
+
+message ForgetVisitorResponse {
+  // Best-effort count of events deleted. ClickHouse's ALTER TABLE
+  // DELETE is an async mutation; the number reflects the row count
+  // queued for the mutation, not a synchronous delete guarantee.
+  int64 rows_deleted = 1;
+  // Audit row id so the caller can correlate with the bolt
+  // audit_forget trail.
+  string audit_key = 2;
 }

@@ -405,6 +405,48 @@ func local_request_AnalyticsService_Realtime_0(ctx context.Context, marshaler ru
 	return msg, metadata, err
 }
 
+func request_AnalyticsService_ForgetVisitor_0(ctx context.Context, marshaler runtime.Marshaler, client AnalyticsServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ForgetVisitorRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["visitor_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "visitor_id")
+	}
+	protoReq.VisitorId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "visitor_id", err)
+	}
+	msg, err := client.ForgetVisitor(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_AnalyticsService_ForgetVisitor_0(ctx context.Context, marshaler runtime.Marshaler, server AnalyticsServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ForgetVisitorRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["visitor_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "visitor_id")
+	}
+	protoReq.VisitorId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "visitor_id", err)
+	}
+	msg, err := server.ForgetVisitor(ctx, &protoReq)
+	return msg, metadata, err
+}
+
 // RegisterAnalyticsServiceHandlerServer registers the http handlers for service AnalyticsService to "mux".
 // UnaryRPC     :call AnalyticsServiceServer directly.
 // StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
@@ -630,6 +672,26 @@ func RegisterAnalyticsServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 		forward_AnalyticsService_Realtime_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_AnalyticsService_ForgetVisitor_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hulation.v1.analytics.AnalyticsService/ForgetVisitor", runtime.WithHTTPPathPattern("/api/v1/analytics/visitor/{visitor_id}/forget"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_AnalyticsService_ForgetVisitor_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_AnalyticsService_ForgetVisitor_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
 
 	return nil
@@ -858,33 +920,52 @@ func RegisterAnalyticsServiceHandlerClient(ctx context.Context, mux *runtime.Ser
 		}
 		forward_AnalyticsService_Realtime_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_AnalyticsService_ForgetVisitor_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hulation.v1.analytics.AnalyticsService/ForgetVisitor", runtime.WithHTTPPathPattern("/api/v1/analytics/visitor/{visitor_id}/forget"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_AnalyticsService_ForgetVisitor_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_AnalyticsService_ForgetVisitor_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	return nil
 }
 
 var (
-	pattern_AnalyticsService_Summary_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "summary"}, ""))
-	pattern_AnalyticsService_Timeseries_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "timeseries"}, ""))
-	pattern_AnalyticsService_Pages_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "pages"}, ""))
-	pattern_AnalyticsService_Sources_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "sources"}, ""))
-	pattern_AnalyticsService_Geography_0   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "geography"}, ""))
-	pattern_AnalyticsService_Devices_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "devices"}, ""))
-	pattern_AnalyticsService_Events_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "events"}, ""))
-	pattern_AnalyticsService_FormsReport_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "forms"}, ""))
-	pattern_AnalyticsService_Visitors_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "visitors"}, ""))
-	pattern_AnalyticsService_Visitor_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"api", "v1", "analytics", "visitor", "visitor_id"}, ""))
-	pattern_AnalyticsService_Realtime_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "realtime"}, ""))
+	pattern_AnalyticsService_Summary_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "summary"}, ""))
+	pattern_AnalyticsService_Timeseries_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "timeseries"}, ""))
+	pattern_AnalyticsService_Pages_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "pages"}, ""))
+	pattern_AnalyticsService_Sources_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "sources"}, ""))
+	pattern_AnalyticsService_Geography_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "geography"}, ""))
+	pattern_AnalyticsService_Devices_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "devices"}, ""))
+	pattern_AnalyticsService_Events_0        = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "events"}, ""))
+	pattern_AnalyticsService_FormsReport_0   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "forms"}, ""))
+	pattern_AnalyticsService_Visitors_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "visitors"}, ""))
+	pattern_AnalyticsService_Visitor_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"api", "v1", "analytics", "visitor", "visitor_id"}, ""))
+	pattern_AnalyticsService_Realtime_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "analytics", "realtime"}, ""))
+	pattern_AnalyticsService_ForgetVisitor_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4, 2, 5}, []string{"api", "v1", "analytics", "visitor", "visitor_id", "forget"}, ""))
 )
 
 var (
-	forward_AnalyticsService_Summary_0     = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Timeseries_0  = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Pages_0       = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Sources_0     = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Geography_0   = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Devices_0     = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Events_0      = runtime.ForwardResponseMessage
-	forward_AnalyticsService_FormsReport_0 = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Visitors_0    = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Visitor_0     = runtime.ForwardResponseMessage
-	forward_AnalyticsService_Realtime_0    = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Summary_0       = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Timeseries_0    = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Pages_0         = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Sources_0       = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Geography_0     = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Devices_0       = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Events_0        = runtime.ForwardResponseMessage
+	forward_AnalyticsService_FormsReport_0   = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Visitors_0      = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Visitor_0       = runtime.ForwardResponseMessage
+	forward_AnalyticsService_Realtime_0      = runtime.ForwardResponseMessage
+	forward_AnalyticsService_ForgetVisitor_0 = runtime.ForwardResponseMessage
 )

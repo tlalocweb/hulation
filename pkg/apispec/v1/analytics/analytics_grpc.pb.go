@@ -26,17 +26,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AnalyticsService_Summary_FullMethodName     = "/hulation.v1.analytics.AnalyticsService/Summary"
-	AnalyticsService_Timeseries_FullMethodName  = "/hulation.v1.analytics.AnalyticsService/Timeseries"
-	AnalyticsService_Pages_FullMethodName       = "/hulation.v1.analytics.AnalyticsService/Pages"
-	AnalyticsService_Sources_FullMethodName     = "/hulation.v1.analytics.AnalyticsService/Sources"
-	AnalyticsService_Geography_FullMethodName   = "/hulation.v1.analytics.AnalyticsService/Geography"
-	AnalyticsService_Devices_FullMethodName     = "/hulation.v1.analytics.AnalyticsService/Devices"
-	AnalyticsService_Events_FullMethodName      = "/hulation.v1.analytics.AnalyticsService/Events"
-	AnalyticsService_FormsReport_FullMethodName = "/hulation.v1.analytics.AnalyticsService/FormsReport"
-	AnalyticsService_Visitors_FullMethodName    = "/hulation.v1.analytics.AnalyticsService/Visitors"
-	AnalyticsService_Visitor_FullMethodName     = "/hulation.v1.analytics.AnalyticsService/Visitor"
-	AnalyticsService_Realtime_FullMethodName    = "/hulation.v1.analytics.AnalyticsService/Realtime"
+	AnalyticsService_Summary_FullMethodName       = "/hulation.v1.analytics.AnalyticsService/Summary"
+	AnalyticsService_Timeseries_FullMethodName    = "/hulation.v1.analytics.AnalyticsService/Timeseries"
+	AnalyticsService_Pages_FullMethodName         = "/hulation.v1.analytics.AnalyticsService/Pages"
+	AnalyticsService_Sources_FullMethodName       = "/hulation.v1.analytics.AnalyticsService/Sources"
+	AnalyticsService_Geography_FullMethodName     = "/hulation.v1.analytics.AnalyticsService/Geography"
+	AnalyticsService_Devices_FullMethodName       = "/hulation.v1.analytics.AnalyticsService/Devices"
+	AnalyticsService_Events_FullMethodName        = "/hulation.v1.analytics.AnalyticsService/Events"
+	AnalyticsService_FormsReport_FullMethodName   = "/hulation.v1.analytics.AnalyticsService/FormsReport"
+	AnalyticsService_Visitors_FullMethodName      = "/hulation.v1.analytics.AnalyticsService/Visitors"
+	AnalyticsService_Visitor_FullMethodName       = "/hulation.v1.analytics.AnalyticsService/Visitor"
+	AnalyticsService_Realtime_FullMethodName      = "/hulation.v1.analytics.AnalyticsService/Realtime"
+	AnalyticsService_ForgetVisitor_FullMethodName = "/hulation.v1.analytics.AnalyticsService/ForgetVisitor"
 )
 
 // AnalyticsServiceClient is the client API for AnalyticsService service.
@@ -54,6 +55,9 @@ type AnalyticsServiceClient interface {
 	Visitors(ctx context.Context, in *VisitorsRequest, opts ...grpc.CallOption) (*VisitorsResponse, error)
 	Visitor(ctx context.Context, in *VisitorRequest, opts ...grpc.CallOption) (*VisitorResponse, error)
 	Realtime(ctx context.Context, in *RealtimeRequest, opts ...grpc.CallOption) (*RealtimeResponse, error)
+	// ForgetVisitor permanently deletes a visitor from events_v1 +
+	// aggregate MVs and writes a GDPR audit trail row. Admin only.
+	ForgetVisitor(ctx context.Context, in *ForgetVisitorRequest, opts ...grpc.CallOption) (*ForgetVisitorResponse, error)
 }
 
 type analyticsServiceClient struct {
@@ -174,6 +178,16 @@ func (c *analyticsServiceClient) Realtime(ctx context.Context, in *RealtimeReque
 	return out, nil
 }
 
+func (c *analyticsServiceClient) ForgetVisitor(ctx context.Context, in *ForgetVisitorRequest, opts ...grpc.CallOption) (*ForgetVisitorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForgetVisitorResponse)
+	err := c.cc.Invoke(ctx, AnalyticsService_ForgetVisitor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AnalyticsServiceServer is the server API for AnalyticsService service.
 // All implementations must embed UnimplementedAnalyticsServiceServer
 // for forward compatibility.
@@ -189,6 +203,9 @@ type AnalyticsServiceServer interface {
 	Visitors(context.Context, *VisitorsRequest) (*VisitorsResponse, error)
 	Visitor(context.Context, *VisitorRequest) (*VisitorResponse, error)
 	Realtime(context.Context, *RealtimeRequest) (*RealtimeResponse, error)
+	// ForgetVisitor permanently deletes a visitor from events_v1 +
+	// aggregate MVs and writes a GDPR audit trail row. Admin only.
+	ForgetVisitor(context.Context, *ForgetVisitorRequest) (*ForgetVisitorResponse, error)
 	mustEmbedUnimplementedAnalyticsServiceServer()
 }
 
@@ -231,6 +248,9 @@ func (UnimplementedAnalyticsServiceServer) Visitor(context.Context, *VisitorRequ
 }
 func (UnimplementedAnalyticsServiceServer) Realtime(context.Context, *RealtimeRequest) (*RealtimeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Realtime not implemented")
+}
+func (UnimplementedAnalyticsServiceServer) ForgetVisitor(context.Context, *ForgetVisitorRequest) (*ForgetVisitorResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ForgetVisitor not implemented")
 }
 func (UnimplementedAnalyticsServiceServer) mustEmbedUnimplementedAnalyticsServiceServer() {}
 func (UnimplementedAnalyticsServiceServer) testEmbeddedByValue()                          {}
@@ -451,6 +471,24 @@ func _AnalyticsService_Realtime_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AnalyticsService_ForgetVisitor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForgetVisitorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AnalyticsServiceServer).ForgetVisitor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AnalyticsService_ForgetVisitor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AnalyticsServiceServer).ForgetVisitor(ctx, req.(*ForgetVisitorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AnalyticsService_ServiceDesc is the grpc.ServiceDesc for AnalyticsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -501,6 +539,10 @@ var AnalyticsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Realtime",
 			Handler:    _AnalyticsService_Realtime_Handler,
+		},
+		{
+			MethodName: "ForgetVisitor",
+			Handler:    _AnalyticsService_ForgetVisitor_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

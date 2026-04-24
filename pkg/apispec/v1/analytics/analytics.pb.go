@@ -1980,6 +1980,115 @@ func (x *RealtimeResponse) GetTopSources() []*TableRow {
 	return nil
 }
 
+type ForgetVisitorRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	VisitorId     string                 `protobuf:"bytes,2,opt,name=visitor_id,json=visitorId,proto3" json:"visitor_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForgetVisitorRequest) Reset() {
+	*x = ForgetVisitorRequest{}
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForgetVisitorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForgetVisitorRequest) ProtoMessage() {}
+
+func (x *ForgetVisitorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForgetVisitorRequest.ProtoReflect.Descriptor instead.
+func (*ForgetVisitorRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ForgetVisitorRequest) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *ForgetVisitorRequest) GetVisitorId() string {
+	if x != nil {
+		return x.VisitorId
+	}
+	return ""
+}
+
+type ForgetVisitorResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Best-effort count of events deleted. ClickHouse's ALTER TABLE
+	// DELETE is an async mutation; the number reflects the row count
+	// queued for the mutation, not a synchronous delete guarantee.
+	RowsDeleted int64 `protobuf:"varint,1,opt,name=rows_deleted,json=rowsDeleted,proto3" json:"rows_deleted,omitempty"`
+	// Audit row id so the caller can correlate with the bolt
+	// audit_forget trail.
+	AuditKey      string `protobuf:"bytes,2,opt,name=audit_key,json=auditKey,proto3" json:"audit_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForgetVisitorResponse) Reset() {
+	*x = ForgetVisitorResponse{}
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForgetVisitorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForgetVisitorResponse) ProtoMessage() {}
+
+func (x *ForgetVisitorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForgetVisitorResponse.ProtoReflect.Descriptor instead.
+func (*ForgetVisitorResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ForgetVisitorResponse) GetRowsDeleted() int64 {
+	if x != nil {
+		return x.RowsDeleted
+	}
+	return 0
+}
+
+func (x *ForgetVisitorResponse) GetAuditKey() string {
+	if x != nil {
+		return x.AuditKey
+	}
+	return ""
+}
+
 var File_pkg_apispec_v1_analytics_analytics_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
@@ -2147,7 +2256,14 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\x06recent\x18\x02 \x03(\v2#.hulation.v1.analytics.VisitorEventR\x06recent\x12<\n" +
 	"\ttop_pages\x18\x03 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\btopPages\x12@\n" +
 	"\vtop_sources\x18\x04 \x03(\v2\x1f.hulation.v1.analytics.TableRowR\n" +
-	"topSources2\xd0\x0e\n" +
+	"topSources\"R\n" +
+	"\x14ForgetVisitorRequest\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1d\n" +
+	"\n" +
+	"visitor_id\x18\x02 \x01(\tR\tvisitorId\"W\n" +
+	"\x15ForgetVisitorResponse\x12!\n" +
+	"\frows_deleted\x18\x01 \x01(\x03R\vrowsDeleted\x12\x1b\n" +
+	"\taudit_key\x18\x02 \x01(\tR\bauditKey2\x95\x10\n" +
 	"\x10AnalyticsService\x12\xa2\x01\n" +
 	"\aSummary\x12%.hulation.v1.analytics.SummaryRequest\x1a&.hulation.v1.analytics.SummaryResponse\"Hҵ\x18#\n" +
 	"!server.{server_id}.analytics.read\x82\xd3\xe4\x93\x02\x1b\x12\x19/api/v1/analytics/summary\x12\xae\x01\n" +
@@ -2171,7 +2287,9 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\aVisitor\x12%.hulation.v1.analytics.VisitorRequest\x1a&.hulation.v1.analytics.VisitorResponse\"Uҵ\x18#\n" +
 	"!server.{server_id}.analytics.read\x82\xd3\xe4\x93\x02(\x12&/api/v1/analytics/visitor/{visitor_id}\x12\xa6\x01\n" +
 	"\bRealtime\x12&.hulation.v1.analytics.RealtimeRequest\x1a'.hulation.v1.analytics.RealtimeResponse\"Iҵ\x18#\n" +
-	"!server.{server_id}.analytics.read\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/analytics/realtimeBFZDgithub.com/tlalocweb/hulation/pkg/apispec/v1/analytics;analyticsspecb\x06proto3"
+	"!server.{server_id}.analytics.read\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/analytics/realtime\x12\xc2\x01\n" +
+	"\rForgetVisitor\x12+.hulation.v1.analytics.ForgetVisitorRequest\x1a,.hulation.v1.analytics.ForgetVisitorResponse\"Vҵ\x18\x1a\n" +
+	"\x18server.{server_id}.admin\x82\xd3\xe4\x93\x022:\x01*\"-/api/v1/analytics/visitor/{visitor_id}/forgetBFZDgithub.com/tlalocweb/hulation/pkg/apispec/v1/analytics;analyticsspecb\x06proto3"
 
 var (
 	file_pkg_apispec_v1_analytics_analytics_proto_rawDescOnce sync.Once
@@ -2185,35 +2303,37 @@ func file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP() []byte {
 	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescData
 }
 
-var file_pkg_apispec_v1_analytics_analytics_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_pkg_apispec_v1_analytics_analytics_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_pkg_apispec_v1_analytics_analytics_proto_goTypes = []any{
-	(*Filters)(nil),             // 0: hulation.v1.analytics.Filters
-	(*SummaryRequest)(nil),      // 1: hulation.v1.analytics.SummaryRequest
-	(*SummaryResponse)(nil),     // 2: hulation.v1.analytics.SummaryResponse
-	(*TimeseriesBucket)(nil),    // 3: hulation.v1.analytics.TimeseriesBucket
-	(*TimeseriesRequest)(nil),   // 4: hulation.v1.analytics.TimeseriesRequest
-	(*TimeseriesResponse)(nil),  // 5: hulation.v1.analytics.TimeseriesResponse
-	(*TableRow)(nil),            // 6: hulation.v1.analytics.TableRow
-	(*PagesRequest)(nil),        // 7: hulation.v1.analytics.PagesRequest
-	(*PagesResponse)(nil),       // 8: hulation.v1.analytics.PagesResponse
-	(*SourcesRequest)(nil),      // 9: hulation.v1.analytics.SourcesRequest
-	(*SourcesResponse)(nil),     // 10: hulation.v1.analytics.SourcesResponse
-	(*GeographyRequest)(nil),    // 11: hulation.v1.analytics.GeographyRequest
-	(*GeographyResponse)(nil),   // 12: hulation.v1.analytics.GeographyResponse
-	(*DevicesRequest)(nil),      // 13: hulation.v1.analytics.DevicesRequest
-	(*DevicesResponse)(nil),     // 14: hulation.v1.analytics.DevicesResponse
-	(*EventsRequest)(nil),       // 15: hulation.v1.analytics.EventsRequest
-	(*EventsResponse)(nil),      // 16: hulation.v1.analytics.EventsResponse
-	(*FormsReportRequest)(nil),  // 17: hulation.v1.analytics.FormsReportRequest
-	(*FormsReportResponse)(nil), // 18: hulation.v1.analytics.FormsReportResponse
-	(*VisitorsRequest)(nil),     // 19: hulation.v1.analytics.VisitorsRequest
-	(*VisitorsResponse)(nil),    // 20: hulation.v1.analytics.VisitorsResponse
-	(*VisitorSummary)(nil),      // 21: hulation.v1.analytics.VisitorSummary
-	(*VisitorRequest)(nil),      // 22: hulation.v1.analytics.VisitorRequest
-	(*VisitorResponse)(nil),     // 23: hulation.v1.analytics.VisitorResponse
-	(*VisitorEvent)(nil),        // 24: hulation.v1.analytics.VisitorEvent
-	(*RealtimeRequest)(nil),     // 25: hulation.v1.analytics.RealtimeRequest
-	(*RealtimeResponse)(nil),    // 26: hulation.v1.analytics.RealtimeResponse
+	(*Filters)(nil),               // 0: hulation.v1.analytics.Filters
+	(*SummaryRequest)(nil),        // 1: hulation.v1.analytics.SummaryRequest
+	(*SummaryResponse)(nil),       // 2: hulation.v1.analytics.SummaryResponse
+	(*TimeseriesBucket)(nil),      // 3: hulation.v1.analytics.TimeseriesBucket
+	(*TimeseriesRequest)(nil),     // 4: hulation.v1.analytics.TimeseriesRequest
+	(*TimeseriesResponse)(nil),    // 5: hulation.v1.analytics.TimeseriesResponse
+	(*TableRow)(nil),              // 6: hulation.v1.analytics.TableRow
+	(*PagesRequest)(nil),          // 7: hulation.v1.analytics.PagesRequest
+	(*PagesResponse)(nil),         // 8: hulation.v1.analytics.PagesResponse
+	(*SourcesRequest)(nil),        // 9: hulation.v1.analytics.SourcesRequest
+	(*SourcesResponse)(nil),       // 10: hulation.v1.analytics.SourcesResponse
+	(*GeographyRequest)(nil),      // 11: hulation.v1.analytics.GeographyRequest
+	(*GeographyResponse)(nil),     // 12: hulation.v1.analytics.GeographyResponse
+	(*DevicesRequest)(nil),        // 13: hulation.v1.analytics.DevicesRequest
+	(*DevicesResponse)(nil),       // 14: hulation.v1.analytics.DevicesResponse
+	(*EventsRequest)(nil),         // 15: hulation.v1.analytics.EventsRequest
+	(*EventsResponse)(nil),        // 16: hulation.v1.analytics.EventsResponse
+	(*FormsReportRequest)(nil),    // 17: hulation.v1.analytics.FormsReportRequest
+	(*FormsReportResponse)(nil),   // 18: hulation.v1.analytics.FormsReportResponse
+	(*VisitorsRequest)(nil),       // 19: hulation.v1.analytics.VisitorsRequest
+	(*VisitorsResponse)(nil),      // 20: hulation.v1.analytics.VisitorsResponse
+	(*VisitorSummary)(nil),        // 21: hulation.v1.analytics.VisitorSummary
+	(*VisitorRequest)(nil),        // 22: hulation.v1.analytics.VisitorRequest
+	(*VisitorResponse)(nil),       // 23: hulation.v1.analytics.VisitorResponse
+	(*VisitorEvent)(nil),          // 24: hulation.v1.analytics.VisitorEvent
+	(*RealtimeRequest)(nil),       // 25: hulation.v1.analytics.RealtimeRequest
+	(*RealtimeResponse)(nil),      // 26: hulation.v1.analytics.RealtimeResponse
+	(*ForgetVisitorRequest)(nil),  // 27: hulation.v1.analytics.ForgetVisitorRequest
+	(*ForgetVisitorResponse)(nil), // 28: hulation.v1.analytics.ForgetVisitorResponse
 }
 var file_pkg_apispec_v1_analytics_analytics_proto_depIdxs = []int32{
 	0,  // 0: hulation.v1.analytics.SummaryRequest.filters:type_name -> hulation.v1.analytics.Filters
@@ -2251,19 +2371,21 @@ var file_pkg_apispec_v1_analytics_analytics_proto_depIdxs = []int32{
 	19, // 32: hulation.v1.analytics.AnalyticsService.Visitors:input_type -> hulation.v1.analytics.VisitorsRequest
 	22, // 33: hulation.v1.analytics.AnalyticsService.Visitor:input_type -> hulation.v1.analytics.VisitorRequest
 	25, // 34: hulation.v1.analytics.AnalyticsService.Realtime:input_type -> hulation.v1.analytics.RealtimeRequest
-	2,  // 35: hulation.v1.analytics.AnalyticsService.Summary:output_type -> hulation.v1.analytics.SummaryResponse
-	5,  // 36: hulation.v1.analytics.AnalyticsService.Timeseries:output_type -> hulation.v1.analytics.TimeseriesResponse
-	8,  // 37: hulation.v1.analytics.AnalyticsService.Pages:output_type -> hulation.v1.analytics.PagesResponse
-	10, // 38: hulation.v1.analytics.AnalyticsService.Sources:output_type -> hulation.v1.analytics.SourcesResponse
-	12, // 39: hulation.v1.analytics.AnalyticsService.Geography:output_type -> hulation.v1.analytics.GeographyResponse
-	14, // 40: hulation.v1.analytics.AnalyticsService.Devices:output_type -> hulation.v1.analytics.DevicesResponse
-	16, // 41: hulation.v1.analytics.AnalyticsService.Events:output_type -> hulation.v1.analytics.EventsResponse
-	18, // 42: hulation.v1.analytics.AnalyticsService.FormsReport:output_type -> hulation.v1.analytics.FormsReportResponse
-	20, // 43: hulation.v1.analytics.AnalyticsService.Visitors:output_type -> hulation.v1.analytics.VisitorsResponse
-	23, // 44: hulation.v1.analytics.AnalyticsService.Visitor:output_type -> hulation.v1.analytics.VisitorResponse
-	26, // 45: hulation.v1.analytics.AnalyticsService.Realtime:output_type -> hulation.v1.analytics.RealtimeResponse
-	35, // [35:46] is the sub-list for method output_type
-	24, // [24:35] is the sub-list for method input_type
+	27, // 35: hulation.v1.analytics.AnalyticsService.ForgetVisitor:input_type -> hulation.v1.analytics.ForgetVisitorRequest
+	2,  // 36: hulation.v1.analytics.AnalyticsService.Summary:output_type -> hulation.v1.analytics.SummaryResponse
+	5,  // 37: hulation.v1.analytics.AnalyticsService.Timeseries:output_type -> hulation.v1.analytics.TimeseriesResponse
+	8,  // 38: hulation.v1.analytics.AnalyticsService.Pages:output_type -> hulation.v1.analytics.PagesResponse
+	10, // 39: hulation.v1.analytics.AnalyticsService.Sources:output_type -> hulation.v1.analytics.SourcesResponse
+	12, // 40: hulation.v1.analytics.AnalyticsService.Geography:output_type -> hulation.v1.analytics.GeographyResponse
+	14, // 41: hulation.v1.analytics.AnalyticsService.Devices:output_type -> hulation.v1.analytics.DevicesResponse
+	16, // 42: hulation.v1.analytics.AnalyticsService.Events:output_type -> hulation.v1.analytics.EventsResponse
+	18, // 43: hulation.v1.analytics.AnalyticsService.FormsReport:output_type -> hulation.v1.analytics.FormsReportResponse
+	20, // 44: hulation.v1.analytics.AnalyticsService.Visitors:output_type -> hulation.v1.analytics.VisitorsResponse
+	23, // 45: hulation.v1.analytics.AnalyticsService.Visitor:output_type -> hulation.v1.analytics.VisitorResponse
+	26, // 46: hulation.v1.analytics.AnalyticsService.Realtime:output_type -> hulation.v1.analytics.RealtimeResponse
+	28, // 47: hulation.v1.analytics.AnalyticsService.ForgetVisitor:output_type -> hulation.v1.analytics.ForgetVisitorResponse
+	36, // [36:48] is the sub-list for method output_type
+	24, // [24:36] is the sub-list for method input_type
 	24, // [24:24] is the sub-list for extension type_name
 	24, // [24:24] is the sub-list for extension extendee
 	0,  // [0:24] is the sub-list for field type_name
@@ -2280,7 +2402,7 @@ func file_pkg_apispec_v1_analytics_analytics_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apispec_v1_analytics_analytics_proto_rawDesc), len(file_pkg_apispec_v1_analytics_analytics_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
