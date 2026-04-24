@@ -514,6 +514,47 @@ without touching evaluator code.
 The web dashboard is the primary surface. A mobile app complements it for
 on-the-go monitoring and push notifications.
 
+### 9.0 Mobile backend surface (shipped in Phase 5a)
+
+The backend the 5b mobile app consumes is already in tree. Summary of
+what's live:
+
+- **Auth**: same bearer-token flow as the web UI. No mobile-specific
+  login endpoint — the app hits `/api/v1/auth/admin` (or an OIDC
+  provider flow) and caches the returned JWT locally.
+- **Device registration**:
+  - `POST /api/mobile/v1/devices` — idempotent on (user_id, device
+    fingerprint). Body carries `platform` (APNS / FCM) + plaintext
+    `token` + optional `label`. Server seals the token at rest via
+    AES-GCM (see `pkg/mobile/tokenbox`).
+  - `DELETE /api/mobile/v1/devices/{device_id}` — owner-only.
+  - `GET /api/mobile/v1/devices` — caller's own devices; last-seen
+    descending.
+- **Compact analytics**:
+  - `GET /api/mobile/v1/summary?server_id=…&preset=…` — 4 numerics
+    + a 12-point sparkline. < 300 B JSON.
+  - `GET /api/mobile/v1/timeseries?server_id=…&preset=…&granularity=…`
+    — downsampled to 12 (hour) or 24 (day) buckets.
+- **Realtime feed**:
+  - `WSS /api/mobile/v1/events?server_id=…` — authenticated WebSocket
+    upgrade. Streams JSON event frames. 25s ping / 60s idle timeout;
+    slow clients get dropped (bounded buffered channels).
+- **Notifications**:
+  - `GET / PATCH /api/v1/notify/prefs/{user_id}` — email/push
+    booleans + IANA timezone + quiet hours.
+  - Alert delivery via the notifier composite: emails always, push
+    via APNs (iOS) or FCM (Android) when creds are configured.
+  - Dead-token handling: APNs 410 / FCM NOT_FOUND marks the device
+    inactive server-side so the app sees it disappear from
+    `ListMyDevices` on next refresh.
+- **Deep-link scheme** for alert pushes: `hula://alert/<alert_id>` —
+  app is expected to route to the alerts-inbox detail screen. Web
+  fallback path `/analytics/admin/alerts` also works.
+
+Full protos live at `pkg/apispec/v1/mobile/mobile.proto` and
+`pkg/apispec/v1/notify/notify.proto`. OpenAPI v2 dump is pending
+(stage 5a.8 follow-up).
+
 ### 9.1 Scope & feel
 
 - **Platforms**: iOS and Android.
