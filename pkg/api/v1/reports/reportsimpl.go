@@ -10,8 +10,9 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/tlalocweb/hulation/pkg/reports/render"
 	reportsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/reports"
+	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
+	"github.com/tlalocweb/hulation/pkg/reports/render"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -301,6 +302,68 @@ func (s *Server) PreviewReport(ctx context.Context, req *reportsspec.PreviewRepo
 	return &reportsspec.PreviewReportResponse{Html: html, Subject: subject}, nil
 }
 
-// SendNow + ListRuns land with the dispatcher in stage 3.5.
-// Inherited Unimplemented from the embedded server keeps the RPCs
-// registered on the gRPC surface without lying about behaviour.
+// SendNow enqueues an immediate render+send via the Phase-3.5
+// dispatcher. Returns a run_id the caller can poll via ListRuns.
+func (s *Server) SendNow(ctx context.Context, req *reportsspec.SendNowRequest) (*reportsspec.SendNowResponse, error) {
+	if req == nil || req.GetReportId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "report_id required")
+	}
+	r, err := hulabolt.GetReport(req.GetReportId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get report: %s", err)
+	}
+	if r == nil || r.ServerID != req.GetServerId() {
+		return nil, status.Error(codes.NotFound, "report not found")
+	}
+	d := dispatch.Get()
+	if d == nil {
+		return nil, status.Error(codes.FailedPrecondition, "dispatcher not running")
+	}
+	runID, err := d.Enqueue(req.GetReportId())
+	if err != nil {
+		return nil, status.Errorf(codes.ResourceExhausted, "enqueue: %s", err)
+	}
+	return &reportsspec.SendNowResponse{RunId: runID}, nil
+}
+
+// ListRuns returns the N most-recent dispatch attempts for a report.
+// Default limit 50.
+func (s *Server) ListRuns(ctx context.Context, req *reportsspec.ListRunsRequest) (*reportsspec.ListRunsResponse, error) {
+	if req == nil || req.GetReportId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "report_id required")
+	}
+	r, err := hulabolt.GetReport(req.GetReportId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get report: %s", err)
+	}
+	if r == nil || r.ServerID != req.GetServerId() {
+		return nil, status.Error(codes.NotFound, "report not found")
+	}
+	limit := int(req.GetLimit())
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := hulabolt.ListReportRuns(req.GetReportId(), limit)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list runs: %s", err)
+	}
+	out := make([]*reportsspec.ReportRun, 0, len(rows))
+	for _, run := range rows {
+		rr := &reportsspec.ReportRun{
+			Id:         run.ID,
+			ReportId:   run.ReportID,
+			Status:     run.Status,
+			Attempt:    run.Attempt,
+			Error:      run.Error,
+			Recipients: append([]string(nil), run.Recipients...),
+		}
+		if !run.StartedAt.IsZero() {
+			rr.StartedAt = timestamppb.New(run.StartedAt)
+		}
+		if !run.FinishedAt.IsZero() {
+			rr.FinishedAt = timestamppb.New(run.FinishedAt)
+		}
+		out = append(out, rr)
+	}
+	return &reportsspec.ListRunsResponse{Runs: out}, nil
+}

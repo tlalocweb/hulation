@@ -24,6 +24,8 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	"github.com/tlalocweb/hulation/pkg/mailer"
+	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/sitedeploy"
@@ -97,6 +99,20 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	if _, err := hulabolt.Open(""); err != nil {
 		log.Warnf("Bolt store unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
 	}
+
+	// Scheduled-report dispatcher. Runs on a 1-minute ticker + an
+	// on-demand SendNow queue. No-op until scheduled reports are
+	// created via the ReportsService. Non-fatal when the mailer isn't
+	// configured — dispatcher logs renders without sending so the
+	// admin UI still works for preview flows.
+	m := mailer.New(conf.Mailer)
+	if conf.Mailer != nil && conf.Mailer.Configured() {
+		log.Infof("mailer: SMTP %s:%d from=%q starttls=%v",
+			conf.Mailer.Host, conf.Mailer.Port, conf.Mailer.From, conf.Mailer.StartTLS)
+	} else {
+		log.Infof("mailer: not configured — scheduled reports render but will not send")
+	}
+	dispatch.Start(ctx, m)
 
 	// Apply ClickHouse migrations — brings up the MV state tables and
 	// materialized views that the analytics query builder reads from.

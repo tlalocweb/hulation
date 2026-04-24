@@ -783,6 +783,9 @@ type Config struct {
 	// Analytics — tunables for the visitor-analytics subsystem. All fields
 	// optional; sensible defaults applied by pkg/store/clickhouse.
 	Analytics *AnalyticsConfig `yaml:"analytics,omitempty"`
+	// Mailer — SMTP config for the Phase-3 scheduled-report dispatcher.
+	// Optional; when unset the dispatcher logs reports without sending.
+	Mailer *MailerConfig `yaml:"mailer,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
