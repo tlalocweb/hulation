@@ -271,67 +271,126 @@ Self-refreshing (5-second poll):
 
 ## 7. Admin Pages
 
-### 7.1 Users
+Admin pages live under `/analytics/admin/*` and surface in the sidebar
+under an "Admin" divider that shows only when
+`window.hulaConfig.isAdmin === true` (populated from `/analytics/config.json`
+on boot). Non-admin sessions never see the links.
 
-(Admin only.) Implements the stub hulactl `createuser`/`listusers`/etc.
-commands as a proper UI.
+Shipped in Phase 3.
 
-- Table of users: email, created, last login, #servers accessible.
-- Create / edit: email, password (reset), TOTP status.
-- Per-row: **Manage access** button → opens a modal listing servers with
-  checkboxes and role dropdown (viewer / manager).
+### 7.1 Users (`/admin/users`)
 
-### 7.2 Goals
+Directory + per-user ACL, backed by `AuthService` over the REST gateway.
 
-(Admin / manager.) Define what counts as a conversion:
+- **Table columns**: email · username · created_at.
+  Populated by `POST /api/v1/auth/users/list` (no filter → full list).
+- **"+ New user"** button opens a right-anchored slide-over sheet
+  (`Sheet.svelte`) with email (required) + username (optional). Submits to
+  `POST /api/v1/auth/users`.
+- **Per-row "Manage access"** opens a second sheet that lists the user's
+  current grants (`GET /api/v1/auth/access?user_id=<id>`) alongside a
+  grant widget (server selector × role dropdown: `viewer` | `manager`).
+  Grant → `POST /api/v1/auth/access`; revoke → `DELETE
+  /api/v1/auth/access/{user_id}/{server_id}`.
+- **Delete user** → `POST /api/v1/auth/user/delete` with
+  `{identity: <uuid-or-email>}`.
 
-- **Goal types**:
-  - **URL visit** — pageview matching a path prefix or regex.
-  - **Event** — matching event code (e.g., `FormSubmission`) with optional
-    `Data` filter.
-  - **Form** — specific form by ID.
-  - **Lander** — specific lander by ID.
-- **Value** — optional numeric weight (for future revenue features).
+Deferred from the original spec: "last login" column (not yet tracked),
+TOTP-status column (needs a dedicated RPC), password-reset button (Phase 4,
+alongside a mail-out flow).
 
-Goals appear on the Overview and in every report as a "conversion rate"
-column.
+### 7.2 Goals (`/admin/goals`)
 
-### 7.3 Scheduled Reports
+Per-server CRUD over `GoalsService`. Scope follows the top filter bar's
+current server (`$: currentServer, load()` reactive guard); the page shows
+an empty state until a server is picked.
 
-Table of configured reports. "New report":
+- **Table columns**: name · kind · rule summary · enabled.
+  Populated by `GET /api/v1/goals/{server_id}`.
+- **"+ New goal"** opens a sheet with:
+  - Name (required), description (optional).
+  - **Kind** (`URL_VISIT` · `EVENT` · `FORM` · `LANDER`).
+  - Kind-conditional rule input: URL-path regex, event code (int64), form ID,
+    or lander ID.
+  - Enabled checkbox.
+  - **Test rule (7d)** button → `POST /api/v1/goals/{server_id}/test`. The
+    server currently returns `501 Unimplemented`; the UI renders
+    "(TestGoal not implemented yet — stage 3.3b)" in that case. Full
+    dry-run math lands in Phase 4 alongside the Events report.
+- Create → `POST /api/v1/goals/{server_id}` (body: `{goal: …}`).
+- Patch → `PATCH /api/v1/goals/{server_id}/{goal_id}`.
+- Delete → `DELETE /api/v1/goals/{server_id}/{goal_id}`.
 
-- **Name** (e.g., "Weekly — marketing team")
-- **Recipients** — one or more email addresses.
-- **Scope** — one or more servers (intersected with recipient's own access
-  if they happen to be a hula user; otherwise just "as configured by admin").
-- **Frequency** — Daily (7 AM local), Weekly (Monday), Monthly (1st).
-- **Format** — Summary (KPIs + 3 top tables, small) or Detailed (add charts
-  as PNGs + goals + top 10 tables).
-- **Timezone** — for "day" boundaries and send-time.
-- **Status** — Active / Paused.
-- **Preview** button — renders the email inline in the UI with current data.
+**Value** (numeric weight) from the original spec is not yet exposed in the
+UI — reserved for Phase 4's revenue-features work.
 
-Admin can also send an ad-hoc report on demand.
+### 7.3 Scheduled Reports (`/admin/reports`)
+
+Per-server CRUD over `ReportsService`, including inline preview + send-now.
+
+- **Table columns**: name · cron · timezone · recipients (first two + "+N")
+  · next fire · enabled.
+- **"+ New report"** opens a sheet with:
+  - Name (required).
+  - **Cron** (5-field: `min hr dom mon dow`, parsed by robfig/cron/v3).
+    Default `0 9 * * 1` (Mondays 09:00).
+  - **Timezone** — IANA string (`Intl.DateTimeFormat().resolvedOptions()
+    .timeZone` prefilled).
+  - **Recipients** — comma- or space-separated emails, normalized on save.
+  - **Template** — `SUMMARY` (four KPI boxes) or `DETAILED` (KPIs + top
+    pages).
+  - Enabled checkbox.
+- Create → `POST /api/v1/reports/{server_id}` (body: `{report: …}`);
+  response includes the dispatcher-computed `next_fire_at`.
+- **Preview** button opens a second sheet with a sandboxed iframe rendered
+  from `POST /api/v1/reports/{server_id}/{report_id}/preview` (`html` +
+  `subject` fields). The iframe uses `sandbox=""` (full isolation) and
+  `srcdoc=…` to render without navigation.
+- **Send now** → `POST /api/v1/reports/{server_id}/{report_id}/send-now`;
+  the alert shows the returned `run_id`, and if the "Runs" panel is open
+  for that report it reloads.
+- **Runs** (inline expandable panel) → `GET /api/v1/reports/{server_id}/
+  {report_id}/runs?limit=25`. Lists started_at · attempt · status, colored
+  dot by status (`success` · `retrying` · anything-else).
+- Delete → `DELETE /api/v1/reports/{server_id}/{report_id}`.
+
+The original spec's "Scope — one or more servers" is scoped down to the
+single current server (matching the rest of the admin UI's per-server
+model). Multi-server reports can be created by cloning a report config
+across servers via the UI.
 
 ## 8. Email Reports (Backend)
 
-A dedicated `reports` goroutine in hula:
+Shipped in Phase 3 as `pkg/reports/dispatch` + `pkg/reports/render` +
+`pkg/mailer`. Dispatcher lives as a background goroutine inside hula.
 
-- On startup, load all active report configs from a new `scheduled_reports`
-  table.
-- Use a time.Ticker at 1-minute granularity; for each tick, check if any
-  report's next fire time ≤ now.
-- For a due report:
-  1. Query ClickHouse for the period (same queries as the UI).
-  2. Render an HTML email with an inline summary (MJML-compiled or plain
-     go html/template).
-  3. For Detailed format, render charts server-side via `vektah/chart` or
-     similar and attach as CIDs.
-  4. Send via hula's existing mail setup (or via backend's mailgun config —
-     need to expose a sendMail interface).
-- Record a row in `report_runs` table (id, report_id, sent_at, recipients,
-  ok?, error text).
-- On failure, retry with exponential backoff up to 3 times.
+- **Startup**: `dispatch.Start(ctx, mailer)` — starts a 1-minute ticker and
+  an `Enqueue` channel (cap 32) for on-demand `SendNow` requests. No-op
+  when the Bolt store isn't present; mailer is log-only when `hula_mailer`
+  isn't configured.
+- **Scheduling**: each tick walks all enabled reports in the `reports`
+  bucket and calls `sendOne` for any whose `next_fire_at ≤ now`. Cron + IANA
+  timezone parsed via robfig/cron/v3 + `time.LoadLocation`; reports with an
+  unparseable tz are refused at create time.
+- **Rendering**: `pkg/reports/render` emits HTML templates —
+  `TEMPLATE_VARIANT_SUMMARY` (four KPI boxes) or `TEMPLATE_VARIANT_DETAILED`
+  (KPIs + top-pages table). Same query path as the UI (Phase-1 analytics
+  RPCs) so email numbers match the dashboard byte-for-byte.
+- **Delivery**: `pkg/mailer/mailer.go` — STARTTLS on :587 via stdlib
+  `net/smtp`. `ErrNotConfigured` sentinel for the log-only fallback path
+  (useful in dev + on first boot before the operator wires SMTP).
+- **Persistence**: one `StoredReportRun` row per attempt (id, report_id,
+  started_at, finished_at, status, attempt, error, recipients[]).
+- **Retry**: `[0, 1m, 5m, 25m]` on failure (max 4 attempts). Each attempt
+  writes its own `StoredReportRun` so the admin UI's runs panel shows the
+  full trail.
+- **Preview**: `PreviewReport` renders the same HTML but skips the mailer
+  and does not persist — pure template + current-data-window render for
+  the iframe preview in the admin UI.
+
+Server-side chart rendering (the original spec's "attach as CIDs" for the
+Detailed variant) is currently inline KPI + tables only — chart PNGs are
+Phase 4 work once the Events/Forms reports land.
 
 ## 9. Mobile App
 

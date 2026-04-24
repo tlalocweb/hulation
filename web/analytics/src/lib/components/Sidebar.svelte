@@ -2,6 +2,12 @@
   import { page } from '$app/stores';
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
+  import { clearToken } from '$lib/api/auth';
+
+  function signOut() {
+    clearToken();
+    window.location.href = `${base}/login`;
+  }
 
   // Left nav. Reports are always visible; the Admin section only
   // surfaces when window.hulaConfig reports isAdmin=true (populated
@@ -74,8 +80,15 @@
       {/each}
     {/if}
   </ul>
-  <div class="border-t px-5 py-3 text-xs text-muted-foreground">
-    <p>Phase 2 · {$page.url.pathname}</p>
+  <div class="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground">
+    <span>Phase 3</span>
+    <button
+      type="button"
+      class="rounded border px-2 py-1 hover:bg-accent hover:text-accent-foreground"
+      on:click={signOut}
+    >
+      Sign out
+    </button>
   </div>
 </nav>
 

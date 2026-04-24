@@ -53,6 +53,19 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
+export function setToken(token: string): void {
+  if (typeof localStorage !== 'undefined') localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(TOKEN_KEY);
+}
+
+export function getToken(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let body: unknown = null;
@@ -66,11 +79,68 @@ async function handle<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+// ----- Login (unauthenticated endpoints) -----
+
+export interface AuthProviderInfo {
+  name: string;
+  type: string;
+  display_name?: string;
+  icon_url?: string;
+  auth_url?: string;
+}
+
+export interface LoginAdminResponse {
+  admintoken?: string;
+  error?: string;
+  totp_required?: boolean;
+}
+
+export interface LoginWithCodeResponse {
+  token?: string;
+  error?: string;
+  provider?: string;
+  tenantId?: string;
+}
+
+export const login = {
+  providers: async (): Promise<AuthProviderInfo[]> => {
+    const res = await fetch('/api/v1/auth/providers');
+    const data = await handle<{ providers?: AuthProviderInfo[] }>(res);
+    return data.providers ?? [];
+  },
+
+  admin: async (username: string, hash: string): Promise<LoginAdminResponse> => {
+    const res = await fetch('/api/v1/auth/admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, hash }),
+    });
+    return handle<LoginAdminResponse>(res);
+  },
+
+  withCode: async (
+    code: string,
+    onetimetoken: string,
+    provider: string,
+  ): Promise<LoginWithCodeResponse> => {
+    const res = await fetch('/api/v1/auth/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, onetimetoken, provider }),
+    });
+    return handle<LoginWithCodeResponse>(res);
+  },
+};
+
 // ----- Users CRUD -----
 
 export const users = {
   list: async (): Promise<User[]> => {
-    const res = await fetch('/api/v1/auth/users', { headers: authHeaders() });
+    const res = await fetch('/api/v1/auth/users/list', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filter: '' }),
+    });
     const data = await handle<ListUsersResponse>(res);
     return data.users ?? [];
   },
@@ -87,10 +157,10 @@ export const users = {
   },
 
   patch: async (userid: string, patch: Partial<User>): Promise<User> => {
-    const res = await fetch(`/api/v1/auth/users/${encodeURIComponent(userid)}`, {
+    const res = await fetch('/api/v1/auth/user', {
       method: 'PATCH',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: patch }),
+      body: JSON.stringify({ identity: userid, user: patch }),
     });
     const data = await handle<{ user?: User }>(res);
     if (!data.user) throw new Error('patch: empty response');
@@ -98,9 +168,10 @@ export const users = {
   },
 
   del: async (userid: string): Promise<void> => {
-    const res = await fetch(`/api/v1/auth/users/${encodeURIComponent(userid)}`, {
-      method: 'DELETE',
-      headers: authHeaders(),
+    const res = await fetch('/api/v1/auth/user/delete', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity: userid }),
     });
     await handle<unknown>(res);
   },
@@ -121,7 +192,7 @@ export const access = {
   },
 
   grant: async (user_id: string, server_id: string, role: ServerAccessRole): Promise<void> => {
-    const res = await fetch('/api/v1/auth/access/grant', {
+    const res = await fetch('/api/v1/auth/access', {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id, server_id, role }),
@@ -130,10 +201,10 @@ export const access = {
   },
 
   revoke: async (user_id: string, server_id: string): Promise<void> => {
-    const res = await fetch('/api/v1/auth/access/revoke', {
-      method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id, server_id }),
+    const path = `/api/v1/auth/access/${encodeURIComponent(user_id)}/${encodeURIComponent(server_id)}`;
+    const res = await fetch(path, {
+      method: 'DELETE',
+      headers: authHeaders(),
     });
     await handle<unknown>(res);
   },
