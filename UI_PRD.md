@@ -545,21 +545,37 @@ Rate limiting:
 
 ## 13. UI Tech Stack
 
-- **Framework**: **Svelte / SvelteKit**. Compiled output is small and the
-  templating is straightforward to review.
-- **Component look**: **shadcn-svelte**-style — copy-in components (cards,
-  tables, dialogs, dropdowns, command palette, sheets), not a framework
-  dependency.
-- **Charts**: **D3.js**, consumed from Svelte components authored by this
-  project — not a chart-library wrapper. See §10.
-- **CSS**: Tailwind (bundled by shadcn-svelte conventions).
-- **Auth**: SSO-only (Google / GitHub / Microsoft) via the drop-in OAuth
-  framework; break-glass admin username/password retained.
-- **Build output**: static assets served from `/analytics/`, protected by
-  OPA auth at the route level.
-- **State**: URL-as-state — the filter bar is fully represented in the query
-  string so views are shareable and bookmarkable.
-- **Mobile app**: separate codebase (React Native recommended; see §9.6).
+Phase 2 shipped the web UI. Code lives under `web/analytics/` and
+is served from hula at `/analytics/*`.
+
+- **Framework**: **SvelteKit 2** + TypeScript + `@sveltejs/adapter-
+  static`. Compiled output is ~19 KB gzipped on first load.
+- **Component look**: shadcn-svelte-style — CSS-variable theme in
+  `src/app.css`; components vendored under `$lib/components/` and
+  `$lib/charts/`.
+- **Charts**: hand-built D3 + Svelte components. Five shipped in
+  Phase 2: `<LineChart>`, `<Sparkline>`, `<StackedBar>`, `<Donut>`,
+  `<ChoroplethMap>`. Sandbox at `/analytics/design/charts`.
+- **CSS**: Tailwind 3.4 + the shadcn CSS-variable theme.
+- **Auth**: admin bearer token via the existing Phase-0 login path.
+  SSO login UI ships in Phase 3 with the Bolt user-store migration.
+- **Build output**: static assets bundled into the `hula:local`
+  Docker image (Dockerfile.local ui-build stage) and served from
+  `/hula/web/analytics/` by the unified listener. Path is overridable
+  via the `HULA_ANALYTICS_UI_ROOT` env var for dev-mode hula.
+- **State**: URL-as-state — every filter chip + date range is
+  mirrored bidirectionally to `?filters.*` query params. Reloading
+  any page restores the exact view.
+- **Palette**: Okabe-Ito color-blind-safe defaults across every
+  chart and KPI card.
+- **Dark mode**: auto-follows `prefers-color-scheme`; manual
+  override via the toolbar toggle, persisted in `localStorage`.
+- **Bundle budget**: 150 KB gzipped first-load, enforced in CI by
+  `scripts/bundle-size-guard.mjs` after every `pnpm build`. Heavy
+  chart code (D3 scales + world-atlas TopoJSON) is dynamic-
+  imported and only loads on the relevant routes.
+- **Mobile app**: separate codebase (React Native recommended;
+  see §9.6).
 
 ## 14. Implementation Phases
 
