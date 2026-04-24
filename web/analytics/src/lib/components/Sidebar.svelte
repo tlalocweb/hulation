@@ -21,6 +21,7 @@
     { href: 'geography', label: 'Geography' },
     { href: 'devices', label: 'Devices' },
     { href: 'events', label: 'Events' },
+    { href: 'forms', label: 'Forms' },
     { href: 'visitors', label: 'Visitors' },
   ];
 
