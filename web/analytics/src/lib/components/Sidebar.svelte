@@ -1,17 +1,30 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { base } from '$app/paths';
+  import { onMount } from 'svelte';
 
-  // Left nav. Kept small; stage 2.2 ships five reports, Phases 3–4
-  // append admin + realtime/visitor/events/forms items into the same
-  // structure.
-  const items = [
-    { href: '', label: 'Overview', icon: 'dashboard' },
-    { href: 'pages', label: 'Pages', icon: 'document' },
-    { href: 'sources', label: 'Sources', icon: 'link' },
-    { href: 'geography', label: 'Geography', icon: 'globe' },
-    { href: 'devices', label: 'Devices', icon: 'device' },
+  // Left nav. Reports are always visible; the Admin section only
+  // surfaces when window.hulaConfig reports isAdmin=true (populated
+  // by hula at /analytics/config.json). Non-admin callers just see
+  // the analytics pages.
+  const reportItems = [
+    { href: '', label: 'Overview' },
+    { href: 'pages', label: 'Pages' },
+    { href: 'sources', label: 'Sources' },
+    { href: 'geography', label: 'Geography' },
+    { href: 'devices', label: 'Devices' },
   ];
+
+  const adminItems = [
+    { href: 'admin/users', label: 'Users' },
+    { href: 'admin/goals', label: 'Goals' },
+    { href: 'admin/reports', label: 'Reports' },
+  ];
+
+  let isAdmin = false;
+  onMount(() => {
+    isAdmin = Boolean(window.hulaConfig?.isAdmin);
+  });
 
   $: currentPath = $page.url.pathname.replace(/\/+$/, '');
   $: baseNoTrailingSlash = base.replace(/\/+$/, '');
@@ -28,7 +41,7 @@
     <span class="text-sm text-muted-foreground">analytics</span>
   </div>
   <ul class="flex-1 space-y-0.5 p-3">
-    {#each items as item (item.href)}
+    {#each reportItems as item (item.href)}
       <li>
         <a
           href={`${base}/${item.href}`}
@@ -41,6 +54,25 @@
         </a>
       </li>
     {/each}
+
+    {#if isAdmin}
+      <li class="mt-5 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+        Admin
+      </li>
+      {#each adminItems as item (item.href)}
+        <li>
+          <a
+            href={`${base}/${item.href}`}
+            class="flex items-center gap-2 rounded px-3 py-2 text-sm transition hover:bg-accent hover:text-accent-foreground
+                   {isActive(item.href) ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground'}"
+            aria-current={isActive(item.href) ? 'page' : undefined}
+          >
+            <span class="icon-dot" aria-hidden="true"></span>
+            {item.label}
+          </a>
+        </li>
+      {/each}
+    {/if}
   </ul>
   <div class="border-t px-5 py-3 text-xs text-muted-foreground">
     <p>Phase 2 · {$page.url.pathname}</p>
