@@ -35,6 +35,9 @@ const (
 	BucketAlerts       = "alerts"         // key = alertID, value = JSON Alert proto
 	BucketAlertEvents  = "alert_events"   // key = eventID, value = JSON AlertEvent proto
 	BucketAuditForget  = "audit_forget"   // key = visitorID|ts, value = JSON ForgetAuditRow
+	BucketMobileDevices     = "mobile_devices"      // key = deviceID, value = StoredDevice
+	BucketNotificationSends = "notification_sends"  // key = sendID,   value = StoredNotificationSend
+	BucketNotificationPrefs = "notification_prefs"  // key = userID,   value = StoredNotificationPrefs
 )
 
 var (
@@ -78,6 +81,9 @@ func Open(path string) (*bolt.DB, error) {
 			BucketAlerts,
 			BucketAlertEvents,
 			BucketAuditForget,
+			BucketMobileDevices,
+			BucketNotificationSends,
+			BucketNotificationPrefs,
 		} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(b)); e != nil {
 				return fmt.Errorf("bucket %s: %w", b, e)

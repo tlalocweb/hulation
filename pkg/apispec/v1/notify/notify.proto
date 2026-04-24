@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+// NotifyService — per-user notification preferences + a test-send
+// hook. The alert evaluator in pkg/alerts/evaluator consults these
+// prefs at fire time to route an envelope to the right channels
+// (email vs push) with quiet-hours respected.
+//
+// Channel routing is intentionally coarse for v1: three booleans
+// (email, push, enabled) + quiet-hours. Per-alert-kind routing
+// (muting BAD_ACTOR_RATE pushes overnight, say) is a Phase-5b-era
+// follow-up once the mobile app exists.
+
+package hulation.v1.notify;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/notify;notifyspec";
+
+import "google/api/annotations.proto";
+import "izuma/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service NotifyService {
+  // GetNotificationPrefs returns the caller's prefs. Creates a
+  // default row on first access so the UI always has something to
+  // render.
+  rpc GetNotificationPrefs(GetNotificationPrefsRequest) returns (NotificationPrefs) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/prefs/{user_id}"
+    };
+    // Admin reads any user; non-admin reads only their own row.
+    // Authware checks user_id against claims.sub.
+  }
+
+  rpc SetNotificationPrefs(SetNotificationPrefsRequest) returns (NotificationPrefs) {
+    option (google.api.http) = {
+      patch: "/api/v1/notify/prefs/{user_id}"
+      body: "prefs"
+    };
+  }
+
+  rpc ListNotificationPrefs(ListNotificationPrefsRequest) returns (ListNotificationPrefsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/prefs"
+    };
+    option (izuma.auth.permission) = { needs: ["superadmin.user.list"] };
+  }
+
+  // TestNotification fires a synthetic envelope to every channel
+  // that's currently enabled for the target user. Admin-only so a
+  // malicious caller can't storm another user's inbox.
+  rpc TestNotification(TestNotificationRequest) returns (TestNotificationResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/test/{user_id}"
+      body: "*"
+    };
+    option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+  }
+}
+
+message NotificationPrefs {
+  string user_id = 1;
+  bool email_enabled = 2;
+  bool push_enabled = 3;
+  // IANA timezone. Required when quiet_hours_start/end are set.
+  string timezone = 4;
+  // "HH:MM" 24-hour. Empty = no quiet hours. Midnight-spanning
+  // ranges are respected (e.g. start=22:00 end=07:00).
+  string quiet_hours_start = 5;
+  string quiet_hours_end = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message GetNotificationPrefsRequest {
+  string user_id = 1;
+}
+
+message SetNotificationPrefsRequest {
+  string user_id = 1;
+  NotificationPrefs prefs = 2;
+}
+
+message ListNotificationPrefsRequest {}
+
+message ListNotificationPrefsResponse {
+  repeated NotificationPrefs rows = 1;
+}
+
+message TestNotificationRequest {
+  string user_id = 1;
+  // Optional subject / body overrides for the synthetic envelope.
+  // Empty → uses the canned "This is a test from Hula" payload.
+  string subject = 2;
+  string body = 3;
+}
+
+message TestNotificationResponse {
+  // Per-channel outcome. Each row looks like
+  // {"channel":"email","ok":true} — lets the admin UI show a
+  // success/fail dot per channel.
+  repeated TestChannelResult results = 1;
+}
+
+message TestChannelResult {
+  string channel = 1; // "email" | "apns" | "fcm"
+  bool ok = 2;
+  string error = 3;
+}
