@@ -72,7 +72,7 @@ const (
 	CMD_OPAQUESEED_HELP       = "Generate base64url OPAQUE OPRF seed + AKE secret for hula config"
 	CMD_FORGETOPAQUE          = "forget-opaque-record"
 	CMD_FORGETOPAQUE_HELP     = "EMERGENCY: delete an OPAQUE record from a Bolt file (offline recovery)"
-	CMD_FORGETOPAQUE_USAGE    = "forget-opaque-record --bolt <path> <provider> <username>\nUse only when the live admin password is lost. hula MUST be stopped first\n(Bolt allows only one process to hold the file open). Caller is responsible\nfor copy-out / edit / copy-back; this binary does the edit step."
+	CMD_FORGETOPAQUE_USAGE    = "hulactl --bolt <path> forget-opaque-record <provider> <username>\nUse only when the live admin password is lost. hula MUST be stopped first\n(Bolt allows only one process to hold the file open). Caller is responsible\nfor copy-out / edit / copy-back; this binary does the edit step.\nNote: flags MUST come BEFORE the command name (Go flag-package convention)."
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
