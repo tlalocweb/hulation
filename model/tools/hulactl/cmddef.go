@@ -65,6 +65,11 @@ const (
 	CMD_TOTPKEY_HELP          = "Generate a TOTP encryption key for the config file"
 	CMD_TOTPSETUP             = "totp-setup"
 	CMD_TOTPSETUP_HELP        = "Set up TOTP for the admin user (interactive)"
+	CMD_SETPASSWORD           = "set-password"
+	CMD_SETPASSWORD_HELP      = "Set / rotate a password via OPAQUE PAKE registration. Defaults to admin."
+	CMD_SETPASSWORD_USAGE     = "set-password [--username admin] [--provider admin]\nPrompts for the new password (or reads HULACTL_NEW_PASSWORD).\nServer-side stores an OPAQUE registration record; the password\nitself is never sent over the wire."
+	CMD_OPAQUESEED            = "opaque-seed"
+	CMD_OPAQUESEED_HELP       = "Generate base64url OPAQUE OPRF seed + AKE secret for hula config"
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
@@ -110,6 +115,8 @@ func init() {
 		Command{CMD_RELOAD, CMD_RELOAD_HELP, ""},
 		Command{CMD_TOTPKEY, CMD_TOTPKEY_HELP, ""},
 		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
+		Command{CMD_SETPASSWORD, CMD_SETPASSWORD_HELP, CMD_SETPASSWORD_USAGE},
+		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},

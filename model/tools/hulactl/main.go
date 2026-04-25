@@ -29,6 +29,7 @@ import (
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
+	hulaopaque "github.com/tlalocweb/hulation/pkg/auth/opaque"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
 
@@ -169,6 +170,12 @@ type HulactlConfig struct {
 	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
 	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`
 	AuthPassword       string                  `flag:"password" usage:"password for non-interactive auth (prefer HULACTL_PASSWORD env var)" env:"HULACTL_PASSWORD"`
+	// set-password — non-interactive new-password input (env preferred over flag).
+	NewPassword        string                  `flag:"newpassword" usage:"new password for set-password (prefer HULACTL_NEW_PASSWORD env var)" env:"HULACTL_NEW_PASSWORD"`
+	SetPasswordUser    string                  `flag:"username" usage:"username to set the password for (default: admin)" default:"admin"`
+	SetPasswordProvider string                 `flag:"provider" usage:"auth provider (default: admin)" default:"admin"`
+	// auth — opt out of OPAQUE; force the legacy /api/auth/login flow.
+	NoOpaque           bool                    `flag:"no-opaque" usage:"disable OPAQUE on auth; use legacy plaintext flow only"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -568,11 +575,50 @@ func main() {
 			}
 		}
 
-		authResp, token, err := hulaclient.Auth(identity, password)
-		if err != nil {
-			fmt.Printf("Error: %s\n", err.Error())
-			os.Exit(1)
+		// Prefer OPAQUE PAKE. Falls through to legacy when the
+		// server reports legacy_available (admin migration window)
+		// or when --no-opaque is set.
+		var (
+			authResp *client.ClientResponse
+			token    string
+		)
+		opaqueDone := false
+		if !hulactlconfig.NoOpaque {
+			res, oerr := hulaclient.OpaqueLogin("admin", identity, password)
+			if oerr == nil && res != nil {
+				if res.LegacyAvailable {
+					if hulactlconfig.DebugMode {
+						fmt.Printf("server reports legacy_available — falling back to legacy login\n")
+					}
+				} else {
+					token = res.JWT
+					authResp = client.NewResponse()
+					authResp.Finish(200, "", client.AuthResponse{
+						Token:        res.JWT,
+						TotpRequired: res.TotpRequired,
+					})
+					opaqueDone = true
+				}
+			} else if oerr != nil {
+				// On any OPAQUE-protocol error other than "legacy
+				// available" we still want to surface the message
+				// (could be wrong password). Treat it as auth
+				// failure unless --no-opaque was explicitly set.
+				if hulactlconfig.DebugMode {
+					fmt.Printf("OPAQUE login error: %s — falling back to legacy\n", oerr.Error())
+				}
+				// Fall through to legacy below.
+			}
 		}
+		if !opaqueDone {
+			var lerr error
+			authResp, token, lerr = hulaclient.Auth(identity, password)
+			if lerr != nil {
+				fmt.Printf("Error: %s\n", lerr.Error())
+				os.Exit(1)
+			}
+		}
+		err = nil
 
 		// Check if TOTP is required
 		if authResp != nil && authResp.Response != nil {
@@ -1127,6 +1173,76 @@ func main() {
 		}
 		fmt.Printf("TOTP encryption key: %s\n", key)
 		fmt.Printf("\nAdd to your hulation config:\n  totp_encryption_key: \"%s\"\n", key)
+
+	case CMD_OPAQUESEED:
+		// Generate fresh OPAQUE OPRF seed + AKE secret, both
+		// base64url-encoded. Operator pastes into config or env.
+		seed := hulaopaque.GenerateSeedB64()
+		akeSecret, err := hulaopaque.GenerateAKESecretB64()
+		if err != nil {
+			fmt.Printf("Error generating AKE secret: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("OPAQUE OPRF seed:  %s\n", seed)
+		fmt.Printf("OPAQUE AKE secret: %s\n", akeSecret)
+		fmt.Printf("\nAdd to your hulation config (or set env):\n")
+		fmt.Printf("  opaque:\n")
+		fmt.Printf("    oprf_seed: \"%s\"\n", seed)
+		fmt.Printf("    ake_secret: \"%s\"\n", akeSecret)
+		fmt.Printf("\nOR via env vars:\n")
+		fmt.Printf("  HULA_OPAQUE_OPRF_SEED=\"%s\"\n", seed)
+		fmt.Printf("  HULA_OPAQUE_AKE_SECRET=\"%s\"\n", akeSecret)
+		fmt.Printf("\nIMPORTANT: changing these invalidates every existing OPAQUE record.\n")
+
+	case CMD_SETPASSWORD:
+		// Drive the OPAQUE registration round-trip against the
+		// currently-authed server. Defaults to admin.
+		username := hulactlconfig.SetPasswordUser
+		if username == "" {
+			username = "admin"
+		}
+		provider := hulactlconfig.SetPasswordProvider
+		if provider == "" {
+			provider = "admin"
+		}
+
+		var newPass string
+		if hulactlconfig.NewPassword != "" {
+			newPass = hulactlconfig.NewPassword
+		} else {
+			l, err := readline.NewEx(&readline.Config{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			pw1, err := l.ReadPassword(fmt.Sprintf("New password for %s/%s: ", provider, username))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+				os.Exit(1)
+			}
+			pw2, err := l.ReadPassword("Confirm password: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+				os.Exit(1)
+			}
+			if string(pw1) != string(pw2) {
+				fmt.Printf("Passwords don't match.\n")
+				os.Exit(1)
+			}
+			if len(pw1) < 8 {
+				fmt.Printf("Password too short (min 8 chars).\n")
+				os.Exit(1)
+			}
+			newPass = string(pw1)
+		}
+
+		c := GetHulactlClient(hulactlconfig)
+		if err := c.OpaqueRegister(provider, username, newPass); err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Password for %s/%s set via OPAQUE.\n", provider, username)
+		fmt.Printf("The password itself was never sent to the server.\n")
 
 	case CMD_TOTPSETUP:
 		client := GetHulactlClient(hulactlconfig)
