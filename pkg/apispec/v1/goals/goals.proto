@@ -17,7 +17,7 @@ package hulation.v1.goals;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/goals;goalsspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service GoalsService {
@@ -26,7 +26,7 @@ service GoalsService {
       post: "/api/v1/goals/{server_id}"
       body: "goal"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc UpdateGoal(UpdateGoalRequest) returns (Goal) {
@@ -34,28 +34,28 @@ service GoalsService {
       patch: "/api/v1/goals/{server_id}/{goal_id}"
       body: "goal"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc DeleteGoal(DeleteGoalRequest) returns (DeleteGoalResponse) {
     option (google.api.http) = {
       delete: "/api/v1/goals/{server_id}/{goal_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc ListGoals(ListGoalsRequest) returns (ListGoalsResponse) {
     option (google.api.http) = {
       get: "/api/v1/goals/{server_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc GetGoal(GetGoalRequest) returns (Goal) {
     option (google.api.http) = {
       get: "/api/v1/goals/{server_id}/{goal_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // ListConversions returns the time-series + breakdown for a single
@@ -65,7 +65,7 @@ service GoalsService {
     option (google.api.http) = {
       get: "/api/v1/goals/{server_id}/{goal_id}/conversions"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // TestGoal dry-runs a goal rule against the last N days of events
@@ -76,7 +76,7 @@ service GoalsService {
       post: "/api/v1/goals/{server_id}/test"
       body: "goal"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 }
 

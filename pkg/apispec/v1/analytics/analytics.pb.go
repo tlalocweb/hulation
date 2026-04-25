@@ -14,7 +14,7 @@
 package analyticsspec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -2093,7 +2093,7 @@ var File_pkg_apispec_v1_analytics_analytics_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\n" +
-	"(pkg/apispec/v1/analytics/analytics.proto\x12\x15hulation.v1.analytics\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\"\xea\x03\n" +
+	"(pkg/apispec/v1/analytics/analytics.proto\x12\x15hulation.v1.analytics\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\"\xea\x03\n" +
 	"\aFilters\x12\x1d\n" +
 	"\n" +
 	"server_ids\x18\x01 \x03(\tR\tserverIds\x12\x12\n" +

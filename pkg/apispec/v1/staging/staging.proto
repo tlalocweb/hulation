@@ -12,7 +12,7 @@ package hulation.v1.staging;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/staging;stagingspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "pkg/apispec/v1/site/site.proto";
 
 service StagingService {
@@ -22,7 +22,7 @@ service StagingService {
       post: "/api/v1/staging/{server_id}/build"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.staging.build"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.staging.build"] };
   }
 }
 

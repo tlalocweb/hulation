@@ -155,7 +155,7 @@ docker-local:
 # Folders containing .proto files whose generated code is checked into the repo.
 # Note: $(PROTOBUF_SRCS) is computed at Make time using shell find. New .proto
 # files are picked up automatically on the next invocation.
-PROTOBUF_FOLDERS = protoext/izuma/auth \
+PROTOBUF_FOLDERS = protoext/hula/auth \
                    pkg/server/authware/proto \
                    pkg/apiobjects/v1 \
                    pkg/apispec/v1
@@ -175,8 +175,8 @@ protobuf: $(PROTOBUF_OUTS)
 # Per-folder rules. Each folder has slightly different generation requirements
 # (gotag for tag injection, grpc for services, gateway for REST).
 
-# protoext/izuma/auth — annotation extension, Go only
-protoext/izuma/auth/%.pb.go: protoext/izuma/auth/%.proto | $(PROTOC)
+# protoext/hula/auth — annotation extension, Go only
+protoext/hula/auth/%.pb.go: protoext/hula/auth/%.proto | $(PROTOC)
 	@echo "protoc (extension): $<"
 	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
 		--go_out=. --go_opt=paths=source_relative \

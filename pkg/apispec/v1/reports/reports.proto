@@ -22,7 +22,7 @@ package hulation.v1.reports;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/reports;reportsspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service ReportsService {
@@ -31,7 +31,7 @@ service ReportsService {
       post: "/api/v1/reports/{server_id}"
       body: "report"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc UpdateReport(UpdateReportRequest) returns (ScheduledReport) {
@@ -39,28 +39,28 @@ service ReportsService {
       patch: "/api/v1/reports/{server_id}/{report_id}"
       body: "report"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc DeleteReport(DeleteReportRequest) returns (DeleteReportResponse) {
     option (google.api.http) = {
       delete: "/api/v1/reports/{server_id}/{report_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc ListReports(ListReportsRequest) returns (ListReportsResponse) {
     option (google.api.http) = {
       get: "/api/v1/reports/{server_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc GetReport(GetReportRequest) returns (ScheduledReport) {
     option (google.api.http) = {
       get: "/api/v1/reports/{server_id}/{report_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // Preview renders the report HTML against the current data window.
@@ -69,7 +69,7 @@ service ReportsService {
     option (google.api.http) = {
       post: "/api/v1/reports/{server_id}/{report_id}/preview"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // SendNow enqueues an immediate render+send via the dispatcher
@@ -79,7 +79,7 @@ service ReportsService {
     option (google.api.http) = {
       post: "/api/v1/reports/{server_id}/{report_id}/send-now"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   // ListRuns returns the most recent N ReportRun rows for a given
@@ -88,7 +88,7 @@ service ReportsService {
     option (google.api.http) = {
       get: "/api/v1/reports/{server_id}/{report_id}/runs"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 }
 

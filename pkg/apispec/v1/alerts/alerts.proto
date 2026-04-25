@@ -29,7 +29,7 @@ package hulation.v1.alerts;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts;alertsspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service AlertsService {
@@ -38,7 +38,7 @@ service AlertsService {
       post: "/api/v1/alerts/{server_id}"
       body: "alert"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc UpdateAlert(UpdateAlertRequest) returns (Alert) {
@@ -46,28 +46,28 @@ service AlertsService {
       patch: "/api/v1/alerts/{server_id}/{alert_id}"
       body: "alert"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc DeleteAlert(DeleteAlertRequest) returns (DeleteAlertResponse) {
     option (google.api.http) = {
       delete: "/api/v1/alerts/{server_id}/{alert_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 
   rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse) {
     option (google.api.http) = {
       get: "/api/v1/alerts/{server_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc GetAlert(GetAlertRequest) returns (Alert) {
     option (google.api.http) = {
       get: "/api/v1/alerts/{server_id}/{alert_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // ListAlertEvents returns the recent fire history for one alert.
@@ -75,7 +75,7 @@ service AlertsService {
     option (google.api.http) = {
       get: "/api/v1/alerts/{server_id}/{alert_id}/events"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 }
 

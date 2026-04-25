@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package izuma.auth;
+package hula.auth;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/tlalocweb/hulation/protoext/izuma/auth;izumaauth";
+option go_package = "github.com/tlalocweb/hulation/protoext/hula/auth;hulaauth";
 
 // Permission requirements for an RPC method
 message PermissionRequirement {

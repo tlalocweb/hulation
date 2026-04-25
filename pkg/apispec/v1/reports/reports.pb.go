@@ -24,7 +24,7 @@
 package reportsspec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -1189,7 +1189,7 @@ var File_pkg_apispec_v1_reports_reports_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_reports_reports_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/apispec/v1/reports/reports.proto\x12\x13hulation.v1.reports\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x03\n" +
+	"$pkg/apispec/v1/reports/reports.proto\x12\x13hulation.v1.reports\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x03\n" +
 	"\x0fScheduledReport\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x12\n" +

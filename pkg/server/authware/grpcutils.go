@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	loglib "github.com/tlalocweb/hulation/log"
-	izumaauth "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	hulaauth "github.com/tlalocweb/hulation/protoext/hula/auth"
 	authannotations "github.com/tlalocweb/hulation/pkg/server/authware/proto"
 	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/protobuf/proto"
@@ -329,12 +329,12 @@ func ShouldSkipTotpCheckForHTTP(httpMethod, httpPath string) bool {
 // getRequiredPermissions extracts permission requirements from a method's proto annotations
 func getRequiredPermissions(methodDesc protoreflect.MethodDescriptor) ([]string, bool, error) {
 	options := methodDesc.Options().(*descriptorpb.MethodOptions)
-	ext := proto.GetExtension(options, izumaauth.E_Permission)
+	ext := proto.GetExtension(options, hulaauth.E_Permission)
 	if ext == nil {
 		return nil, false, nil
 	}
 
-	permReq, ok := ext.(*izumaauth.PermissionRequirement)
+	permReq, ok := ext.(*hulaauth.PermissionRequirement)
 	if !ok || permReq == nil {
 		return nil, false, fmt.Errorf("invalid permission extension type")
 	}

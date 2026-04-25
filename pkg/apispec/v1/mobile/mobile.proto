@@ -15,7 +15,7 @@ package hulation.v1.mobile;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile;mobilespec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service MobileService {
@@ -51,7 +51,7 @@ service MobileService {
     option (google.api.http) = {
       get: "/api/mobile/v1/summary"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // MobileTimeseries — bucketised to 12 (hourly) or 24 (daily) points
@@ -61,7 +61,7 @@ service MobileService {
     option (google.api.http) = {
       get: "/api/mobile/v1/timeseries"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 }
 

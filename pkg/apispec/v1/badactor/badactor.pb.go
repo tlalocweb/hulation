@@ -9,7 +9,7 @@
 package badactorspec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -1126,7 +1126,7 @@ var File_pkg_apispec_v1_badactor_badactor_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_badactor_badactor_proto_rawDesc = "" +
 	"\n" +
-	"&pkg/apispec/v1/badactor/badactor.proto\x12\x14hulation.v1.badactor\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc5\x02\n" +
+	"&pkg/apispec/v1/badactor/badactor.proto\x12\x14hulation.v1.badactor\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc5\x02\n" +
 	"\bBadActor\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12!\n" +

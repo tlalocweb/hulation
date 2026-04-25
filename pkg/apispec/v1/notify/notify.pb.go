@@ -17,7 +17,7 @@
 package notifyspec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -478,7 +478,7 @@ var File_pkg_apispec_v1_notify_notify_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_notify_notify_proto_rawDesc = "" +
 	"\n" +
-	"\"pkg/apispec/v1/notify/notify.proto\x12\x12hulation.v1.notify\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9f\x02\n" +
+	"\"pkg/apispec/v1/notify/notify.proto\x12\x12hulation.v1.notify\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9f\x02\n" +
 	"\x11NotificationPrefs\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12#\n" +
 	"\remail_enabled\x18\x02 \x01(\bR\femailEnabled\x12!\n" +

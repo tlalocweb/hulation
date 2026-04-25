@@ -7,7 +7,7 @@ package hulation.v1.site;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/site;sitespec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service SiteService {
@@ -16,17 +16,17 @@ service SiteService {
       post: "/api/v1/site/{server_id}/build"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.build.trigger"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.trigger"] };
   }
 
   rpc GetBuildStatus(GetBuildStatusRequest) returns (GetBuildStatusResponse) {
     option (google.api.http) = { get: "/api/v1/site/builds/{build_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.build.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.read"] };
   }
 
   rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse) {
     option (google.api.http) = { get: "/api/v1/site/{server_id}/builds" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.build.list"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.list"] };
   }
 }
 

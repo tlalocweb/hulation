@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.6
 // 	protoc        v6.31.0
-// source: protoext/izuma/auth/permission.proto
+// source: protoext/hula/auth/permission.proto
 
-package izumaauth
+package hulaauth
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -46,7 +46,7 @@ type PermissionRequirement struct {
 
 func (x *PermissionRequirement) Reset() {
 	*x = PermissionRequirement{}
-	mi := &file_protoext_izuma_auth_permission_proto_msgTypes[0]
+	mi := &file_protoext_hula_auth_permission_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -58,7 +58,7 @@ func (x *PermissionRequirement) String() string {
 func (*PermissionRequirement) ProtoMessage() {}
 
 func (x *PermissionRequirement) ProtoReflect() protoreflect.Message {
-	mi := &file_protoext_izuma_auth_permission_proto_msgTypes[0]
+	mi := &file_protoext_hula_auth_permission_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -71,7 +71,7 @@ func (x *PermissionRequirement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionRequirement.ProtoReflect.Descriptor instead.
 func (*PermissionRequirement) Descriptor() ([]byte, []int) {
-	return file_protoext_izuma_auth_permission_proto_rawDescGZIP(), []int{0}
+	return file_protoext_hula_auth_permission_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *PermissionRequirement) GetNeeds() []string {
@@ -95,14 +95,14 @@ func (x *PermissionRequirement) GetOr() []*PermissionRequirement {
 	return nil
 }
 
-var file_protoext_izuma_auth_permission_proto_extTypes = []protoimpl.ExtensionInfo{
+var file_protoext_hula_auth_permission_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
 		ExtensionType: (*PermissionRequirement)(nil),
 		Field:         50010,
-		Name:          "izuma.auth.permission",
+		Name:          "hula.auth.permission",
 		Tag:           "bytes,50010,opt,name=permission",
-		Filename:      "protoext/izuma/auth/permission.proto",
+		Filename:      "protoext/hula/auth/permission.proto",
 	},
 }
 
@@ -111,46 +111,45 @@ var (
 	// Permission requirements for this RPC method
 	// If not specified, the endpoint requires authentication but no specific permission
 	//
-	// optional izuma.auth.PermissionRequirement permission = 50010;
-	E_Permission = &file_protoext_izuma_auth_permission_proto_extTypes[0]
+	// optional hula.auth.PermissionRequirement permission = 50010;
+	E_Permission = &file_protoext_hula_auth_permission_proto_extTypes[0]
 )
 
-var File_protoext_izuma_auth_permission_proto protoreflect.FileDescriptor
+var File_protoext_hula_auth_permission_proto protoreflect.FileDescriptor
 
-const file_protoext_izuma_auth_permission_proto_rawDesc = "" +
+const file_protoext_hula_auth_permission_proto_rawDesc = "" +
 	"\n" +
-	"$protoext/izuma/auth/permission.proto\x12\n" +
-	"izuma.auth\x1a google/protobuf/descriptor.proto\"\x81\x01\n" +
+	"#protoext/hula/auth/permission.proto\x12\thula.auth\x1a google/protobuf/descriptor.proto\"\x80\x01\n" +
 	"\x15PermissionRequirement\x12\x14\n" +
 	"\x05needs\x18\x01 \x03(\tR\x05needs\x12\x1f\n" +
 	"\vrequire_all\x18\x02 \x01(\bR\n" +
-	"requireAll\x121\n" +
-	"\x02or\x18\x03 \x03(\v2!.izuma.auth.PermissionRequirementR\x02or:c\n" +
+	"requireAll\x120\n" +
+	"\x02or\x18\x03 \x03(\v2 .hula.auth.PermissionRequirementR\x02or:b\n" +
 	"\n" +
-	"permission\x12\x1e.google.protobuf.MethodOptions\x18چ\x03 \x01(\v2!.izuma.auth.PermissionRequirementR\n" +
-	"permissionB=Z;github.com/tlalocweb/hulation/protoext/izuma/auth;izumaauthb\x06proto3"
+	"permission\x12\x1e.google.protobuf.MethodOptions\x18چ\x03 \x01(\v2 .hula.auth.PermissionRequirementR\n" +
+	"permissionB;Z9github.com/tlalocweb/hulation/protoext/hula/auth;hulaauthb\x06proto3"
 
 var (
-	file_protoext_izuma_auth_permission_proto_rawDescOnce sync.Once
-	file_protoext_izuma_auth_permission_proto_rawDescData []byte
+	file_protoext_hula_auth_permission_proto_rawDescOnce sync.Once
+	file_protoext_hula_auth_permission_proto_rawDescData []byte
 )
 
-func file_protoext_izuma_auth_permission_proto_rawDescGZIP() []byte {
-	file_protoext_izuma_auth_permission_proto_rawDescOnce.Do(func() {
-		file_protoext_izuma_auth_permission_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_protoext_izuma_auth_permission_proto_rawDesc), len(file_protoext_izuma_auth_permission_proto_rawDesc)))
+func file_protoext_hula_auth_permission_proto_rawDescGZIP() []byte {
+	file_protoext_hula_auth_permission_proto_rawDescOnce.Do(func() {
+		file_protoext_hula_auth_permission_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_protoext_hula_auth_permission_proto_rawDesc), len(file_protoext_hula_auth_permission_proto_rawDesc)))
 	})
-	return file_protoext_izuma_auth_permission_proto_rawDescData
+	return file_protoext_hula_auth_permission_proto_rawDescData
 }
 
-var file_protoext_izuma_auth_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
-var file_protoext_izuma_auth_permission_proto_goTypes = []any{
-	(*PermissionRequirement)(nil),      // 0: izuma.auth.PermissionRequirement
+var file_protoext_hula_auth_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_protoext_hula_auth_permission_proto_goTypes = []any{
+	(*PermissionRequirement)(nil),      // 0: hula.auth.PermissionRequirement
 	(*descriptorpb.MethodOptions)(nil), // 1: google.protobuf.MethodOptions
 }
-var file_protoext_izuma_auth_permission_proto_depIdxs = []int32{
-	0, // 0: izuma.auth.PermissionRequirement.or:type_name -> izuma.auth.PermissionRequirement
-	1, // 1: izuma.auth.permission:extendee -> google.protobuf.MethodOptions
-	0, // 2: izuma.auth.permission:type_name -> izuma.auth.PermissionRequirement
+var file_protoext_hula_auth_permission_proto_depIdxs = []int32{
+	0, // 0: hula.auth.PermissionRequirement.or:type_name -> hula.auth.PermissionRequirement
+	1, // 1: hula.auth.permission:extendee -> google.protobuf.MethodOptions
+	0, // 2: hula.auth.permission:type_name -> hula.auth.PermissionRequirement
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	2, // [2:3] is the sub-list for extension type_name
@@ -158,27 +157,27 @@ var file_protoext_izuma_auth_permission_proto_depIdxs = []int32{
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_protoext_izuma_auth_permission_proto_init() }
-func file_protoext_izuma_auth_permission_proto_init() {
-	if File_protoext_izuma_auth_permission_proto != nil {
+func init() { file_protoext_hula_auth_permission_proto_init() }
+func file_protoext_hula_auth_permission_proto_init() {
+	if File_protoext_hula_auth_permission_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protoext_izuma_auth_permission_proto_rawDesc), len(file_protoext_izuma_auth_permission_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protoext_hula_auth_permission_proto_rawDesc), len(file_protoext_hula_auth_permission_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   1,
 			NumExtensions: 1,
 			NumServices:   0,
 		},
-		GoTypes:           file_protoext_izuma_auth_permission_proto_goTypes,
-		DependencyIndexes: file_protoext_izuma_auth_permission_proto_depIdxs,
-		MessageInfos:      file_protoext_izuma_auth_permission_proto_msgTypes,
-		ExtensionInfos:    file_protoext_izuma_auth_permission_proto_extTypes,
+		GoTypes:           file_protoext_hula_auth_permission_proto_goTypes,
+		DependencyIndexes: file_protoext_hula_auth_permission_proto_depIdxs,
+		MessageInfos:      file_protoext_hula_auth_permission_proto_msgTypes,
+		ExtensionInfos:    file_protoext_hula_auth_permission_proto_extTypes,
 	}.Build()
-	File_protoext_izuma_auth_permission_proto = out.File
-	file_protoext_izuma_auth_permission_proto_goTypes = nil
-	file_protoext_izuma_auth_permission_proto_depIdxs = nil
+	File_protoext_hula_auth_permission_proto = out.File
+	file_protoext_hula_auth_permission_proto_goTypes = nil
+	file_protoext_hula_auth_permission_proto_depIdxs = nil
 }

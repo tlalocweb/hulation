@@ -15,7 +15,7 @@ package hulation.v1.notify;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/notify;notifyspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service NotifyService {
@@ -41,7 +41,7 @@ service NotifyService {
     option (google.api.http) = {
       get: "/api/v1/notify/prefs"
     };
-    option (izuma.auth.permission) = { needs: ["superadmin.user.list"] };
+    option (hula.auth.permission) = { needs: ["superadmin.user.list"] };
   }
 
   // TestNotification fires a synthetic envelope to every channel
@@ -52,7 +52,7 @@ service NotifyService {
       post: "/api/v1/notify/test/{user_id}"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+    option (hula.auth.permission) = { needs: ["superadmin.user.modify"] };
   }
 }
 

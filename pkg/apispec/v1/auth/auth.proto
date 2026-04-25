@@ -4,7 +4,7 @@ package hulation.v1.auth;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/auth;authspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "pkg/server/authware/proto/annotations.proto";
 import "pkg/apiobjects/v1/user.proto";
 import "pkg/apiobjects/v1/rbac.proto";
@@ -55,7 +55,7 @@ service AuthService {
             post: "/api/v1/auth/users/list"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.list"]
         };
     }
@@ -66,7 +66,7 @@ service AuthService {
             post: "/api/v1/auth/{tenant_uuid}/users/list"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.list"]
         };
     }
@@ -77,7 +77,7 @@ service AuthService {
             post: "/api/v1/auth/users"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.create"]
         };
     }
@@ -89,7 +89,7 @@ service AuthService {
             post: "/api/v1/auth/{tenant_uuid}/users"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.create"]
         };
     }
@@ -100,7 +100,7 @@ service AuthService {
             patch: "/api/v1/auth/user"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.modify"]
         };
     }
@@ -111,7 +111,7 @@ service AuthService {
             patch: "/api/v1/auth/{tenant_uuid}/users/{user_id}"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.modify"]
         };
     }
@@ -122,7 +122,7 @@ service AuthService {
             post: "/api/v1/auth/user/delete"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.delete"]
         };
     }
@@ -134,7 +134,7 @@ service AuthService {
         option (google.api.http) = {
             delete: "/api/v1/auth/{tenant_uuid}/users/{user_id}"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.delete"]
         };
     }
@@ -144,7 +144,7 @@ service AuthService {
         option (google.api.http) = {
             get: "/api/v1/users/{user_id}"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.read"]
         };
     }
@@ -154,7 +154,7 @@ service AuthService {
         option (google.api.http) = {
             get: "/api/v1/users/search"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.list"]
         };
     }
@@ -165,7 +165,7 @@ service AuthService {
             put: "/api/v1/users/{user_id}/password"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.modify"]
         };
     }
@@ -176,7 +176,7 @@ service AuthService {
             put: "/api/v1/users/{user_id}/sysadmin"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.modify"]
         };
     }
@@ -234,7 +234,7 @@ service AuthService {
             post: "/api/v1/auth/invite"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.create"]
         };
     }
@@ -244,7 +244,7 @@ service AuthService {
             post: "/api/v1/auth/{tenant_uuid}/invite"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.create"]
         };
     }
@@ -256,7 +256,7 @@ service AuthService {
             post: "/api/v1/auth/invite/resend"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.create"]
         };
     }
@@ -266,7 +266,7 @@ service AuthService {
             post: "/api/v1/auth/{tenant_uuid}/invite/resend"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["tenant.{tenant_uuid}.user.create"]
         };
     }
@@ -278,7 +278,7 @@ service AuthService {
             post: "/api/v1/auth/admin/validate-email"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.modify"]
         };
     }
@@ -342,7 +342,7 @@ service AuthService {
             post: "/api/v1/admin/permissions/check"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             or: [
                 { needs: ["superadmin.permissions.check"] },
                 { needs: ["tenant.{tenant_uuid}.permissions.check"] }
@@ -357,7 +357,7 @@ service AuthService {
         option (google.api.http) = {
             get: "/api/v1/admin/users/{user_identifier}/permissions"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             or: [
                 { needs: ["superadmin.permissions.read"] },
                 { needs: ["tenant.{tenant_uuid}.permissions.read"] }
@@ -413,7 +413,7 @@ service AuthService {
             post: "/api/v1/auth/totp/admin/reset"
             body: "*"
         };
-        option (izuma.auth.permission) = {
+        option (hula.auth.permission) = {
             needs: ["superadmin.user.modify"]
         };
     }
@@ -441,7 +441,7 @@ service AuthService {
             post: "/api/v1/auth/access"
             body: "*"
         };
-        option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+        option (hula.auth.permission) = { needs: ["superadmin.user.modify"] };
     }
 
     // RevokeServerAccess removes a user's access to one virtual server.
@@ -449,14 +449,14 @@ service AuthService {
         option (google.api.http) = {
             delete: "/api/v1/auth/access/{user_id}/{server_id}"
         };
-        option (izuma.auth.permission) = { needs: ["superadmin.user.modify"] };
+        option (hula.auth.permission) = { needs: ["superadmin.user.modify"] };
     }
 
     // ListServerAccess returns all (user, server, role) triples. Optional
     // filters narrow by user or server.
     rpc ListServerAccess(ListServerAccessRequest) returns (ListServerAccessResponse) {
         option (google.api.http) = { get: "/api/v1/auth/access" };
-        option (izuma.auth.permission) = { needs: ["superadmin.user.list"] };
+        option (hula.auth.permission) = { needs: ["superadmin.user.list"] };
     }
 }
 

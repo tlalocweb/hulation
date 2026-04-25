@@ -17,7 +17,7 @@
 package mobilespec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -685,7 +685,7 @@ var File_pkg_apispec_v1_mobile_mobile_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_mobile_mobile_proto_rawDesc = "" +
 	"\n" +
-	"\"pkg/apispec/v1/mobile/mobile.proto\x12\x12hulation.v1.mobile\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc7\x02\n" +
+	"\"pkg/apispec/v1/mobile/mobile.proto\x12\x12hulation.v1.mobile\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc7\x02\n" +
 	"\x06Device\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x128\n" +

@@ -12,62 +12,62 @@ package hulation.v1.analytics;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics;analyticsspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 
 service AnalyticsService {
   rpc Summary(SummaryRequest) returns (SummaryResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/summary" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Timeseries(TimeseriesRequest) returns (TimeseriesResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/timeseries" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Pages(PagesRequest) returns (PagesResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/pages" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Sources(SourcesRequest) returns (SourcesResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/sources" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Geography(GeographyRequest) returns (GeographyResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/geography" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Devices(DevicesRequest) returns (DevicesResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/devices" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Events(EventsRequest) returns (EventsResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/events" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc FormsReport(FormsReportRequest) returns (FormsReportResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/forms" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Visitors(VisitorsRequest) returns (VisitorsResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/visitors" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Visitor(VisitorRequest) returns (VisitorResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/visitor/{visitor_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   rpc Realtime(RealtimeRequest) returns (RealtimeResponse) {
     option (google.api.http) = { get: "/api/v1/analytics/realtime" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
 
   // ForgetVisitor permanently deletes a visitor from events_v1 +
@@ -77,7 +77,7 @@ service AnalyticsService {
       post: "/api/v1/analytics/visitor/{visitor_id}/forget"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.admin"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
   }
 }
 

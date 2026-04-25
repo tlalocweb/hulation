@@ -19,7 +19,7 @@
 package goalsspec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -1058,7 +1058,7 @@ var File_pkg_apispec_v1_goals_goals_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_goals_goals_proto_rawDesc = "" +
 	"\n" +
-	" pkg/apispec/v1/goals/goals.proto\x12\x11hulation.v1.goals\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc0\x03\n" +
+	" pkg/apispec/v1/goals/goals.proto\x12\x11hulation.v1.goals\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc0\x03\n" +
 	"\x04Goal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x12\n" +

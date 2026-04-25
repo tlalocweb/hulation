@@ -7,13 +7,13 @@ package hulation.v1.badactor;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor;badactorspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service BadActorService {
   rpc ListBadActors(ListBadActorsRequest) returns (ListBadActorsResponse) {
     option (google.api.http) = { get: "/api/v1/badactors" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc ManualBlock(ManualBlockRequest) returns (ManualBlockResponse) {
@@ -21,19 +21,19 @@ service BadActorService {
       post: "/api/v1/badactors/block"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc EvictBadActor(EvictBadActorRequest) returns (EvictBadActorResponse) {
     option (google.api.http) = {
       delete: "/api/v1/badactors/block/{ip}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc ListAllowlist(ListAllowlistRequest) returns (ListAllowlistResponse) {
     option (google.api.http) = { get: "/api/v1/badactors/allowlist" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc AddToAllowlist(AddToAllowlistRequest) returns (AddToAllowlistResponse) {
@@ -41,24 +41,24 @@ service BadActorService {
       post: "/api/v1/badactors/allowlist"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc RemoveFromAllowlist(RemoveFromAllowlistRequest) returns (RemoveFromAllowlistResponse) {
     option (google.api.http) = {
       delete: "/api/v1/badactors/allowlist/{ip}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc BadActorStats(BadActorStatsRequest) returns (BadActorStatsResponse) {
     option (google.api.http) = { get: "/api/v1/badactors/stats" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.badactor.manage"] };
   }
 
   rpc ListSignatures(ListSignaturesRequest) returns (ListSignaturesResponse) {
     option (google.api.http) = { get: "/api/v1/badactors/signatures" };
-    option (izuma.auth.permission) = { needs: ["superadmin.badactor.read"] };
+    option (hula.auth.permission) = { needs: ["superadmin.badactor.read"] };
   }
 }
 

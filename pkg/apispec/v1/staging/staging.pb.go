@@ -15,7 +15,7 @@ package stagingspec
 
 import (
 	site "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -132,7 +132,7 @@ var File_pkg_apispec_v1_staging_staging_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_staging_staging_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/apispec/v1/staging/staging.proto\x12\x13hulation.v1.staging\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1epkg/apispec/v1/site/site.proto\"H\n" +
+	"$pkg/apispec/v1/staging/staging.proto\x12\x13hulation.v1.staging\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1epkg/apispec/v1/site/site.proto\"H\n" +
 	"\x13StagingBuildRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x14\n" +
 	"\x05force\x18\x02 \x01(\bR\x05force\"I\n" +

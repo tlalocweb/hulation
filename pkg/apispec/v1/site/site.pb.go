@@ -9,7 +9,7 @@
 package sitespec
 
 import (
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -453,7 +453,7 @@ var File_pkg_apispec_v1_site_site_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_site_site_proto_rawDesc = "" +
 	"\n" +
-	"\x1epkg/apispec/v1/site/site.proto\x12\x10hulation.v1.site\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfc\x02\n" +
+	"\x1epkg/apispec/v1/site/site.proto\x12\x10hulation.v1.site\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfc\x02\n" +
 	"\tBuildInfo\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x16\n" +

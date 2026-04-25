@@ -12,7 +12,7 @@ package hulation.v1.forms;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/forms;formsspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service FormsService {
@@ -21,7 +21,7 @@ service FormsService {
       post: "/api/v1/forms/{server_id}"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.create"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.create"] };
   }
 
   rpc ModifyForm(ModifyFormRequest) returns (ModifyFormResponse) {
@@ -29,24 +29,24 @@ service FormsService {
       patch: "/api/v1/forms/{server_id}/{form_id}"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.modify"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.modify"] };
   }
 
   rpc DeleteForm(DeleteFormRequest) returns (DeleteFormResponse) {
     option (google.api.http) = {
       delete: "/api/v1/forms/{server_id}/{form_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.delete"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.delete"] };
   }
 
   rpc ListForms(ListFormsRequest) returns (ListFormsResponse) {
     option (google.api.http) = { get: "/api/v1/forms/{server_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.list"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.list"] };
   }
 
   rpc GetForm(GetFormRequest) returns (GetFormResponse) {
     option (google.api.http) = { get: "/api/v1/forms/{server_id}/{form_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.forms.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.read"] };
   }
 }
 

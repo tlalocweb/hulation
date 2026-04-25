@@ -7,7 +7,7 @@ package hulation.v1.landers;
 option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/landers;landersspec";
 
 import "google/api/annotations.proto";
-import "izuma/auth/permission.proto";
+import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service LandersService {
@@ -16,7 +16,7 @@ service LandersService {
       post: "/api/v1/landers/{server_id}"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.landers.create"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.create"] };
   }
 
   rpc ModifyLander(ModifyLanderRequest) returns (ModifyLanderResponse) {
@@ -24,24 +24,24 @@ service LandersService {
       patch: "/api/v1/landers/{server_id}/{lander_id}"
       body: "*"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.landers.modify"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.modify"] };
   }
 
   rpc DeleteLander(DeleteLanderRequest) returns (DeleteLanderResponse) {
     option (google.api.http) = {
       delete: "/api/v1/landers/{server_id}/{lander_id}"
     };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.landers.delete"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.delete"] };
   }
 
   rpc ListLanders(ListLandersRequest) returns (ListLandersResponse) {
     option (google.api.http) = { get: "/api/v1/landers/{server_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.landers.list"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.list"] };
   }
 
   rpc GetLander(GetLanderRequest) returns (GetLanderResponse) {
     option (google.api.http) = { get: "/api/v1/landers/{server_id}/{lander_id}" };
-    option (izuma.auth.permission) = { needs: ["server.{server_id}.landers.read"] };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.read"] };
   }
 }
 

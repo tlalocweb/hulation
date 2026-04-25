@@ -9,7 +9,7 @@ package authspec
 import (
 	v1 "github.com/tlalocweb/hulation/pkg/apiobjects/v1"
 	_ "github.com/tlalocweb/hulation/pkg/server/authware/proto"
-	_ "github.com/tlalocweb/hulation/protoext/izuma/auth"
+	_ "github.com/tlalocweb/hulation/protoext/hula/auth"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -4858,7 +4858,7 @@ var File_pkg_apispec_v1_auth_auth_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_auth_auth_proto_rawDesc = "" +
 	"\n" +
-	"\x1epkg/apispec/v1/auth/auth.proto\x12\x10hulation.v1.auth\x1a\x1cgoogle/api/annotations.proto\x1a\x1bizuma/auth/permission.proto\x1a+pkg/server/authware/proto/annotations.proto\x1a\x1cpkg/apiobjects/v1/user.proto\x1a\x1cpkg/apiobjects/v1/rbac.proto\x1a\x1epkg/apiobjects/v1/tenant.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfa\x01\n" +
+	"\x1epkg/apispec/v1/auth/auth.proto\x12\x10hulation.v1.auth\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a+pkg/server/authware/proto/annotations.proto\x1a\x1cpkg/apiobjects/v1/user.proto\x1a\x1cpkg/apiobjects/v1/rbac.proto\x1a\x1epkg/apiobjects/v1/tenant.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfa\x01\n" +
 	"\x11ServerAccessEntry\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1d\n" +
 	"\n" +
