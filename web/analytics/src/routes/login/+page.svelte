@@ -2,6 +2,12 @@
   import { onMount } from 'svelte';
   import { login, setToken, type AuthProviderInfo } from '$lib/api/auth';
   import { ApiError } from '$lib/api/analytics';
+  import {
+    loginAdmin as opaqueLoginAdmin,
+    LegacyAvailableError,
+    OpaqueAuthError,
+    prewarmOpaque,
+  } from '$lib/api/opaque';
   import ErrorCard from '$lib/components/ErrorCard.svelte';
 
   // Static-SPA page. Path under the analytics base is /analytics/login,
@@ -16,8 +22,23 @@
   let password = '';
   let adminError: unknown = null;
   let adminSubmitting = false;
+  let opaqueState: 'warming' | 'ready' | 'failed' = 'warming';
 
   onMount(async () => {
+    // Lazy-fetch the OPAQUE WASM as soon as the form mounts.
+    // The dynamic import in opaque.ts keeps it out of every other
+    // page's bundle — only visitors who actually open /login pull
+    // the ~159 KB serenity-kit ESM.
+    prewarmOpaque();
+    // Mark ready as soon as the import settles. We don't block the
+    // form on it — the user typing their password is in parallel.
+    import('$lib/api/opaque').then((m) =>
+      m
+        .loadOpaque()
+        .then(() => (opaqueState = 'ready'))
+        .catch(() => (opaqueState = 'failed')),
+    );
+
     try {
       providers = await login.providers();
     } catch (e) {
@@ -36,11 +57,37 @@
     }
   }
 
+  // OPAQUE-first admin login with legacy fallback.
   async function doAdminLogin() {
     if (!username || !password) return;
     adminError = null;
     adminSubmitting = true;
     try {
+      // 1. Try OPAQUE.
+      try {
+        const r = await opaqueLoginAdmin(username, password);
+        setToken(r.jwt);
+        window.location.href = '/analytics/';
+        return;
+      } catch (e) {
+        if (e instanceof LegacyAvailableError) {
+          // Server has no OPAQUE record yet — fall through to legacy.
+        } else if (e instanceof OpaqueAuthError) {
+          // Real auth failure (wrong password or server-identity
+          // mismatch). Don't fall back; that would obscure the real
+          // failure mode.
+          adminError = e;
+          return;
+        } else if (opaqueState === 'failed') {
+          // OPAQUE WASM never loaded — quietly fall back to legacy.
+        } else {
+          // Network or unexpected error — surface and stop.
+          adminError = e;
+          return;
+        }
+      }
+
+      // 2. Legacy plaintext-over-TLS fallback (deprecation window).
       const r = await login.admin(username, password);
       if (r.error) throw new Error(r.error);
       if (!r.admintoken) throw new Error('login returned no token');
