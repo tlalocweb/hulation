@@ -1249,13 +1249,31 @@ func main() {
 		if currentPass != "" {
 			loginRes, lerr := c.OpaqueLogin(provider, username, currentPass)
 			if lerr != nil {
-				// Distinguish "no record yet" (operator typed a
-				// password but is actually bootstrapping) from
-				// wrong-current-password.
-				if strings.Contains(lerr.Error(), "HTTP 404") {
+				lmsg := lerr.Error()
+				switch {
+				case strings.Contains(lmsg, "HTTP 404"):
+					// No record on the server. The operator typed
+					// a current password but there's nothing to
+					// verify against — treat as bootstrap.
 					fmt.Printf("No OPAQUE record exists yet — proceeding with bootstrap (current-password ignored).\n")
-				} else {
-					fmt.Printf("Error: could not verify current password: %s\n", lerr.Error())
+				case strings.Contains(lmsg, "GenerateKE3") ||
+					strings.Contains(lmsg, "decrypted server public key") ||
+					strings.Contains(lmsg, "ristretto255: invalid element"):
+					// Wrong-password failure mode. All three of these
+					// strings come from bytemare/opaque's KE2-decrypt
+					// path when the password-derived envelope key
+					// produces garbage when applied to the server's
+					// record. The operator sees the same outcome
+					// either way: "your password is wrong".
+					fmt.Printf("Error: incorrect current password.\n")
+					if hulactlconfig.DebugMode {
+						fmt.Fprintf(os.Stderr, "  (bytemare diagnostic: %s)\n", lmsg)
+					}
+					os.Exit(1)
+				default:
+					// Any other failure (network, server 500, etc.)
+					// — surface verbatim so the operator can triage.
+					fmt.Printf("Error: could not verify current password: %s\n", lmsg)
 					os.Exit(1)
 				}
 			} else {
