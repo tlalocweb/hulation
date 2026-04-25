@@ -86,6 +86,14 @@ func (c *Client) GetToken() string {
 	return c.token
 }
 
+// SetToken installs a bearer token after construction. Used by
+// flows that authenticate mid-run (e.g. OPAQUE rotation: the
+// caller logs in to mint a fresh JWT, then attaches it to the
+// register-init/finish requests).
+func (c *Client) SetToken(token string) {
+	c.token = token
+}
+
 func (c *Client) GetHTTPClient() *http.Client {
 	return c.httpClient
 }

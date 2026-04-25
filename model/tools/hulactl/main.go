@@ -1164,8 +1164,10 @@ func main() {
 		fmt.Printf("\nIMPORTANT: changing these invalidates every existing OPAQUE record.\n")
 
 	case CMD_SETPASSWORD:
-		// Drive the OPAQUE registration round-trip against the
-		// currently-authed server. Defaults to admin.
+		// Always require fresh proof of the current password for
+		// rotation. We deliberately ignore any saved JWT in
+		// hulactl.yaml — a leaked or replayed JWT must NOT be enough
+		// to rotate the password.
 		username := hulactlconfig.SetPasswordUser
 		if username == "" {
 			username = "admin"
@@ -1175,47 +1177,102 @@ func main() {
 			provider = "admin"
 		}
 
+		// 1) Read the CURRENT password (or empty for first-time
+		//    bootstrap). Env preferred over interactive.
+		var currentPass string
+		if v := os.Getenv("HULACTL_CURRENT_PASSWORD"); v != "" {
+			currentPass = v
+		}
+
+		// 2) Read the NEW password (env preferred over interactive).
 		var newPass string
 		if hulactlconfig.NewPassword != "" {
 			newPass = hulactlconfig.NewPassword
-		} else {
+		}
+
+		// 3) If anything is still missing, prompt interactively.
+		if currentPass == "" || newPass == "" {
 			l, err := readline.NewEx(&readline.Config{})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
 				os.Exit(1)
 			}
-			pw1, err := l.ReadPassword(fmt.Sprintf("New password for %s/%s: ", provider, username))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
-				os.Exit(1)
+			if currentPass == "" {
+				cur, err := l.ReadPassword(fmt.Sprintf(
+					"Current password for %s/%s (leave blank ONLY for first-time bootstrap): ",
+					provider, username))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				currentPass = string(cur)
 			}
-			pw2, err := l.ReadPassword("Confirm password: ")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
-				os.Exit(1)
+			if newPass == "" {
+				pw1, err := l.ReadPassword(fmt.Sprintf("New password for %s/%s: ", provider, username))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				pw2, err := l.ReadPassword("Confirm new password: ")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				if string(pw1) != string(pw2) {
+					fmt.Printf("Passwords don't match.\n")
+					os.Exit(1)
+				}
+				if len(pw1) < 8 {
+					fmt.Printf("New password too short (min 8 chars).\n")
+					os.Exit(1)
+				}
+				newPass = string(pw1)
 			}
-			if string(pw1) != string(pw2) {
-				fmt.Printf("Passwords don't match.\n")
-				os.Exit(1)
-			}
-			if len(pw1) < 8 {
-				fmt.Printf("Password too short (min 8 chars).\n")
-				os.Exit(1)
-			}
-			newPass = string(pw1)
 		}
 
-		c := GetHulactlClient(hulactlconfig)
+		// 4) Build a FRESH client with no saved token. We must not
+		//    reuse a JWT from hulactl.yaml — rotation requires
+		//    just-now proof of the current password.
+		url, _, insecure, rerr := resolveServer(hulactlconfig)
+		if rerr != nil {
+			fmt.Printf("Error: %s\n", rerr)
+			os.Exit(1)
+		}
+		c := client.NewClient(url, "")
+		if insecure {
+			c.SetInsecure(true)
+		}
+
+		// 5) Rotation path: log in with the current password. The
+		//    server returns NotFound (404) when no record exists yet
+		//    — that's the bootstrap case; we proceed without auth.
+		if currentPass != "" {
+			loginRes, lerr := c.OpaqueLogin(provider, username, currentPass)
+			if lerr != nil {
+				// Distinguish "no record yet" (operator typed a
+				// password but is actually bootstrapping) from
+				// wrong-current-password.
+				if strings.Contains(lerr.Error(), "HTTP 404") {
+					fmt.Printf("No OPAQUE record exists yet — proceeding with bootstrap (current-password ignored).\n")
+				} else {
+					fmt.Printf("Error: could not verify current password: %s\n", lerr.Error())
+					os.Exit(1)
+				}
+			} else {
+				c.SetToken(loginRes.JWT)
+			}
+		}
+
+		// 6) Register the new password. Bearer is now either
+		//    a fresh JWT (rotation) or empty (bootstrap).
 		if err := c.OpaqueRegister(provider, username, newPass); err != nil {
 			msg := err.Error()
 			fmt.Printf("Error: %s\n", msg)
-			// Surface a clearer hint when this is the rotation
-			// auth-gate path (record already exists; needs admin JWT).
 			if strings.Contains(msg, "OPAQUE register requires admin authentication") {
 				fmt.Printf("\nThis user already has an OPAQUE record on the server,\n")
-				fmt.Printf("so rotation requires admin auth. Run this first:\n")
-				fmt.Printf("  hulactl auth %s    # log in with the CURRENT password\n", hulactlconfig.Host)
-				fmt.Printf("Then re-run set-password.\n")
+				fmt.Printf("so rotation requires the current password to verify.\n")
+				fmt.Printf("Re-run set-password and provide the current password when prompted\n")
+				fmt.Printf("(or set HULACTL_CURRENT_PASSWORD).\n")
 			}
 			os.Exit(1)
 		}
