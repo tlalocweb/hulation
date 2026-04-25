@@ -7,7 +7,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.2 --activate && pnpm install 
 COPY hulation/web/analytics/ ./
 RUN pnpm build
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 LABEL org.opencontainers.image.source=https://github.com/tlalocweb/hulation
 LABEL org.opencontainers.image.description="Hula - the modern web server for DM and CDP services"
 LABEL org.opencontainers.image.licenses=Apache-2.0
