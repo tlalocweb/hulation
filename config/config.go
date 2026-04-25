@@ -794,6 +794,10 @@ type Config struct {
 	// FCM — Firebase Cloud Messaging creds for Android push. Same
 	// optionality as APNS.
 	FCM *FCMConfig `yaml:"fcm,omitempty"`
+	// OPAQUE — PAKE configuration. Optional; when unset hula
+	// generates fresh seed + AKE keypair on first boot and logs
+	// them so the operator can pin them.
+	OPAQUE *OPAQUEConfig `yaml:"opaque,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.

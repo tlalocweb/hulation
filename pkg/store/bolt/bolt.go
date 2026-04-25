@@ -38,6 +38,7 @@ const (
 	BucketMobileDevices     = "mobile_devices"      // key = deviceID, value = StoredDevice
 	BucketNotificationSends = "notification_sends"  // key = sendID,   value = StoredNotificationSend
 	BucketNotificationPrefs = "notification_prefs"  // key = userID,   value = StoredNotificationPrefs
+	BucketOpaqueRecords     = "opaque_records"      // key = "provider|username", value = StoredOpaqueRecord
 )
 
 var (
@@ -84,6 +85,7 @@ func Open(path string) (*bolt.DB, error) {
 			BucketMobileDevices,
 			BucketNotificationSends,
 			BucketNotificationPrefs,
+			BucketOpaqueRecords,
 		} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(b)); e != nil {
 				return fmt.Errorf("bucket %s: %w", b, e)

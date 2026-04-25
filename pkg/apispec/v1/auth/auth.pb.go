@@ -4854,6 +4854,480 @@ func (x *TotpStatusResponse) GetRecoveryCodesRemaining() int32 {
 	return 0
 }
 
+type OpaqueRegisterInitRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// username — mailbox (admin) or username (internal user).
+	Username string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	// provider — "admin" | "internal".
+	Provider string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	// M1 — base64url(RegistrationRequest). Unpadded matches what
+	// serenity-kit emits natively.
+	M1B64         string `protobuf:"bytes,3,opt,name=m1_b64,json=m1B64,proto3" json:"m1_b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueRegisterInitRequest) Reset() {
+	*x = OpaqueRegisterInitRequest{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueRegisterInitRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueRegisterInitRequest) ProtoMessage() {}
+
+func (x *OpaqueRegisterInitRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueRegisterInitRequest.ProtoReflect.Descriptor instead.
+func (*OpaqueRegisterInitRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *OpaqueRegisterInitRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *OpaqueRegisterInitRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *OpaqueRegisterInitRequest) GetM1B64() string {
+	if x != nil {
+		return x.M1B64
+	}
+	return ""
+}
+
+type OpaqueRegisterInitResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// M2 — base64url(RegistrationResponse).
+	M2B64         string `protobuf:"bytes,1,opt,name=m2_b64,json=m2B64,proto3" json:"m2_b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueRegisterInitResponse) Reset() {
+	*x = OpaqueRegisterInitResponse{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueRegisterInitResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueRegisterInitResponse) ProtoMessage() {}
+
+func (x *OpaqueRegisterInitResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueRegisterInitResponse.ProtoReflect.Descriptor instead.
+func (*OpaqueRegisterInitResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *OpaqueRegisterInitResponse) GetM2B64() string {
+	if x != nil {
+		return x.M2B64
+	}
+	return ""
+}
+
+type OpaqueRegisterFinishRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Provider string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	// M3 — base64url(RegistrationRecord).
+	M3B64         string `protobuf:"bytes,3,opt,name=m3_b64,json=m3B64,proto3" json:"m3_b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueRegisterFinishRequest) Reset() {
+	*x = OpaqueRegisterFinishRequest{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[84]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueRegisterFinishRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueRegisterFinishRequest) ProtoMessage() {}
+
+func (x *OpaqueRegisterFinishRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[84]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueRegisterFinishRequest.ProtoReflect.Descriptor instead.
+func (*OpaqueRegisterFinishRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{84}
+}
+
+func (x *OpaqueRegisterFinishRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *OpaqueRegisterFinishRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *OpaqueRegisterFinishRequest) GetM3B64() string {
+	if x != nil {
+		return x.M3B64
+	}
+	return ""
+}
+
+type OpaqueRegisterFinishResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueRegisterFinishResponse) Reset() {
+	*x = OpaqueRegisterFinishResponse{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[85]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueRegisterFinishResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueRegisterFinishResponse) ProtoMessage() {}
+
+func (x *OpaqueRegisterFinishResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[85]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueRegisterFinishResponse.ProtoReflect.Descriptor instead.
+func (*OpaqueRegisterFinishResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{85}
+}
+
+func (x *OpaqueRegisterFinishResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *OpaqueRegisterFinishResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type OpaqueLoginInitRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Provider string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	// KE1 — base64url(KE1).
+	Ke1B64        string `protobuf:"bytes,3,opt,name=ke1_b64,json=ke1B64,proto3" json:"ke1_b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueLoginInitRequest) Reset() {
+	*x = OpaqueLoginInitRequest{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[86]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueLoginInitRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueLoginInitRequest) ProtoMessage() {}
+
+func (x *OpaqueLoginInitRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[86]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueLoginInitRequest.ProtoReflect.Descriptor instead.
+func (*OpaqueLoginInitRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{86}
+}
+
+func (x *OpaqueLoginInitRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *OpaqueLoginInitRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *OpaqueLoginInitRequest) GetKe1B64() string {
+	if x != nil {
+		return x.Ke1B64
+	}
+	return ""
+}
+
+type OpaqueLoginInitResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// KE2 — base64url(KE2). Empty when legacy_available=true.
+	Ke2B64 string `protobuf:"bytes,1,opt,name=ke2_b64,json=ke2B64,proto3" json:"ke2_b64,omitempty"`
+	// Session id the server caches the per-login state under.
+	// Returned to the client; client passes it back on Finish.
+	SessionId string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// legacy_available=true tells the client to fall back to
+	// LoginAdmin / LoginWithSecret. Set when the username has an
+	// argon2id hash but no OPAQUE record yet.
+	LegacyAvailable bool `protobuf:"varint,3,opt,name=legacy_available,json=legacyAvailable,proto3" json:"legacy_available,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *OpaqueLoginInitResponse) Reset() {
+	*x = OpaqueLoginInitResponse{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[87]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueLoginInitResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueLoginInitResponse) ProtoMessage() {}
+
+func (x *OpaqueLoginInitResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[87]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueLoginInitResponse.ProtoReflect.Descriptor instead.
+func (*OpaqueLoginInitResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{87}
+}
+
+func (x *OpaqueLoginInitResponse) GetKe2B64() string {
+	if x != nil {
+		return x.Ke2B64
+	}
+	return ""
+}
+
+func (x *OpaqueLoginInitResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *OpaqueLoginInitResponse) GetLegacyAvailable() bool {
+	if x != nil {
+		return x.LegacyAvailable
+	}
+	return false
+}
+
+type OpaqueLoginFinishRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// KE3 — base64url(KE3).
+	Ke3B64        string `protobuf:"bytes,2,opt,name=ke3_b64,json=ke3B64,proto3" json:"ke3_b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueLoginFinishRequest) Reset() {
+	*x = OpaqueLoginFinishRequest{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[88]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueLoginFinishRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueLoginFinishRequest) ProtoMessage() {}
+
+func (x *OpaqueLoginFinishRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[88]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueLoginFinishRequest.ProtoReflect.Descriptor instead.
+func (*OpaqueLoginFinishRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{88}
+}
+
+func (x *OpaqueLoginFinishRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *OpaqueLoginFinishRequest) GetKe3B64() string {
+	if x != nil {
+		return x.Ke3B64
+	}
+	return ""
+}
+
+type OpaqueLoginFinishResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// admintoken — populated for admin-provider logins (matches
+	// LoginAdminResponse).
+	Admintoken string `protobuf:"bytes,1,opt,name=admintoken,proto3" json:"admintoken,omitempty"`
+	// token — populated for internal-provider logins (matches
+	// LoginWithSecretResponse).
+	Token         string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	TotpRequired  bool   `protobuf:"varint,3,opt,name=totp_required,json=totpRequired,proto3" json:"totp_required,omitempty"`
+	Error         string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpaqueLoginFinishResponse) Reset() {
+	*x = OpaqueLoginFinishResponse{}
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[89]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpaqueLoginFinishResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpaqueLoginFinishResponse) ProtoMessage() {}
+
+func (x *OpaqueLoginFinishResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_auth_auth_proto_msgTypes[89]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpaqueLoginFinishResponse.ProtoReflect.Descriptor instead.
+func (*OpaqueLoginFinishResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP(), []int{89}
+}
+
+func (x *OpaqueLoginFinishResponse) GetAdmintoken() string {
+	if x != nil {
+		return x.Admintoken
+	}
+	return ""
+}
+
+func (x *OpaqueLoginFinishResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *OpaqueLoginFinishResponse) GetTotpRequired() bool {
+	if x != nil {
+		return x.TotpRequired
+	}
+	return false
+}
+
+func (x *OpaqueLoginFinishResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_pkg_apispec_v1_auth_auth_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_auth_auth_proto_rawDesc = "" +
@@ -5224,17 +5698,54 @@ const file_pkg_apispec_v1_auth_auth_proto_rawDesc = "" +
 	"\x17totp_required_by_tenant\x18\x05 \x01(\bR\x14totpRequiredByTenant\x12B\n" +
 	"\x0ftotp_enabled_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\rtotpEnabledAt\x128\n" +
 	"\x18recovery_codes_remaining\x18\a \x01(\x05R\x16recoveryCodesRemainingB\b\n" +
-	"\x06_error*u\n" +
+	"\x06_error\"j\n" +
+	"\x19OpaqueRegisterInitRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x15\n" +
+	"\x06m1_b64\x18\x03 \x01(\tR\x05m1B64\"3\n" +
+	"\x1aOpaqueRegisterInitResponse\x12\x15\n" +
+	"\x06m2_b64\x18\x01 \x01(\tR\x05m2B64\"l\n" +
+	"\x1bOpaqueRegisterFinishRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x15\n" +
+	"\x06m3_b64\x18\x03 \x01(\tR\x05m3B64\"D\n" +
+	"\x1cOpaqueRegisterFinishResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"i\n" +
+	"\x16OpaqueLoginInitRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x17\n" +
+	"\ake1_b64\x18\x03 \x01(\tR\x06ke1B64\"|\n" +
+	"\x17OpaqueLoginInitResponse\x12\x17\n" +
+	"\ake2_b64\x18\x01 \x01(\tR\x06ke2B64\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12)\n" +
+	"\x10legacy_available\x18\x03 \x01(\bR\x0flegacyAvailable\"R\n" +
+	"\x18OpaqueLoginFinishRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\ake3_b64\x18\x02 \x01(\tR\x06ke3B64\"\x8c\x01\n" +
+	"\x19OpaqueLoginFinishResponse\x12\x1e\n" +
+	"\n" +
+	"admintoken\x18\x01 \x01(\tR\n" +
+	"admintoken\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12#\n" +
+	"\rtotp_required\x18\x03 \x01(\bR\ftotpRequired\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error*u\n" +
 	"\x10ServerAccessRole\x12\"\n" +
 	"\x1eSERVER_ACCESS_ROLE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19SERVER_ACCESS_ROLE_VIEWER\x10\x01\x12\x1e\n" +
-	"\x1aSERVER_ACCESS_ROLE_MANAGER\x10\x022\xdc4\n" +
+	"\x1aSERVER_ACCESS_ROLE_MANAGER\x10\x022\xe49\n" +
 	"\vAuthService\x12z\n" +
 	"\n" +
 	"LoginAdmin\x12#.hulation.v1.auth.LoginAdminRequest\x1a$.hulation.v1.auth.LoginAdminResponse\"!\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02\x17:\x01*\"\x12/api/v1/auth/admin\x12\x8a\x01\n" +
 	"\x0fLoginWithSecret\x12(.hulation.v1.auth.LoginWithSecretRequest\x1a).hulation.v1.auth.LoginWithSecretResponse\"\"\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02\x18:\x01*\"\x13/api/v1/auth/secret\x12v\n" +
 	"\tLoginOIDC\x12\".hulation.v1.auth.LoginOIDCRequest\x1a#.hulation.v1.auth.LoginOIDCResponse\" \x88\xb5\x18\x01\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/api/v1/auth/oidc\x12\x82\x01\n" +
-	"\rLoginWithCode\x12&.hulation.v1.auth.LoginWithCodeRequest\x1a'.hulation.v1.auth.LoginWithCodeResponse\" \x88\xb5\x18\x01\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/api/v1/auth/code\x12\x92\x01\n" +
+	"\rLoginWithCode\x12&.hulation.v1.auth.LoginWithCodeRequest\x1a'.hulation.v1.auth.LoginWithCodeResponse\" \x88\xb5\x18\x01\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/api/v1/auth/code\x12\xa1\x01\n" +
+	"\x12OpaqueRegisterInit\x12+.hulation.v1.auth.OpaqueRegisterInitRequest\x1a,.hulation.v1.auth.OpaqueRegisterInitResponse\"0\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02&:\x01*\"!/api/v1/auth/opaque/register/init\x12\xa9\x01\n" +
+	"\x14OpaqueRegisterFinish\x12-.hulation.v1.auth.OpaqueRegisterFinishRequest\x1a..hulation.v1.auth.OpaqueRegisterFinishResponse\"2\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/auth/opaque/register/finish\x12\x95\x01\n" +
+	"\x0fOpaqueLoginInit\x12(.hulation.v1.auth.OpaqueLoginInitRequest\x1a).hulation.v1.auth.OpaqueLoginInitResponse\"-\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02#:\x01*\"\x1e/api/v1/auth/opaque/login/init\x12\x9d\x01\n" +
+	"\x11OpaqueLoginFinish\x12*.hulation.v1.auth.OpaqueLoginFinishRequest\x1a+.hulation.v1.auth.OpaqueLoginFinishResponse\"/\x88\xb5\x18\x01\x82\xd3\xe4\x93\x02%:\x01*\" /api/v1/auth/opaque/login/finish\x12\x92\x01\n" +
 	"\tListUsers\x12\".hulation.v1.auth.ListUsersRequest\x1a#.hulation.v1.auth.ListUsersResponse\"<ҵ\x18\x16\n" +
 	"\x14superadmin.user.list\x82\xd3\xe4\x93\x02\x1c:\x01*\"\x17/api/v1/auth/users/list\x12\xba\x01\n" +
 	"\x11ListUsersAsTenant\x12*.hulation.v1.auth.ListUsersAsTenantRequest\x1a#.hulation.v1.auth.ListUsersResponse\"Tҵ\x18 \n" +
@@ -5315,7 +5826,7 @@ func file_pkg_apispec_v1_auth_auth_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_apispec_v1_auth_auth_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pkg_apispec_v1_auth_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 82)
+var file_pkg_apispec_v1_auth_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 90)
 var file_pkg_apispec_v1_auth_auth_proto_goTypes = []any{
 	(ServerAccessRole)(0),                      // 0: hulation.v1.auth.ServerAccessRole
 	(*ServerAccessEntry)(nil),                  // 1: hulation.v1.auth.ServerAccessEntry
@@ -5400,125 +5911,141 @@ var file_pkg_apispec_v1_auth_auth_proto_goTypes = []any{
 	(*TotpAdminResetResponse)(nil),             // 80: hulation.v1.auth.TotpAdminResetResponse
 	(*TotpStatusRequest)(nil),                  // 81: hulation.v1.auth.TotpStatusRequest
 	(*TotpStatusResponse)(nil),                 // 82: hulation.v1.auth.TotpStatusResponse
-	(*timestamppb.Timestamp)(nil),              // 83: google.protobuf.Timestamp
-	(*v1.User)(nil),                            // 84: hulation.v1.apiobjects.User
-	(v1.TenantRole)(0),                         // 85: hulation.v1.apiobjects.TenantRole
-	(v1.SystemRole)(0),                         // 86: hulation.v1.apiobjects.SystemRole
-	(*v1.ProjectRoleAssignment)(nil),           // 87: hulation.v1.apiobjects.ProjectRoleAssignment
+	(*OpaqueRegisterInitRequest)(nil),          // 83: hulation.v1.auth.OpaqueRegisterInitRequest
+	(*OpaqueRegisterInitResponse)(nil),         // 84: hulation.v1.auth.OpaqueRegisterInitResponse
+	(*OpaqueRegisterFinishRequest)(nil),        // 85: hulation.v1.auth.OpaqueRegisterFinishRequest
+	(*OpaqueRegisterFinishResponse)(nil),       // 86: hulation.v1.auth.OpaqueRegisterFinishResponse
+	(*OpaqueLoginInitRequest)(nil),             // 87: hulation.v1.auth.OpaqueLoginInitRequest
+	(*OpaqueLoginInitResponse)(nil),            // 88: hulation.v1.auth.OpaqueLoginInitResponse
+	(*OpaqueLoginFinishRequest)(nil),           // 89: hulation.v1.auth.OpaqueLoginFinishRequest
+	(*OpaqueLoginFinishResponse)(nil),          // 90: hulation.v1.auth.OpaqueLoginFinishResponse
+	(*timestamppb.Timestamp)(nil),              // 91: google.protobuf.Timestamp
+	(*v1.User)(nil),                            // 92: hulation.v1.apiobjects.User
+	(v1.TenantRole)(0),                         // 93: hulation.v1.apiobjects.TenantRole
+	(v1.SystemRole)(0),                         // 94: hulation.v1.apiobjects.SystemRole
+	(*v1.ProjectRoleAssignment)(nil),           // 95: hulation.v1.apiobjects.ProjectRoleAssignment
 }
 var file_pkg_apispec_v1_auth_auth_proto_depIdxs = []int32{
 	0,  // 0: hulation.v1.auth.ServerAccessEntry.role:type_name -> hulation.v1.auth.ServerAccessRole
-	83, // 1: hulation.v1.auth.ServerAccessEntry.granted_at:type_name -> google.protobuf.Timestamp
+	91, // 1: hulation.v1.auth.ServerAccessEntry.granted_at:type_name -> google.protobuf.Timestamp
 	0,  // 2: hulation.v1.auth.GrantServerAccessRequest.role:type_name -> hulation.v1.auth.ServerAccessRole
 	1,  // 3: hulation.v1.auth.GrantServerAccessResponse.entry:type_name -> hulation.v1.auth.ServerAccessEntry
 	1,  // 4: hulation.v1.auth.ListServerAccessResponse.entries:type_name -> hulation.v1.auth.ServerAccessEntry
-	84, // 5: hulation.v1.auth.ListUsersResponse.users:type_name -> hulation.v1.apiobjects.User
-	84, // 6: hulation.v1.auth.CreateUserRequest.user:type_name -> hulation.v1.apiobjects.User
-	84, // 7: hulation.v1.auth.CreateUserResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 8: hulation.v1.auth.CreateUserAsTenantRequest.user:type_name -> hulation.v1.apiobjects.User
-	85, // 9: hulation.v1.auth.CreateUserAsTenantRequest.tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
-	84, // 10: hulation.v1.auth.PatchUserRequest.user:type_name -> hulation.v1.apiobjects.User
-	84, // 11: hulation.v1.auth.PatchUserResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 12: hulation.v1.auth.PatchUserAsTenantRequest.user:type_name -> hulation.v1.apiobjects.User
-	85, // 13: hulation.v1.auth.PatchUserAsTenantRequest.new_tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
-	84, // 14: hulation.v1.auth.GetUserResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 15: hulation.v1.auth.SearchUsersResponse.users:type_name -> hulation.v1.apiobjects.User
-	84, // 16: hulation.v1.auth.SetUserSysAdminResponse.user:type_name -> hulation.v1.apiobjects.User
-	86, // 17: hulation.v1.auth.InviteUserRequest.system_roles:type_name -> hulation.v1.apiobjects.SystemRole
-	87, // 18: hulation.v1.auth.InviteUserRequest.project_roles:type_name -> hulation.v1.apiobjects.ProjectRoleAssignment
-	84, // 19: hulation.v1.auth.InviteUserResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 20: hulation.v1.auth.ResendInviteUserResponse.user:type_name -> hulation.v1.apiobjects.User
-	85, // 21: hulation.v1.auth.InviteUserAsTenantRequest.tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
-	84, // 22: hulation.v1.auth.InviteUserAsTenantResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 23: hulation.v1.auth.ResendInviteUserAsTenantResponse.user:type_name -> hulation.v1.apiobjects.User
-	84, // 24: hulation.v1.auth.AdminValidateUserEmailResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 5: hulation.v1.auth.ListUsersResponse.users:type_name -> hulation.v1.apiobjects.User
+	92, // 6: hulation.v1.auth.CreateUserRequest.user:type_name -> hulation.v1.apiobjects.User
+	92, // 7: hulation.v1.auth.CreateUserResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 8: hulation.v1.auth.CreateUserAsTenantRequest.user:type_name -> hulation.v1.apiobjects.User
+	93, // 9: hulation.v1.auth.CreateUserAsTenantRequest.tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
+	92, // 10: hulation.v1.auth.PatchUserRequest.user:type_name -> hulation.v1.apiobjects.User
+	92, // 11: hulation.v1.auth.PatchUserResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 12: hulation.v1.auth.PatchUserAsTenantRequest.user:type_name -> hulation.v1.apiobjects.User
+	93, // 13: hulation.v1.auth.PatchUserAsTenantRequest.new_tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
+	92, // 14: hulation.v1.auth.GetUserResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 15: hulation.v1.auth.SearchUsersResponse.users:type_name -> hulation.v1.apiobjects.User
+	92, // 16: hulation.v1.auth.SetUserSysAdminResponse.user:type_name -> hulation.v1.apiobjects.User
+	94, // 17: hulation.v1.auth.InviteUserRequest.system_roles:type_name -> hulation.v1.apiobjects.SystemRole
+	95, // 18: hulation.v1.auth.InviteUserRequest.project_roles:type_name -> hulation.v1.apiobjects.ProjectRoleAssignment
+	92, // 19: hulation.v1.auth.InviteUserResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 20: hulation.v1.auth.ResendInviteUserResponse.user:type_name -> hulation.v1.apiobjects.User
+	93, // 21: hulation.v1.auth.InviteUserAsTenantRequest.tenant_role:type_name -> hulation.v1.apiobjects.TenantRole
+	92, // 22: hulation.v1.auth.InviteUserAsTenantResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 23: hulation.v1.auth.ResendInviteUserAsTenantResponse.user:type_name -> hulation.v1.apiobjects.User
+	92, // 24: hulation.v1.auth.AdminValidateUserEmailResponse.user:type_name -> hulation.v1.apiobjects.User
 	63, // 25: hulation.v1.auth.ListAuthProvidersResponse.providers:type_name -> hulation.v1.auth.AuthProviderInfo
 	70, // 26: hulation.v1.auth.GetUserPermissionsResponse.permission_sources:type_name -> hulation.v1.auth.PermissionSourceInfo
-	83, // 27: hulation.v1.auth.TotpStatusResponse.totp_enabled_at:type_name -> google.protobuf.Timestamp
+	91, // 27: hulation.v1.auth.TotpStatusResponse.totp_enabled_at:type_name -> google.protobuf.Timestamp
 	8,  // 28: hulation.v1.auth.AuthService.LoginAdmin:input_type -> hulation.v1.auth.LoginAdminRequest
 	10, // 29: hulation.v1.auth.AuthService.LoginWithSecret:input_type -> hulation.v1.auth.LoginWithSecretRequest
 	12, // 30: hulation.v1.auth.AuthService.LoginOIDC:input_type -> hulation.v1.auth.LoginOIDCRequest
 	14, // 31: hulation.v1.auth.AuthService.LoginWithCode:input_type -> hulation.v1.auth.LoginWithCodeRequest
-	16, // 32: hulation.v1.auth.AuthService.ListUsers:input_type -> hulation.v1.auth.ListUsersRequest
-	18, // 33: hulation.v1.auth.AuthService.ListUsersAsTenant:input_type -> hulation.v1.auth.ListUsersAsTenantRequest
-	19, // 34: hulation.v1.auth.AuthService.CreateUser:input_type -> hulation.v1.auth.CreateUserRequest
-	21, // 35: hulation.v1.auth.AuthService.CreateUserAsTenant:input_type -> hulation.v1.auth.CreateUserAsTenantRequest
-	22, // 36: hulation.v1.auth.AuthService.PatchUser:input_type -> hulation.v1.auth.PatchUserRequest
-	24, // 37: hulation.v1.auth.AuthService.PatchUserAsTenant:input_type -> hulation.v1.auth.PatchUserAsTenantRequest
-	26, // 38: hulation.v1.auth.AuthService.DeleteUser:input_type -> hulation.v1.auth.DeleteUserRequest
-	25, // 39: hulation.v1.auth.AuthService.DeleteUserAsTenant:input_type -> hulation.v1.auth.DeleteUserAsTenantRequest
-	28, // 40: hulation.v1.auth.AuthService.GetUser:input_type -> hulation.v1.auth.GetUserRequest
-	30, // 41: hulation.v1.auth.AuthService.SearchUsers:input_type -> hulation.v1.auth.SearchUsersRequest
-	32, // 42: hulation.v1.auth.AuthService.UpdateUserPassword:input_type -> hulation.v1.auth.UpdateUserPasswordRequest
-	36, // 43: hulation.v1.auth.AuthService.SetUserSysAdmin:input_type -> hulation.v1.auth.SetUserSysAdminRequest
-	38, // 44: hulation.v1.auth.AuthService.WhoAmI:input_type -> hulation.v1.auth.WhoAmIRequest
-	40, // 45: hulation.v1.auth.AuthService.GetMyPermissions:input_type -> hulation.v1.auth.GetMyPermissionsRequest
-	61, // 46: hulation.v1.auth.AuthService.ListAuthProviders:input_type -> hulation.v1.auth.ListAuthProvidersRequest
-	41, // 47: hulation.v1.auth.AuthService.ValidateEmail:input_type -> hulation.v1.auth.ValidateEmailRequest
-	43, // 48: hulation.v1.auth.AuthService.ResendValidationEmail:input_type -> hulation.v1.auth.ResendValidationEmailRequest
-	45, // 49: hulation.v1.auth.AuthService.InviteUser:input_type -> hulation.v1.auth.InviteUserRequest
-	49, // 50: hulation.v1.auth.AuthService.InviteUserAsTenant:input_type -> hulation.v1.auth.InviteUserAsTenantRequest
-	47, // 51: hulation.v1.auth.AuthService.ResendInviteUser:input_type -> hulation.v1.auth.ResendInviteUserRequest
-	51, // 52: hulation.v1.auth.AuthService.ResendInviteUserAsTenant:input_type -> hulation.v1.auth.ResendInviteUserAsTenantRequest
-	53, // 53: hulation.v1.auth.AuthService.AdminValidateUserEmail:input_type -> hulation.v1.auth.AdminValidateUserEmailRequest
-	55, // 54: hulation.v1.auth.AuthService.SetInitialPassword:input_type -> hulation.v1.auth.SetInitialPasswordRequest
-	57, // 55: hulation.v1.auth.AuthService.RequestPasswordReset:input_type -> hulation.v1.auth.RequestPasswordResetRequest
-	59, // 56: hulation.v1.auth.AuthService.ValidatePasswordResetToken:input_type -> hulation.v1.auth.ValidatePasswordResetTokenRequest
-	64, // 57: hulation.v1.auth.AuthService.RefreshToken:input_type -> hulation.v1.auth.RefreshTokenRequest
-	66, // 58: hulation.v1.auth.AuthService.CheckUserPermission:input_type -> hulation.v1.auth.CheckUserPermissionRequest
-	68, // 59: hulation.v1.auth.AuthService.GetUserPermissions:input_type -> hulation.v1.auth.GetUserPermissionsRequest
-	71, // 60: hulation.v1.auth.AuthService.TotpSetup:input_type -> hulation.v1.auth.TotpSetupRequest
-	73, // 61: hulation.v1.auth.AuthService.TotpVerifySetup:input_type -> hulation.v1.auth.TotpVerifySetupRequest
-	75, // 62: hulation.v1.auth.AuthService.TotpValidate:input_type -> hulation.v1.auth.TotpValidateRequest
-	77, // 63: hulation.v1.auth.AuthService.TotpDisable:input_type -> hulation.v1.auth.TotpDisableRequest
-	79, // 64: hulation.v1.auth.AuthService.TotpAdminReset:input_type -> hulation.v1.auth.TotpAdminResetRequest
-	81, // 65: hulation.v1.auth.AuthService.TotpStatus:input_type -> hulation.v1.auth.TotpStatusRequest
-	2,  // 66: hulation.v1.auth.AuthService.GrantServerAccess:input_type -> hulation.v1.auth.GrantServerAccessRequest
-	4,  // 67: hulation.v1.auth.AuthService.RevokeServerAccess:input_type -> hulation.v1.auth.RevokeServerAccessRequest
-	6,  // 68: hulation.v1.auth.AuthService.ListServerAccess:input_type -> hulation.v1.auth.ListServerAccessRequest
-	9,  // 69: hulation.v1.auth.AuthService.LoginAdmin:output_type -> hulation.v1.auth.LoginAdminResponse
-	11, // 70: hulation.v1.auth.AuthService.LoginWithSecret:output_type -> hulation.v1.auth.LoginWithSecretResponse
-	13, // 71: hulation.v1.auth.AuthService.LoginOIDC:output_type -> hulation.v1.auth.LoginOIDCResponse
-	15, // 72: hulation.v1.auth.AuthService.LoginWithCode:output_type -> hulation.v1.auth.LoginWithCodeResponse
-	17, // 73: hulation.v1.auth.AuthService.ListUsers:output_type -> hulation.v1.auth.ListUsersResponse
-	17, // 74: hulation.v1.auth.AuthService.ListUsersAsTenant:output_type -> hulation.v1.auth.ListUsersResponse
-	20, // 75: hulation.v1.auth.AuthService.CreateUser:output_type -> hulation.v1.auth.CreateUserResponse
-	20, // 76: hulation.v1.auth.AuthService.CreateUserAsTenant:output_type -> hulation.v1.auth.CreateUserResponse
-	23, // 77: hulation.v1.auth.AuthService.PatchUser:output_type -> hulation.v1.auth.PatchUserResponse
-	23, // 78: hulation.v1.auth.AuthService.PatchUserAsTenant:output_type -> hulation.v1.auth.PatchUserResponse
-	27, // 79: hulation.v1.auth.AuthService.DeleteUser:output_type -> hulation.v1.auth.DeleteUserResponse
-	27, // 80: hulation.v1.auth.AuthService.DeleteUserAsTenant:output_type -> hulation.v1.auth.DeleteUserResponse
-	29, // 81: hulation.v1.auth.AuthService.GetUser:output_type -> hulation.v1.auth.GetUserResponse
-	31, // 82: hulation.v1.auth.AuthService.SearchUsers:output_type -> hulation.v1.auth.SearchUsersResponse
-	33, // 83: hulation.v1.auth.AuthService.UpdateUserPassword:output_type -> hulation.v1.auth.UpdateUserPasswordResponse
-	37, // 84: hulation.v1.auth.AuthService.SetUserSysAdmin:output_type -> hulation.v1.auth.SetUserSysAdminResponse
-	39, // 85: hulation.v1.auth.AuthService.WhoAmI:output_type -> hulation.v1.auth.WhoAmIResponse
-	69, // 86: hulation.v1.auth.AuthService.GetMyPermissions:output_type -> hulation.v1.auth.GetUserPermissionsResponse
-	62, // 87: hulation.v1.auth.AuthService.ListAuthProviders:output_type -> hulation.v1.auth.ListAuthProvidersResponse
-	42, // 88: hulation.v1.auth.AuthService.ValidateEmail:output_type -> hulation.v1.auth.ValidateEmailResponse
-	44, // 89: hulation.v1.auth.AuthService.ResendValidationEmail:output_type -> hulation.v1.auth.ResendValidationEmailResponse
-	46, // 90: hulation.v1.auth.AuthService.InviteUser:output_type -> hulation.v1.auth.InviteUserResponse
-	50, // 91: hulation.v1.auth.AuthService.InviteUserAsTenant:output_type -> hulation.v1.auth.InviteUserAsTenantResponse
-	48, // 92: hulation.v1.auth.AuthService.ResendInviteUser:output_type -> hulation.v1.auth.ResendInviteUserResponse
-	52, // 93: hulation.v1.auth.AuthService.ResendInviteUserAsTenant:output_type -> hulation.v1.auth.ResendInviteUserAsTenantResponse
-	54, // 94: hulation.v1.auth.AuthService.AdminValidateUserEmail:output_type -> hulation.v1.auth.AdminValidateUserEmailResponse
-	56, // 95: hulation.v1.auth.AuthService.SetInitialPassword:output_type -> hulation.v1.auth.SetInitialPasswordResponse
-	58, // 96: hulation.v1.auth.AuthService.RequestPasswordReset:output_type -> hulation.v1.auth.RequestPasswordResetResponse
-	60, // 97: hulation.v1.auth.AuthService.ValidatePasswordResetToken:output_type -> hulation.v1.auth.ValidatePasswordResetTokenResponse
-	65, // 98: hulation.v1.auth.AuthService.RefreshToken:output_type -> hulation.v1.auth.RefreshTokenResponse
-	67, // 99: hulation.v1.auth.AuthService.CheckUserPermission:output_type -> hulation.v1.auth.CheckUserPermissionResponse
-	69, // 100: hulation.v1.auth.AuthService.GetUserPermissions:output_type -> hulation.v1.auth.GetUserPermissionsResponse
-	72, // 101: hulation.v1.auth.AuthService.TotpSetup:output_type -> hulation.v1.auth.TotpSetupResponse
-	74, // 102: hulation.v1.auth.AuthService.TotpVerifySetup:output_type -> hulation.v1.auth.TotpVerifySetupResponse
-	76, // 103: hulation.v1.auth.AuthService.TotpValidate:output_type -> hulation.v1.auth.TotpValidateResponse
-	78, // 104: hulation.v1.auth.AuthService.TotpDisable:output_type -> hulation.v1.auth.TotpDisableResponse
-	80, // 105: hulation.v1.auth.AuthService.TotpAdminReset:output_type -> hulation.v1.auth.TotpAdminResetResponse
-	82, // 106: hulation.v1.auth.AuthService.TotpStatus:output_type -> hulation.v1.auth.TotpStatusResponse
-	3,  // 107: hulation.v1.auth.AuthService.GrantServerAccess:output_type -> hulation.v1.auth.GrantServerAccessResponse
-	5,  // 108: hulation.v1.auth.AuthService.RevokeServerAccess:output_type -> hulation.v1.auth.RevokeServerAccessResponse
-	7,  // 109: hulation.v1.auth.AuthService.ListServerAccess:output_type -> hulation.v1.auth.ListServerAccessResponse
-	69, // [69:110] is the sub-list for method output_type
-	28, // [28:69] is the sub-list for method input_type
+	83, // 32: hulation.v1.auth.AuthService.OpaqueRegisterInit:input_type -> hulation.v1.auth.OpaqueRegisterInitRequest
+	85, // 33: hulation.v1.auth.AuthService.OpaqueRegisterFinish:input_type -> hulation.v1.auth.OpaqueRegisterFinishRequest
+	87, // 34: hulation.v1.auth.AuthService.OpaqueLoginInit:input_type -> hulation.v1.auth.OpaqueLoginInitRequest
+	89, // 35: hulation.v1.auth.AuthService.OpaqueLoginFinish:input_type -> hulation.v1.auth.OpaqueLoginFinishRequest
+	16, // 36: hulation.v1.auth.AuthService.ListUsers:input_type -> hulation.v1.auth.ListUsersRequest
+	18, // 37: hulation.v1.auth.AuthService.ListUsersAsTenant:input_type -> hulation.v1.auth.ListUsersAsTenantRequest
+	19, // 38: hulation.v1.auth.AuthService.CreateUser:input_type -> hulation.v1.auth.CreateUserRequest
+	21, // 39: hulation.v1.auth.AuthService.CreateUserAsTenant:input_type -> hulation.v1.auth.CreateUserAsTenantRequest
+	22, // 40: hulation.v1.auth.AuthService.PatchUser:input_type -> hulation.v1.auth.PatchUserRequest
+	24, // 41: hulation.v1.auth.AuthService.PatchUserAsTenant:input_type -> hulation.v1.auth.PatchUserAsTenantRequest
+	26, // 42: hulation.v1.auth.AuthService.DeleteUser:input_type -> hulation.v1.auth.DeleteUserRequest
+	25, // 43: hulation.v1.auth.AuthService.DeleteUserAsTenant:input_type -> hulation.v1.auth.DeleteUserAsTenantRequest
+	28, // 44: hulation.v1.auth.AuthService.GetUser:input_type -> hulation.v1.auth.GetUserRequest
+	30, // 45: hulation.v1.auth.AuthService.SearchUsers:input_type -> hulation.v1.auth.SearchUsersRequest
+	32, // 46: hulation.v1.auth.AuthService.UpdateUserPassword:input_type -> hulation.v1.auth.UpdateUserPasswordRequest
+	36, // 47: hulation.v1.auth.AuthService.SetUserSysAdmin:input_type -> hulation.v1.auth.SetUserSysAdminRequest
+	38, // 48: hulation.v1.auth.AuthService.WhoAmI:input_type -> hulation.v1.auth.WhoAmIRequest
+	40, // 49: hulation.v1.auth.AuthService.GetMyPermissions:input_type -> hulation.v1.auth.GetMyPermissionsRequest
+	61, // 50: hulation.v1.auth.AuthService.ListAuthProviders:input_type -> hulation.v1.auth.ListAuthProvidersRequest
+	41, // 51: hulation.v1.auth.AuthService.ValidateEmail:input_type -> hulation.v1.auth.ValidateEmailRequest
+	43, // 52: hulation.v1.auth.AuthService.ResendValidationEmail:input_type -> hulation.v1.auth.ResendValidationEmailRequest
+	45, // 53: hulation.v1.auth.AuthService.InviteUser:input_type -> hulation.v1.auth.InviteUserRequest
+	49, // 54: hulation.v1.auth.AuthService.InviteUserAsTenant:input_type -> hulation.v1.auth.InviteUserAsTenantRequest
+	47, // 55: hulation.v1.auth.AuthService.ResendInviteUser:input_type -> hulation.v1.auth.ResendInviteUserRequest
+	51, // 56: hulation.v1.auth.AuthService.ResendInviteUserAsTenant:input_type -> hulation.v1.auth.ResendInviteUserAsTenantRequest
+	53, // 57: hulation.v1.auth.AuthService.AdminValidateUserEmail:input_type -> hulation.v1.auth.AdminValidateUserEmailRequest
+	55, // 58: hulation.v1.auth.AuthService.SetInitialPassword:input_type -> hulation.v1.auth.SetInitialPasswordRequest
+	57, // 59: hulation.v1.auth.AuthService.RequestPasswordReset:input_type -> hulation.v1.auth.RequestPasswordResetRequest
+	59, // 60: hulation.v1.auth.AuthService.ValidatePasswordResetToken:input_type -> hulation.v1.auth.ValidatePasswordResetTokenRequest
+	64, // 61: hulation.v1.auth.AuthService.RefreshToken:input_type -> hulation.v1.auth.RefreshTokenRequest
+	66, // 62: hulation.v1.auth.AuthService.CheckUserPermission:input_type -> hulation.v1.auth.CheckUserPermissionRequest
+	68, // 63: hulation.v1.auth.AuthService.GetUserPermissions:input_type -> hulation.v1.auth.GetUserPermissionsRequest
+	71, // 64: hulation.v1.auth.AuthService.TotpSetup:input_type -> hulation.v1.auth.TotpSetupRequest
+	73, // 65: hulation.v1.auth.AuthService.TotpVerifySetup:input_type -> hulation.v1.auth.TotpVerifySetupRequest
+	75, // 66: hulation.v1.auth.AuthService.TotpValidate:input_type -> hulation.v1.auth.TotpValidateRequest
+	77, // 67: hulation.v1.auth.AuthService.TotpDisable:input_type -> hulation.v1.auth.TotpDisableRequest
+	79, // 68: hulation.v1.auth.AuthService.TotpAdminReset:input_type -> hulation.v1.auth.TotpAdminResetRequest
+	81, // 69: hulation.v1.auth.AuthService.TotpStatus:input_type -> hulation.v1.auth.TotpStatusRequest
+	2,  // 70: hulation.v1.auth.AuthService.GrantServerAccess:input_type -> hulation.v1.auth.GrantServerAccessRequest
+	4,  // 71: hulation.v1.auth.AuthService.RevokeServerAccess:input_type -> hulation.v1.auth.RevokeServerAccessRequest
+	6,  // 72: hulation.v1.auth.AuthService.ListServerAccess:input_type -> hulation.v1.auth.ListServerAccessRequest
+	9,  // 73: hulation.v1.auth.AuthService.LoginAdmin:output_type -> hulation.v1.auth.LoginAdminResponse
+	11, // 74: hulation.v1.auth.AuthService.LoginWithSecret:output_type -> hulation.v1.auth.LoginWithSecretResponse
+	13, // 75: hulation.v1.auth.AuthService.LoginOIDC:output_type -> hulation.v1.auth.LoginOIDCResponse
+	15, // 76: hulation.v1.auth.AuthService.LoginWithCode:output_type -> hulation.v1.auth.LoginWithCodeResponse
+	84, // 77: hulation.v1.auth.AuthService.OpaqueRegisterInit:output_type -> hulation.v1.auth.OpaqueRegisterInitResponse
+	86, // 78: hulation.v1.auth.AuthService.OpaqueRegisterFinish:output_type -> hulation.v1.auth.OpaqueRegisterFinishResponse
+	88, // 79: hulation.v1.auth.AuthService.OpaqueLoginInit:output_type -> hulation.v1.auth.OpaqueLoginInitResponse
+	90, // 80: hulation.v1.auth.AuthService.OpaqueLoginFinish:output_type -> hulation.v1.auth.OpaqueLoginFinishResponse
+	17, // 81: hulation.v1.auth.AuthService.ListUsers:output_type -> hulation.v1.auth.ListUsersResponse
+	17, // 82: hulation.v1.auth.AuthService.ListUsersAsTenant:output_type -> hulation.v1.auth.ListUsersResponse
+	20, // 83: hulation.v1.auth.AuthService.CreateUser:output_type -> hulation.v1.auth.CreateUserResponse
+	20, // 84: hulation.v1.auth.AuthService.CreateUserAsTenant:output_type -> hulation.v1.auth.CreateUserResponse
+	23, // 85: hulation.v1.auth.AuthService.PatchUser:output_type -> hulation.v1.auth.PatchUserResponse
+	23, // 86: hulation.v1.auth.AuthService.PatchUserAsTenant:output_type -> hulation.v1.auth.PatchUserResponse
+	27, // 87: hulation.v1.auth.AuthService.DeleteUser:output_type -> hulation.v1.auth.DeleteUserResponse
+	27, // 88: hulation.v1.auth.AuthService.DeleteUserAsTenant:output_type -> hulation.v1.auth.DeleteUserResponse
+	29, // 89: hulation.v1.auth.AuthService.GetUser:output_type -> hulation.v1.auth.GetUserResponse
+	31, // 90: hulation.v1.auth.AuthService.SearchUsers:output_type -> hulation.v1.auth.SearchUsersResponse
+	33, // 91: hulation.v1.auth.AuthService.UpdateUserPassword:output_type -> hulation.v1.auth.UpdateUserPasswordResponse
+	37, // 92: hulation.v1.auth.AuthService.SetUserSysAdmin:output_type -> hulation.v1.auth.SetUserSysAdminResponse
+	39, // 93: hulation.v1.auth.AuthService.WhoAmI:output_type -> hulation.v1.auth.WhoAmIResponse
+	69, // 94: hulation.v1.auth.AuthService.GetMyPermissions:output_type -> hulation.v1.auth.GetUserPermissionsResponse
+	62, // 95: hulation.v1.auth.AuthService.ListAuthProviders:output_type -> hulation.v1.auth.ListAuthProvidersResponse
+	42, // 96: hulation.v1.auth.AuthService.ValidateEmail:output_type -> hulation.v1.auth.ValidateEmailResponse
+	44, // 97: hulation.v1.auth.AuthService.ResendValidationEmail:output_type -> hulation.v1.auth.ResendValidationEmailResponse
+	46, // 98: hulation.v1.auth.AuthService.InviteUser:output_type -> hulation.v1.auth.InviteUserResponse
+	50, // 99: hulation.v1.auth.AuthService.InviteUserAsTenant:output_type -> hulation.v1.auth.InviteUserAsTenantResponse
+	48, // 100: hulation.v1.auth.AuthService.ResendInviteUser:output_type -> hulation.v1.auth.ResendInviteUserResponse
+	52, // 101: hulation.v1.auth.AuthService.ResendInviteUserAsTenant:output_type -> hulation.v1.auth.ResendInviteUserAsTenantResponse
+	54, // 102: hulation.v1.auth.AuthService.AdminValidateUserEmail:output_type -> hulation.v1.auth.AdminValidateUserEmailResponse
+	56, // 103: hulation.v1.auth.AuthService.SetInitialPassword:output_type -> hulation.v1.auth.SetInitialPasswordResponse
+	58, // 104: hulation.v1.auth.AuthService.RequestPasswordReset:output_type -> hulation.v1.auth.RequestPasswordResetResponse
+	60, // 105: hulation.v1.auth.AuthService.ValidatePasswordResetToken:output_type -> hulation.v1.auth.ValidatePasswordResetTokenResponse
+	65, // 106: hulation.v1.auth.AuthService.RefreshToken:output_type -> hulation.v1.auth.RefreshTokenResponse
+	67, // 107: hulation.v1.auth.AuthService.CheckUserPermission:output_type -> hulation.v1.auth.CheckUserPermissionResponse
+	69, // 108: hulation.v1.auth.AuthService.GetUserPermissions:output_type -> hulation.v1.auth.GetUserPermissionsResponse
+	72, // 109: hulation.v1.auth.AuthService.TotpSetup:output_type -> hulation.v1.auth.TotpSetupResponse
+	74, // 110: hulation.v1.auth.AuthService.TotpVerifySetup:output_type -> hulation.v1.auth.TotpVerifySetupResponse
+	76, // 111: hulation.v1.auth.AuthService.TotpValidate:output_type -> hulation.v1.auth.TotpValidateResponse
+	78, // 112: hulation.v1.auth.AuthService.TotpDisable:output_type -> hulation.v1.auth.TotpDisableResponse
+	80, // 113: hulation.v1.auth.AuthService.TotpAdminReset:output_type -> hulation.v1.auth.TotpAdminResetResponse
+	82, // 114: hulation.v1.auth.AuthService.TotpStatus:output_type -> hulation.v1.auth.TotpStatusResponse
+	3,  // 115: hulation.v1.auth.AuthService.GrantServerAccess:output_type -> hulation.v1.auth.GrantServerAccessResponse
+	5,  // 116: hulation.v1.auth.AuthService.RevokeServerAccess:output_type -> hulation.v1.auth.RevokeServerAccessResponse
+	7,  // 117: hulation.v1.auth.AuthService.ListServerAccess:output_type -> hulation.v1.auth.ListServerAccessResponse
+	73, // [73:118] is the sub-list for method output_type
+	28, // [28:73] is the sub-list for method input_type
 	28, // [28:28] is the sub-list for extension type_name
 	28, // [28:28] is the sub-list for extension extendee
 	0,  // [0:28] is the sub-list for field type_name
@@ -5572,7 +6099,7 @@ func file_pkg_apispec_v1_auth_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apispec_v1_auth_auth_proto_rawDesc), len(file_pkg_apispec_v1_auth_auth_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   82,
+			NumMessages:   90,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

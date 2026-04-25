@@ -23,6 +23,10 @@ const (
 	AuthService_LoginWithSecret_FullMethodName            = "/hulation.v1.auth.AuthService/LoginWithSecret"
 	AuthService_LoginOIDC_FullMethodName                  = "/hulation.v1.auth.AuthService/LoginOIDC"
 	AuthService_LoginWithCode_FullMethodName              = "/hulation.v1.auth.AuthService/LoginWithCode"
+	AuthService_OpaqueRegisterInit_FullMethodName         = "/hulation.v1.auth.AuthService/OpaqueRegisterInit"
+	AuthService_OpaqueRegisterFinish_FullMethodName       = "/hulation.v1.auth.AuthService/OpaqueRegisterFinish"
+	AuthService_OpaqueLoginInit_FullMethodName            = "/hulation.v1.auth.AuthService/OpaqueLoginInit"
+	AuthService_OpaqueLoginFinish_FullMethodName          = "/hulation.v1.auth.AuthService/OpaqueLoginFinish"
 	AuthService_ListUsers_FullMethodName                  = "/hulation.v1.auth.AuthService/ListUsers"
 	AuthService_ListUsersAsTenant_FullMethodName          = "/hulation.v1.auth.AuthService/ListUsersAsTenant"
 	AuthService_CreateUser_FullMethodName                 = "/hulation.v1.auth.AuthService/CreateUser"
@@ -75,6 +79,21 @@ type AuthServiceClient interface {
 	LoginOIDC(ctx context.Context, in *LoginOIDCRequest, opts ...grpc.CallOption) (*LoginOIDCResponse, error)
 	// Login with code - third step in OIDC login process
 	LoginWithCode(ctx context.Context, in *LoginWithCodeRequest, opts ...grpc.CallOption) (*LoginWithCodeResponse, error)
+	// OpaqueRegisterInit — first half of registration. Client sends
+	// M1 (RegistrationRequest); server returns M2 (RegistrationResponse).
+	// Stateless server-side; the per-client OPRF key is derived
+	// from the global seed + credential identifier.
+	OpaqueRegisterInit(ctx context.Context, in *OpaqueRegisterInitRequest, opts ...grpc.CallOption) (*OpaqueRegisterInitResponse, error)
+	// OpaqueRegisterFinish — client sends M3 (RegistrationRecord);
+	// server persists it as the user's password file and returns ok.
+	OpaqueRegisterFinish(ctx context.Context, in *OpaqueRegisterFinishRequest, opts ...grpc.CallOption) (*OpaqueRegisterFinishResponse, error)
+	// OpaqueLoginInit — client sends KE1; server looks up record,
+	// returns KE2 + a session_id. Server caches per-session state
+	// (60s TTL).
+	OpaqueLoginInit(ctx context.Context, in *OpaqueLoginInitRequest, opts ...grpc.CallOption) (*OpaqueLoginInitResponse, error)
+	// OpaqueLoginFinish — client sends session_id + KE3; server
+	// verifies KE3 MAC and returns a JWT on success.
+	OpaqueLoginFinish(ctx context.Context, in *OpaqueLoginFinishRequest, opts ...grpc.CallOption) (*OpaqueLoginFinishResponse, error)
 	// List all users
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 	// List all users as tenant admin
@@ -213,6 +232,46 @@ func (c *authServiceClient) LoginWithCode(ctx context.Context, in *LoginWithCode
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LoginWithCodeResponse)
 	err := c.cc.Invoke(ctx, AuthService_LoginWithCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) OpaqueRegisterInit(ctx context.Context, in *OpaqueRegisterInitRequest, opts ...grpc.CallOption) (*OpaqueRegisterInitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpaqueRegisterInitResponse)
+	err := c.cc.Invoke(ctx, AuthService_OpaqueRegisterInit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) OpaqueRegisterFinish(ctx context.Context, in *OpaqueRegisterFinishRequest, opts ...grpc.CallOption) (*OpaqueRegisterFinishResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpaqueRegisterFinishResponse)
+	err := c.cc.Invoke(ctx, AuthService_OpaqueRegisterFinish_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) OpaqueLoginInit(ctx context.Context, in *OpaqueLoginInitRequest, opts ...grpc.CallOption) (*OpaqueLoginInitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpaqueLoginInitResponse)
+	err := c.cc.Invoke(ctx, AuthService_OpaqueLoginInit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authServiceClient) OpaqueLoginFinish(ctx context.Context, in *OpaqueLoginFinishRequest, opts ...grpc.CallOption) (*OpaqueLoginFinishResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpaqueLoginFinishResponse)
+	err := c.cc.Invoke(ctx, AuthService_OpaqueLoginFinish_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -602,6 +661,21 @@ type AuthServiceServer interface {
 	LoginOIDC(context.Context, *LoginOIDCRequest) (*LoginOIDCResponse, error)
 	// Login with code - third step in OIDC login process
 	LoginWithCode(context.Context, *LoginWithCodeRequest) (*LoginWithCodeResponse, error)
+	// OpaqueRegisterInit — first half of registration. Client sends
+	// M1 (RegistrationRequest); server returns M2 (RegistrationResponse).
+	// Stateless server-side; the per-client OPRF key is derived
+	// from the global seed + credential identifier.
+	OpaqueRegisterInit(context.Context, *OpaqueRegisterInitRequest) (*OpaqueRegisterInitResponse, error)
+	// OpaqueRegisterFinish — client sends M3 (RegistrationRecord);
+	// server persists it as the user's password file and returns ok.
+	OpaqueRegisterFinish(context.Context, *OpaqueRegisterFinishRequest) (*OpaqueRegisterFinishResponse, error)
+	// OpaqueLoginInit — client sends KE1; server looks up record,
+	// returns KE2 + a session_id. Server caches per-session state
+	// (60s TTL).
+	OpaqueLoginInit(context.Context, *OpaqueLoginInitRequest) (*OpaqueLoginInitResponse, error)
+	// OpaqueLoginFinish — client sends session_id + KE3; server
+	// verifies KE3 MAC and returns a JWT on success.
+	OpaqueLoginFinish(context.Context, *OpaqueLoginFinishRequest) (*OpaqueLoginFinishResponse, error)
 	// List all users
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	// List all users as tenant admin
@@ -717,6 +791,18 @@ func (UnimplementedAuthServiceServer) LoginOIDC(context.Context, *LoginOIDCReque
 }
 func (UnimplementedAuthServiceServer) LoginWithCode(context.Context, *LoginWithCodeRequest) (*LoginWithCodeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LoginWithCode not implemented")
+}
+func (UnimplementedAuthServiceServer) OpaqueRegisterInit(context.Context, *OpaqueRegisterInitRequest) (*OpaqueRegisterInitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpaqueRegisterInit not implemented")
+}
+func (UnimplementedAuthServiceServer) OpaqueRegisterFinish(context.Context, *OpaqueRegisterFinishRequest) (*OpaqueRegisterFinishResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpaqueRegisterFinish not implemented")
+}
+func (UnimplementedAuthServiceServer) OpaqueLoginInit(context.Context, *OpaqueLoginInitRequest) (*OpaqueLoginInitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpaqueLoginInit not implemented")
+}
+func (UnimplementedAuthServiceServer) OpaqueLoginFinish(context.Context, *OpaqueLoginFinishRequest) (*OpaqueLoginFinishResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpaqueLoginFinish not implemented")
 }
 func (UnimplementedAuthServiceServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListUsers not implemented")
@@ -918,6 +1004,78 @@ func _AuthService_LoginWithCode_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthServiceServer).LoginWithCode(ctx, req.(*LoginWithCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_OpaqueRegisterInit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpaqueRegisterInitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).OpaqueRegisterInit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_OpaqueRegisterInit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).OpaqueRegisterInit(ctx, req.(*OpaqueRegisterInitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_OpaqueRegisterFinish_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpaqueRegisterFinishRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).OpaqueRegisterFinish(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_OpaqueRegisterFinish_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).OpaqueRegisterFinish(ctx, req.(*OpaqueRegisterFinishRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_OpaqueLoginInit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpaqueLoginInitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).OpaqueLoginInit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_OpaqueLoginInit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).OpaqueLoginInit(ctx, req.(*OpaqueLoginInitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuthService_OpaqueLoginFinish_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpaqueLoginFinishRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).OpaqueLoginFinish(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_OpaqueLoginFinish_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).OpaqueLoginFinish(ctx, req.(*OpaqueLoginFinishRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1610,6 +1768,22 @@ var AuthService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LoginWithCode",
 			Handler:    _AuthService_LoginWithCode_Handler,
+		},
+		{
+			MethodName: "OpaqueRegisterInit",
+			Handler:    _AuthService_OpaqueRegisterInit_Handler,
+		},
+		{
+			MethodName: "OpaqueRegisterFinish",
+			Handler:    _AuthService_OpaqueRegisterFinish_Handler,
+		},
+		{
+			MethodName: "OpaqueLoginInit",
+			Handler:    _AuthService_OpaqueLoginInit_Handler,
+		},
+		{
+			MethodName: "OpaqueLoginFinish",
+			Handler:    _AuthService_OpaqueLoginFinish_Handler,
 		},
 		{
 			MethodName: "ListUsers",

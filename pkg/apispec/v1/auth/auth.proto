@@ -49,6 +49,53 @@ service AuthService {
         option (annotations.noauth) = true;
     }
 
+    // OPAQUE PAKE — replaces plaintext-password-over-TLS for the
+    // admin + internal-provider login paths. Wire-format library:
+    // bytemare/opaque (RFC 9807). See OPAQUE_PLAN.md.
+
+    // OpaqueRegisterInit — first half of registration. Client sends
+    // M1 (RegistrationRequest); server returns M2 (RegistrationResponse).
+    // Stateless server-side; the per-client OPRF key is derived
+    // from the global seed + credential identifier.
+    rpc OpaqueRegisterInit(OpaqueRegisterInitRequest) returns (OpaqueRegisterInitResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/opaque/register/init"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // OpaqueRegisterFinish — client sends M3 (RegistrationRecord);
+    // server persists it as the user's password file and returns ok.
+    rpc OpaqueRegisterFinish(OpaqueRegisterFinishRequest) returns (OpaqueRegisterFinishResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/opaque/register/finish"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // OpaqueLoginInit — client sends KE1; server looks up record,
+    // returns KE2 + a session_id. Server caches per-session state
+    // (60s TTL).
+    rpc OpaqueLoginInit(OpaqueLoginInitRequest) returns (OpaqueLoginInitResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/opaque/login/init"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
+    // OpaqueLoginFinish — client sends session_id + KE3; server
+    // verifies KE3 MAC and returns a JWT on success.
+    rpc OpaqueLoginFinish(OpaqueLoginFinishRequest) returns (OpaqueLoginFinishResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/auth/opaque/login/finish"
+            body: "*"
+        };
+        option (annotations.noauth) = true;
+    }
+
     // List all users
     rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
         option (google.api.http) = {
@@ -1049,4 +1096,72 @@ message TotpStatusResponse {
     google.protobuf.Timestamp totp_enabled_at = 6;
     // Number of remaining recovery codes
     int32 recovery_codes_remaining = 7;
+}
+
+// ============================================================================
+// OPAQUE messages — see OPAQUE_PLAN.md for the protocol and the
+// wire-format library choice.
+// ============================================================================
+
+message OpaqueRegisterInitRequest {
+    // username — mailbox (admin) or username (internal user).
+    string username = 1;
+    // provider — "admin" | "internal".
+    string provider = 2;
+    // M1 — base64url(RegistrationRequest). Unpadded matches what
+    // serenity-kit emits natively.
+    string m1_b64 = 3;
+}
+
+message OpaqueRegisterInitResponse {
+    // M2 — base64url(RegistrationResponse).
+    string m2_b64 = 1;
+}
+
+message OpaqueRegisterFinishRequest {
+    string username = 1;
+    string provider = 2;
+    // M3 — base64url(RegistrationRecord).
+    string m3_b64 = 3;
+}
+
+message OpaqueRegisterFinishResponse {
+    bool ok = 1;
+    string error = 2;
+}
+
+message OpaqueLoginInitRequest {
+    string username = 1;
+    string provider = 2;
+    // KE1 — base64url(KE1).
+    string ke1_b64 = 3;
+}
+
+message OpaqueLoginInitResponse {
+    // KE2 — base64url(KE2). Empty when legacy_available=true.
+    string ke2_b64 = 1;
+    // Session id the server caches the per-login state under.
+    // Returned to the client; client passes it back on Finish.
+    string session_id = 2;
+    // legacy_available=true tells the client to fall back to
+    // LoginAdmin / LoginWithSecret. Set when the username has an
+    // argon2id hash but no OPAQUE record yet.
+    bool legacy_available = 3;
+}
+
+message OpaqueLoginFinishRequest {
+    string session_id = 1;
+    // KE3 — base64url(KE3).
+    string ke3_b64 = 2;
+}
+
+message OpaqueLoginFinishResponse {
+    // admintoken — populated for admin-provider logins (matches
+    // LoginAdminResponse).
+    string admintoken = 1;
+    // token — populated for internal-provider logins (matches
+    // LoginWithSecretResponse).
+    string token = 2;
+    bool totp_required = 3;
+    string error = 4;
 }

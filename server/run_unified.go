@@ -25,6 +25,7 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
+	"github.com/tlalocweb/hulation/pkg/auth/opaque"
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 	"github.com/tlalocweb/hulation/pkg/notifier/apns"
@@ -156,6 +157,25 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 	}
 	notifier.SetGlobal(composite)
+
+	// OPAQUE PAKE — replaces plaintext password exchange for admin
+	// + internal-provider logins. See OPAQUE_PLAN.md.
+	{
+		var opaqueSeedCfg, opaqueAKECfg string
+		if conf.OPAQUE != nil {
+			opaqueSeedCfg = conf.OPAQUE.OPRFSeed
+			opaqueAKECfg = conf.OPAQUE.AKESecret
+		}
+		seed, akePriv, akePub, err := opaque.LoadOrGenerate(opaqueSeedCfg, opaqueAKECfg)
+		if err != nil {
+			log.Warnf("OPAQUE: key material init failed: %s — OPAQUE login + register will be unavailable", err.Error())
+		} else if osrv, err := opaque.New(seed, akePriv, akePub); err != nil {
+			log.Warnf("OPAQUE: server init failed: %s", err.Error())
+		} else {
+			opaque.SetGlobal(osrv)
+			log.Infof("OPAQUE: %s", osrv.Suite())
+		}
+	}
 
 	// Realtime pub/sub hub — Phase 5a.6. Broadcasters:
 	//   * /api/mobile/v1/debug/publish (used by e2e suite 30)
