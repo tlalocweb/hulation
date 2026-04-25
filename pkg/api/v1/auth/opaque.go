@@ -29,6 +29,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/pkg/auth/opaque"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
+	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 )
 
@@ -70,12 +71,63 @@ func validProvider(p string) error {
 	return status.Errorf(codes.InvalidArgument, "unknown provider %q", p)
 }
 
-// OpaqueRegisterInit — first half of registration.
+// canRegister returns nil when the caller is allowed to register
+// (or rotate) the password for (provider, username).
+//
+// Rules:
+//   * provider="admin" AND username == config.Admin.Username AND
+//     no existing OPAQUE record → allow without auth (bootstrap).
+//   * any other case → require admin JWT on the request context.
+//
+// The "bootstrap window" closes the moment a record exists; from
+// then on, password rotation requires admin auth.
+func canRegister(ctx context.Context, provider, username string) error {
+	existing, err := hulabolt.GetOpaqueRecord(provider, username)
+	if err != nil {
+		return status.Errorf(codes.Internal, "check existing record: %v", err)
+	}
+	if existing == nil && provider == providerAdmin {
+		cfg := config.GetConfig()
+		if cfg != nil && cfg.Admin != nil && cfg.Admin.Username == username {
+			return nil
+		}
+	}
+	if !callerIsAdmin(ctx) {
+		return status.Error(codes.PermissionDenied,
+			"OPAQUE register requires admin authentication "+
+				"(or the bootstrap path: provider=admin, "+
+				"matching config.Admin.Username, no existing record)")
+	}
+	return nil
+}
+
+// callerIsAdmin checks the authware Claims on the request context.
+func callerIsAdmin(ctx context.Context) bool {
+	c, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
+	if !ok || c == nil {
+		return false
+	}
+	for _, r := range c.Roles {
+		if r == "admin" || r == "superadmin" {
+			return true
+		}
+	}
+	if c.Username == "admin" {
+		return true
+	}
+	return false
+}
+
+// OpaqueRegisterInit — first half of registration. See canRegister
+// for the auth gate.
 func (s *Server) OpaqueRegisterInit(ctx context.Context, req *authspec.OpaqueRegisterInitRequest) (*authspec.OpaqueRegisterInitResponse, error) {
 	if req == nil || req.GetUsername() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username required")
 	}
 	if err := validProvider(req.GetProvider()); err != nil {
+		return nil, err
+	}
+	if err := canRegister(ctx, req.GetProvider(), req.GetUsername()); err != nil {
 		return nil, err
 	}
 	srv := opaque.Global()
@@ -96,11 +148,16 @@ func (s *Server) OpaqueRegisterInit(ctx context.Context, req *authspec.OpaqueReg
 
 // OpaqueRegisterFinish — persists the resulting record under the
 // (provider, username) key. Idempotent: replays/updates rotate.
+//
+// Auth gate: same canRegister rules as OpaqueRegisterInit.
 func (s *Server) OpaqueRegisterFinish(ctx context.Context, req *authspec.OpaqueRegisterFinishRequest) (*authspec.OpaqueRegisterFinishResponse, error) {
 	if req == nil || req.GetUsername() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username required")
 	}
 	if err := validProvider(req.GetProvider()); err != nil {
+		return nil, err
+	}
+	if err := canRegister(ctx, req.GetProvider(), req.GetUsername()); err != nil {
 		return nil, err
 	}
 	srv := opaque.Global()
@@ -128,12 +185,11 @@ func (s *Server) OpaqueRegisterFinish(ctx context.Context, req *authspec.OpaqueR
 
 // OpaqueLoginInit — looks up the record + drives the AKE init step.
 //
-// If the username has no OPAQUE record but a legacy admin_hash
-// exists in config, we set legacy_available=true so the client can
-// fall back to the legacy LoginAdmin flow during the migration
-// window. Internal users without records → NotFound (no legacy
-// fallback because their hashes live on the user object, not in
-// config — easier for the client to handle a single fallback path).
+// Returns NotFound when the user has no OPAQUE record. There is no
+// legacy fallback — operators bootstrap an admin password via the
+// `set-admin-password.sh` script (which uses the noauth bootstrap
+// path of OpaqueRegisterInit/Finish for admin) before any login
+// will succeed.
 func (s *Server) OpaqueLoginInit(ctx context.Context, req *authspec.OpaqueLoginInitRequest) (*authspec.OpaqueLoginInitResponse, error) {
 	if req == nil || req.GetUsername() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username required")
@@ -150,15 +206,9 @@ func (s *Server) OpaqueLoginInit(ctx context.Context, req *authspec.OpaqueLoginI
 		return nil, status.Errorf(codes.Internal, "load opaque record: %v", err)
 	}
 	if rec == nil {
-		// No OPAQUE record. Tell the client legacy is available
-		// (admin only, when the legacy admin hash exists).
-		legacy := false
-		if req.GetProvider() == providerAdmin {
-			if cfg := config.GetConfig(); cfg != nil && cfg.Admin != nil && cfg.Admin.Hash != "" && req.GetUsername() == cfg.Admin.Username {
-				legacy = true
-			}
-		}
-		return &authspec.OpaqueLoginInitResponse{LegacyAvailable: legacy}, nil
+		return nil, status.Error(codes.NotFound,
+			"no OPAQUE record for this user — run set-admin-password "+
+				"(or the deploy bootstrap script) first")
 	}
 	ke1, err := b64dec(req.GetKe1B64())
 	if err != nil {

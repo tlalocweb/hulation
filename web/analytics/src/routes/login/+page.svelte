@@ -4,7 +4,6 @@
   import { ApiError } from '$lib/api/analytics';
   import {
     loginAdmin as opaqueLoginAdmin,
-    LegacyAvailableError,
     OpaqueAuthError,
     prewarmOpaque,
   } from '$lib/api/opaque';
@@ -57,44 +56,21 @@
     }
   }
 
-  // OPAQUE-first admin login with legacy fallback.
+  // OPAQUE-only admin login. No legacy plaintext fallback —
+  // operators bootstrap an admin password via the deploy-side
+  // set-admin-password.sh script before any login succeeds.
   async function doAdminLogin() {
     if (!username || !password) return;
     adminError = null;
     adminSubmitting = true;
     try {
-      // 1. Try OPAQUE.
-      try {
-        const r = await opaqueLoginAdmin(username, password);
-        setToken(r.jwt);
-        window.location.href = '/analytics/';
-        return;
-      } catch (e) {
-        if (e instanceof LegacyAvailableError) {
-          // Server has no OPAQUE record yet — fall through to legacy.
-        } else if (e instanceof OpaqueAuthError) {
-          // Real auth failure (wrong password or server-identity
-          // mismatch). Don't fall back; that would obscure the real
-          // failure mode.
-          adminError = e;
-          return;
-        } else if (opaqueState === 'failed') {
-          // OPAQUE WASM never loaded — quietly fall back to legacy.
-        } else {
-          // Network or unexpected error — surface and stop.
-          adminError = e;
-          return;
-        }
-      }
-
-      // 2. Legacy plaintext-over-TLS fallback (deprecation window).
-      const r = await login.admin(username, password);
-      if (r.error) throw new Error(r.error);
-      if (!r.admintoken) throw new Error('login returned no token');
-      setToken(r.admintoken);
+      const r = await opaqueLoginAdmin(username, password);
+      setToken(r.jwt);
       window.location.href = '/analytics/';
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
+      if (e instanceof OpaqueAuthError) {
+        adminError = e;
+      } else if (e instanceof ApiError && e.status === 401) {
         adminError = new Error('Invalid credentials');
       } else {
         adminError = e;

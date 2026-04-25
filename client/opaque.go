@@ -150,9 +150,8 @@ type opaqueLoginInitReq struct {
 	Ke1B64   string `json:"ke1_b64"`
 }
 type opaqueLoginInitResp struct {
-	Ke2B64          string `json:"ke2_b64"`
-	SessionId       string `json:"session_id"`
-	LegacyAvailable bool   `json:"legacy_available"`
+	Ke2B64    string `json:"ke2_b64"`
+	SessionId string `json:"session_id"`
 }
 type opaqueLoginFinishReq struct {
 	SessionId string `json:"session_id"`
@@ -165,17 +164,17 @@ type opaqueLoginFinishResp struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// OpaqueLoginResult mirrors the legacy AuthResponse field names so
-// the caller in main.go can switch flows transparently.
+// OpaqueLoginResult carries the JWT + TOTP-required flag returned
+// after a successful OPAQUE login.
 type OpaqueLoginResult struct {
-	JWT             string
-	TotpRequired    bool
-	LegacyAvailable bool
+	JWT          string
+	TotpRequired bool
 }
 
-// OpaqueLogin attempts an OPAQUE login. On legacy_available=true,
-// returns Result{LegacyAvailable: true} so the caller can fall
-// back to the legacy /api/auth/login flow.
+// OpaqueLogin drives an OPAQUE login round-trip. Returns
+// (nil, error) on any failure including "no record on the server"
+// (the operator must bootstrap the password first via
+// `hulactl set-password` or the deploy-side script).
 func (c *Client) OpaqueLogin(provider, username, password string) (*OpaqueLoginResult, error) {
 	cfg := opaque.DefaultConfiguration()
 	cli, err := cfg.Client()
@@ -195,11 +194,8 @@ func (c *Client) OpaqueLogin(provider, username, password string) (*OpaqueLoginR
 		}, &initResp); err != nil {
 		return nil, fmt.Errorf("login init RPC: %w", err)
 	}
-	if initResp.LegacyAvailable && initResp.Ke2B64 == "" {
-		return &OpaqueLoginResult{LegacyAvailable: true}, nil
-	}
 	if initResp.Ke2B64 == "" {
-		return nil, fmt.Errorf("server returned no KE2 and no legacy fallback")
+		return nil, fmt.Errorf("server returned no KE2 (no record? bootstrap first)")
 	}
 	ke2Bytes, err := b64decU(initResp.Ke2B64)
 	if err != nil {

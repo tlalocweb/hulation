@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -141,56 +140,9 @@ type AuthResponse struct {
 	TotpNeedsSetup bool   `json:"totp_needs_setup,omitempty"`
 }
 
-// Auth get a JWT using the /auth/login endpoint
-func (c *Client) Auth(identity string, pass string) (resp *ClientResponse, token string, err error) {
-	url := c.apiUrl + "/api/auth/login"
-
-	hash := utils.GenerateHulaNetworkPassHash(pass)
-	// make request
-	//		http.Post(url, "application/json", bytes.NewBuffer([]byte(fmt.Sprintf(`{"userid": "%s", "hash": "%s"}`, identity, hash))))
-	c.out("auth url: %s\n", url)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(fmt.Sprintf(`{"userid": "%s", "hash": "%s"}`, identity, hash))))
-	if err != nil {
-		c.errout("Error creating request: %s\n", err.Error())
-		err = &ClientError{RootCause: fmt.Errorf("error creating request: %s", err.Error())}
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp = NewResponse()
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		c.errout("client: error making http request: %s\n", err)
-		err = &ClientError{RootCause: fmt.Errorf("error making http request: %s", err.Error())}
-		return
-	}
-	resp.Finish(res.StatusCode, "", nil)
-	c.out("response: %d\n", res.StatusCode)
-	resBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		c.errout("client: could not read response body: %s\n", err)
-		err = fmt.Errorf("could not read response body (ReadAll): %s", err.Error())
-	}
-	c.out("body: %s\n", string(resBody))
-
-	if res.StatusCode != 200 {
-		c.errout("Error: %d  Body: %s\n", res.StatusCode, string(resBody))
-		err = &ClientError{StatusCode: res.StatusCode, Body: string(resBody)}
-		return
-	}
-	var authresp AuthResponse
-	err = json.Unmarshal(resBody, &authresp)
-	if err != nil {
-		c.errout("Error unmarshalling response: %s\n", err.Error())
-		err = fmt.Errorf("error unmarshalling response: %s", err.Error())
-		return
-	}
-	c.out("Token: %s\n", authresp.Token)
-	c.out("Response took: %s\n", resp.Duration())
-	token = authresp.Token
-	resp.Body = string(resBody)
-	resp.Response = authresp
-	return
-}
+// Auth (legacy plaintext-over-TLS login) was removed. Hula now
+// requires OPAQUE PAKE for every password-based login. Use
+// (*Client).OpaqueLogin in client/opaque.go instead.
 
 func (c *Client) StatusAuthOK() (resp *ClientResponse, err error) {
 	url := c.apiUrl + "/api/auth/ok"

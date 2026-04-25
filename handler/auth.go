@@ -7,55 +7,24 @@ import (
 	"github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
-	"github.com/tlalocweb/hulation/utils"
 )
 
-type LoginInput struct {
-	Userid       string `json:"userid"`
-	PasswordHash string `json:"hash"`
-}
-
+// Login is the legacy plaintext-password endpoint. Removed —
+// hula now requires OPAQUE PAKE for every password-based login
+// path. Returns 410 Gone with a hint so old clients fail loud
+// instead of silently retrying.
+//
+// The route at POST /api/auth/login is kept registered for now so
+// stale clients receive an explicit error rather than 404, but
+// the underlying plaintext-comparison code is gone.
 func Login(ctx RequestCtx) error {
-	var input LoginInput
-
-	log.Debugf("Body: %s", string(ctx.Body()))
-	if err := ctx.BodyParser(&input); err != nil {
-		ctx.SendString("bad parse: " + err.Error())
-		return ctx.Status(http.StatusUnauthorized).SendString("")
+	log.Debugf("legacy /api/auth/login hit; rejecting with 410")
+	body := map[string]string{
+		"error": "legacy login removed; use OPAQUE at /api/v1/auth/opaque/login/* (run hulactl set-password to bootstrap)",
 	}
-
-	var authok bool
-	var isadmin bool
-	if input.Userid == app.GetConfig().Admin.Username {
-		match, err := utils.Argon2CompareHashAndSecret(input.PasswordHash, app.GetConfig().Admin.Hash)
-		if err != nil {
-			ctx.SendString("has function error: " + err.Error())
-			return ctx.Status(http.StatusInternalServerError).SendString("")
-		}
-		if match {
-			authok = true
-			isadmin = true
-		}
-	}
-
-	if !authok {
-		return ctx.Status(http.StatusUnauthorized).SendString("")
-	}
-
-	// Check if TOTP is required for this user
-	if isadmin && CheckTotpRequired(input.Userid) {
-		return LoginResponseForTotp(ctx, input.Userid)
-	}
-
-	jwt, err2 := model.NewJWTClaimsCommit(model.GetDB(), input.Userid, &model.LoginOpts{
-		IsAdmin: isadmin,
-	})
-	if err2 != nil {
-		ctx.SendString("jwt error: " + err2.Error())
-		return ctx.Status(http.StatusInternalServerError).SendString("")
-	}
-
-	return ctx.SendJSON(map[string]string{"jwt": jwt})
+	ctx.SetContentType("application/json")
+	js, _ := json.Marshal(body)
+	return ctx.Status(http.StatusGone).SendString(string(js))
 }
 
 type StatusAuthOKResp struct {

@@ -44,44 +44,18 @@ type Server struct {
 // New returns an AuthService implementation.
 func New() *Server { return &Server{} }
 
-// LoginAdmin authenticates the built-in admin (root) user against the
-// argon2id hash stored in config.Admin.Hash. Issues a JWT via
-// model.NewJWTClaimsCommit on success. Mirrors handler.Login from the
-// legacy Fiber route.
+// LoginAdmin is the LEGACY plaintext-password admin login. Removed
+// — hula now requires OPAQUE PAKE for every password-based login.
+// Returns an error envelope so old clients fail loud rather than
+// silently retrying.
+//
+// The proto RPC stays registered for compat during the cutover; new
+// callers must use OpaqueLoginInit / OpaqueLoginFinish.
 func (s *Server) LoginAdmin(ctx context.Context, req *authspec.LoginAdminRequest) (*authspec.LoginAdminResponse, error) {
-	cfg := config.GetConfig()
-	if cfg == nil || cfg.Admin == nil {
-		return nil, status.Error(codes.FailedPrecondition, "admin not configured")
-	}
-	if req.GetUsername() != cfg.Admin.Username {
-		return &authspec.LoginAdminResponse{
-			Error: ptr("invalid credentials"),
-		}, nil
-	}
-	match, err := utils.Argon2CompareHashAndSecret(req.GetHash(), cfg.Admin.Hash)
-	if err != nil {
-		aLog.Errorf("LoginAdmin: argon2 compare: %v", err)
-		return nil, status.Error(codes.Internal, "hash function error")
-	}
-	if !match {
-		return &authspec.LoginAdminResponse{Error: ptr("invalid credentials")}, nil
-	}
-
-	// TODO: TOTP gate for admin logins that have TOTP enabled. The
-	// existing handler.CheckTotpRequired logic lives in handler/totp.go;
-	// skipped here because the full TOTP flow (totp_pending → validate
-	// RPCs) is still Unimplemented. Admin logins with TOTP enabled
-	// should continue to use the legacy /api/auth/login route until
-	// the TOTP RPCs land.
-
-	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), req.GetUsername(), &model.LoginOpts{
-		IsAdmin: true,
-	})
-	if err != nil {
-		aLog.Errorf("LoginAdmin: JWT issue: %v", err)
-		return nil, status.Errorf(codes.Internal, "issue jwt: %v", err)
-	}
-	return &authspec.LoginAdminResponse{Admintoken: jwt}, nil
+	aLog.Warnf("legacy LoginAdmin RPC hit — rejecting; caller should use /api/v1/auth/opaque/login/*")
+	return &authspec.LoginAdminResponse{
+		Error: ptr("legacy LoginAdmin removed; use /api/v1/auth/opaque/login/* (run hulactl set-password to bootstrap)"),
+	}, nil
 }
 
 func ptr(s string) *string { return &s }

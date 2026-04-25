@@ -74,7 +74,6 @@ export interface OpaqueLoginResult {
 export interface OpaqueLoginInitResp {
   ke2_b64: string;
   session_id: string;
-  legacy_available: boolean;
 }
 
 export interface OpaqueLoginFinishResp {
@@ -82,16 +81,6 @@ export interface OpaqueLoginFinishResp {
   token?: string;
   totp_required?: boolean;
   error?: string;
-}
-
-// LegacyAvailableError signals that the server has no OPAQUE record
-// for this user but the legacy admin-hash flow can still serve.
-// Caller catches this and falls back to legacy.
-export class LegacyAvailableError extends Error {
-  constructor() {
-    super('OPAQUE: legacy_available — caller should fall back to legacy login');
-    this.name = 'LegacyAvailableError';
-  }
 }
 
 export class OpaqueAuthError extends Error {
@@ -115,9 +104,9 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
 }
 
 // loginAdmin — drives an admin login via OPAQUE. Throws
-// LegacyAvailableError when the caller should fall back to the
-// legacy /api/v1/auth/admin POST. Throws OpaqueAuthError on
-// invalid credentials. JWT lands in the result on success.
+// OpaqueAuthError on invalid credentials or when the user has no
+// OPAQUE record on the server (operator must bootstrap first).
+// JWT lands in the result on success.
 export async function loginAdmin(
   username: string,
   password: string,
@@ -152,11 +141,12 @@ async function loginInternal(
     },
   );
 
-  if (init.legacy_available && !init.ke2_b64) {
-    throw new LegacyAvailableError();
-  }
   if (!init.ke2_b64) {
-    throw new OpaqueAuthError('OPAQUE: server returned no KE2');
+    throw new OpaqueAuthError(
+      'No OPAQUE record on the server. The operator must bootstrap '
+        + 'the admin password first (set-admin-password.sh on the '
+        + 'deploy host).',
+    );
   }
 
   const r2 = opaque.client.finishLogin({

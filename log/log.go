@@ -32,7 +32,9 @@ var tagBlockFilter uint64
 
 func init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.TimeOnly, NoColor: false}
+	// Logs go to stderr so stdout is reserved for command output
+	// (e.g. hulactl generatehash → bare hash, scripts can pipe).
+	output := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly, NoColor: false}
 	log = zerolog.New(output).With().Timestamp().Logger()
 
 	tagRegistry = make(map[string]uint64)
@@ -45,7 +47,7 @@ func MaskSecret(s string) string {
 }
 
 func UseJsonLogs() {
-	log = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	log = zerolog.New(os.Stderr).With().Timestamp().Logger()
 }
 
 func SetLevel(level zerolog.Level) {

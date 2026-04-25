@@ -314,7 +314,7 @@ func GetConfig(opts *HulactlConfig) (err error) {
 		err = fmt.Errorf("error processing flags: %w", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Processed: %v\n", processed.GetFlagsFound())
+	fmt.Fprintf(os.Stderr, "Processed: %v\n", processed.GetFlagsFound())
 	flag.Parse()
 
 	var usecustomconfigfilepath bool
@@ -432,7 +432,7 @@ func main() {
 		command = argz[0]
 	}
 
-	fmt.Printf("Command: %s\n", command)
+	fmt.Fprintf(os.Stderr, "Command: %s\n", command)
 
 	switch command {
 	case CMD_GENERATEHASH:
@@ -479,22 +479,19 @@ func main() {
 		var hash, shasum string
 		hash, shasum, err = utils.GenerateHulaHashFromPlaintextPass(password)
 		if err != nil {
-			fmt.Printf("Error generating hash: %s\n", err.Error())
+			fmt.Fprintf(os.Stderr, "Error generating hash: %s\n", err.Error())
 			os.Exit(1)
 		}
-		fmt.Printf("Hash: %s\n", hash)
-		// verify the hash works
-		var match bool
-		match, err = utils.Argon2CompareHashAndSecret(shasum, hash)
-		if err != nil {
-			fmt.Printf("Error verifying hash: %s\n", err.Error())
+		// Verify before emitting — fail loud rather than print a
+		// hash that won't validate.
+		match, err := utils.Argon2CompareHashAndSecret(shasum, hash)
+		if err != nil || !match {
+			fmt.Fprintf(os.Stderr, "ERROR: hash verification failed: %v\n", err)
 			os.Exit(1)
 		}
-		if match {
-			fmt.Printf("Hash verified.\n")
-		} else {
-			fmt.Printf("ERROR: Hash verification failed.\n")
-		}
+		// stdout = bare hash, nothing else. Pipes into a deploy
+		// script without needing cut/awk/sed.
+		fmt.Println(hash)
 	case CMD_AUTH:
 		// Determine which server to auth against
 		// Usage: hulactl auth [URL]
@@ -575,49 +572,21 @@ func main() {
 			}
 		}
 
-		// Prefer OPAQUE PAKE. Falls through to legacy when the
-		// server reports legacy_available (admin migration window)
-		// or when --no-opaque is set.
-		var (
-			authResp *client.ClientResponse
-			token    string
-		)
-		opaqueDone := false
-		if !hulactlconfig.NoOpaque {
-			res, oerr := hulaclient.OpaqueLogin("admin", identity, password)
-			if oerr == nil && res != nil {
-				if res.LegacyAvailable {
-					if hulactlconfig.DebugMode {
-						fmt.Printf("server reports legacy_available — falling back to legacy login\n")
-					}
-				} else {
-					token = res.JWT
-					authResp = client.NewResponse()
-					authResp.Finish(200, "", client.AuthResponse{
-						Token:        res.JWT,
-						TotpRequired: res.TotpRequired,
-					})
-					opaqueDone = true
-				}
-			} else if oerr != nil {
-				// On any OPAQUE-protocol error other than "legacy
-				// available" we still want to surface the message
-				// (could be wrong password). Treat it as auth
-				// failure unless --no-opaque was explicitly set.
-				if hulactlconfig.DebugMode {
-					fmt.Printf("OPAQUE login error: %s — falling back to legacy\n", oerr.Error())
-				}
-				// Fall through to legacy below.
-			}
+		// OPAQUE-only authentication. Legacy plaintext path is
+		// gone — to bootstrap a fresh deploy, run
+		// `hulactl set-password` (or the deploy-side
+		// set-admin-password.sh) first.
+		oRes, oerr := hulaclient.OpaqueLogin("admin", identity, password)
+		if oerr != nil {
+			fmt.Printf("Error: %s\n", oerr.Error())
+			os.Exit(1)
 		}
-		if !opaqueDone {
-			var lerr error
-			authResp, token, lerr = hulaclient.Auth(identity, password)
-			if lerr != nil {
-				fmt.Printf("Error: %s\n", lerr.Error())
-				os.Exit(1)
-			}
-		}
+		token := oRes.JWT
+		authResp := client.NewResponse()
+		authResp.Finish(200, "", client.AuthResponse{
+			Token:        oRes.JWT,
+			TotpRequired: oRes.TotpRequired,
+		})
 		err = nil
 
 		// Check if TOTP is required
