@@ -1207,7 +1207,16 @@ func main() {
 
 		c := GetHulactlClient(hulactlconfig)
 		if err := c.OpaqueRegister(provider, username, newPass); err != nil {
-			fmt.Printf("Error: %s\n", err.Error())
+			msg := err.Error()
+			fmt.Printf("Error: %s\n", msg)
+			// Surface a clearer hint when this is the rotation
+			// auth-gate path (record already exists; needs admin JWT).
+			if strings.Contains(msg, "OPAQUE register requires admin authentication") {
+				fmt.Printf("\nThis user already has an OPAQUE record on the server,\n")
+				fmt.Printf("so rotation requires admin auth. Run this first:\n")
+				fmt.Printf("  hulactl auth %s    # log in with the CURRENT password\n", hulactlconfig.Host)
+				fmt.Printf("Then re-run set-password.\n")
+			}
 			os.Exit(1)
 		}
 		fmt.Printf("Password for %s/%s set via OPAQUE.\n", provider, username)

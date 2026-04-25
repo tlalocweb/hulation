@@ -51,6 +51,13 @@ func (c *Client) postJSON(path string, body any, out any) (httpStatus int, err e
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Attach the bearer if hulactl has a saved JWT for this host.
+	// OPAQUE register-init/finish are noauth on bootstrap (no record
+	// yet) but require admin auth on rotation — this lets the same
+	// command serve both flows transparently.
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, err
