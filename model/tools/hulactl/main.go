@@ -22,6 +22,7 @@ import (
 	chapi "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/chzyer/readline"
 	"github.com/rivo/tview"
+	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v3"
 
 	"github.com/tlalocweb/hulation/client"
@@ -176,6 +177,8 @@ type HulactlConfig struct {
 	SetPasswordProvider string                 `flag:"provider" usage:"auth provider (default: admin)" default:"admin"`
 	// auth — opt out of OPAQUE; force the legacy /api/auth/login flow.
 	NoOpaque           bool                    `flag:"no-opaque" usage:"disable OPAQUE on auth; use legacy plaintext flow only"`
+	// forget-opaque-record — explicit Bolt file path. No autodiscovery.
+	BoltPath           string                  `flag:"bolt" usage:"path to a hula Bolt file (forget-opaque-record only)"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -1162,6 +1165,55 @@ func main() {
 		fmt.Printf("  HULA_OPAQUE_OPRF_SEED=\"%s\"\n", seed)
 		fmt.Printf("  HULA_OPAQUE_AKE_SECRET=\"%s\"\n", akeSecret)
 		fmt.Printf("\nIMPORTANT: changing these invalidates every existing OPAQUE record.\n")
+
+	case CMD_FORGETOPAQUE:
+		// EMERGENCY recovery: delete an OPAQUE record directly from
+		// a Bolt file. hula MUST be stopped first (Bolt allows one
+		// process at a time). Used by reset-admin-password.sh after
+		// `docker cp`-ing the bolt out of the container.
+		if hulactlconfig.BoltPath == "" {
+			fmt.Fprintf(os.Stderr, "Error: --bolt <path> is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_FORGETOPAQUE_USAGE)
+			os.Exit(1)
+		}
+		if len(argz) < 3 {
+			fmt.Fprintf(os.Stderr, "Error: provider and username are required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_FORGETOPAQUE_USAGE)
+			os.Exit(1)
+		}
+		provider := argz[1]
+		username := argz[2]
+		// Open the Bolt file directly (no hulabolt.Open process global —
+		// this is a one-shot edit and we want crisp control over
+		// open/close).
+		db, err := bolt.Open(hulactlconfig.BoltPath, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening bolt: %s\n", err.Error())
+			os.Exit(1)
+		}
+		key := provider + "|" + username
+		err = db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte("opaque_records"))
+			if b == nil {
+				return fmt.Errorf("opaque_records bucket missing")
+			}
+			if v := b.Get([]byte(key)); v == nil {
+				fmt.Printf("(no record for %s — already absent)\n", key)
+				return nil
+			}
+			if err := b.Delete([]byte(key)); err != nil {
+				return err
+			}
+			fmt.Printf("Deleted opaque_records[%s]\n", key)
+			return nil
+		})
+		if cerr := db.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+			os.Exit(1)
+		}
 
 	case CMD_SETPASSWORD:
 		// Always require fresh proof of the current password for

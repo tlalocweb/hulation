@@ -70,6 +70,9 @@ const (
 	CMD_SETPASSWORD_USAGE     = "set-password [--username admin] [--provider admin]\nPrompts for the new password (or reads HULACTL_NEW_PASSWORD).\nServer-side stores an OPAQUE registration record; the password\nitself is never sent over the wire."
 	CMD_OPAQUESEED            = "opaque-seed"
 	CMD_OPAQUESEED_HELP       = "Generate base64url OPAQUE OPRF seed + AKE secret for hula config"
+	CMD_FORGETOPAQUE          = "forget-opaque-record"
+	CMD_FORGETOPAQUE_HELP     = "EMERGENCY: delete an OPAQUE record from a Bolt file (offline recovery)"
+	CMD_FORGETOPAQUE_USAGE    = "forget-opaque-record --bolt <path> <provider> <username>\nUse only when the live admin password is lost. hula MUST be stopped first\n(Bolt allows only one process to hold the file open). Caller is responsible\nfor copy-out / edit / copy-back; this binary does the edit step."
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
@@ -117,6 +120,7 @@ func init() {
 		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
 		Command{CMD_SETPASSWORD, CMD_SETPASSWORD_HELP, CMD_SETPASSWORD_USAGE},
 		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},
+		Command{CMD_FORGETOPAQUE, CMD_FORGETOPAQUE_HELP, CMD_FORGETOPAQUE_USAGE},
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
