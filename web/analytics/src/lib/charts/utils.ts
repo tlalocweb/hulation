@@ -205,16 +205,26 @@ export function buildDonut(
 
 // formatShort — compact number formatter shared across charts. 12.5k,
 // 3.4M, 820. Keeps ticks readable.
-export function formatShort(n: number): string {
-  if (!isFinite(n)) return '—';
-  const abs = Math.abs(n);
-  if (abs < 1_000) return n.toFixed(0);
-  if (abs < 1_000_000) return (n / 1_000).toFixed(abs < 10_000 ? 1 : 0) + 'k';
-  if (abs < 1_000_000_000) return (n / 1_000_000).toFixed(abs < 10_000_000 ? 1 : 0) + 'M';
-  return (n / 1_000_000_000).toFixed(1) + 'B';
+//
+// Defensive Number-cast at entry: the analytics RPCs return int64
+// fields as JSON strings (proto3 → grpc-gateway encodes int64 as
+// string to avoid JS precision loss). The TS types declare them as
+// `number` but at runtime values like "12" arrive. `isFinite("12")`
+// coerces and reports true, but `"12".toFixed(...)` throws because
+// strings don't have toFixed. Coercing at entry makes the formatter
+// robust to either input type.
+export function formatShort(n: number | string): string {
+  const x = Number(n);
+  if (!isFinite(x)) return '—';
+  const abs = Math.abs(x);
+  if (abs < 1_000) return x.toFixed(0);
+  if (abs < 1_000_000) return (x / 1_000).toFixed(abs < 10_000 ? 1 : 0) + 'k';
+  if (abs < 1_000_000_000) return (x / 1_000_000).toFixed(abs < 10_000_000 ? 1 : 0) + 'M';
+  return (x / 1_000_000_000).toFixed(1) + 'B';
 }
 
-export function formatPct(n: number, digits = 1): string {
-  if (!isFinite(n)) return '—';
-  return n.toFixed(digits) + '%';
+export function formatPct(n: number | string, digits = 1): string {
+  const x = Number(n);
+  if (!isFinite(x)) return '—';
+  return x.toFixed(digits) + '%';
 }

@@ -24,23 +24,27 @@
   const { state, retry } = query;
   onDestroy(() => (state as unknown as { __cleanup?: () => void }).__cleanup?.());
 
+  // The events RPC populates `count` and `unique_visitors` (see
+  // pkg/analytics/query/events.go). Other TableRow fields (pageviews,
+  // visitors) are zero — they're filled by other reports that share
+  // the same wide row type.
   $: rows = ($state.data?.rows ?? []) as TableRow[];
-  $: totalCount = rows.reduce((sum, r) => sum + Number(r.pageviews ?? r.visitors ?? 0), 0);
+  $: totalCount = rows.reduce((sum, r) => sum + Number(r.count ?? 0), 0);
   $: withPct = rows.map((r) => ({
     ...r,
-    pct_of_total: totalCount ? (Number(r.pageviews ?? r.visitors ?? 0) / totalCount) * 100 : 0,
+    pct_of_total: totalCount ? (Number(r.count ?? 0) / totalCount) * 100 : 0,
   }));
 
   const columns: Column<TableRow & { pct_of_total: number }>[] = [
     { key: 'key', label: 'Event code', align: 'left' },
     {
-      key: 'pageviews',
+      key: 'count',
       label: 'Count',
       align: 'right',
       format: (v: unknown) => formatShort(Number(v ?? 0)),
     },
     {
-      key: 'visitors',
+      key: 'unique_visitors',
       label: 'Unique visitors',
       align: 'right',
       format: (v: unknown) => formatShort(Number(v ?? 0)),

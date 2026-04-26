@@ -232,13 +232,13 @@ func (s *Server) TestGoal(ctx context.Context, req *goalsspec.TestGoalRequest) (
 
 	// Total events scanned = all events for this server in the window;
 	// would_fire = subset that matches the rule.
-	const qScanned = `SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ?`
+	const qScanned = `SELECT count() FROM events WHERE server_id = ? AND when >= ?`
 	var scanned int64
 	if err := db.QueryRowContext(ctx, qScanned, req.GetServerId(), since).Scan(&scanned); err != nil {
 		return nil, status.Errorf(codes.Internal, "scan count: %s", err)
 	}
 
-	qMatch := `SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND ` + where
+	qMatch := `SELECT count() FROM events WHERE server_id = ? AND when >= ? AND ` + where
 	matchArgs := append([]any{req.GetServerId(), since}, args...)
 	var fired int64
 	if err := db.QueryRowContext(ctx, qMatch, matchArgs...).Scan(&fired); err != nil {

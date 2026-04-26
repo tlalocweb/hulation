@@ -40,6 +40,16 @@
 
   $: currentPath = $page.url.pathname.replace(/\/+$/, '');
   $: baseNoTrailingSlash = base.replace(/\/+$/, '');
+  // Preserve the current query string when navigating between tabs
+  // so the URL bar stays accurate (and bookmarks survive a refresh).
+  // The layout's hydrateAndApplyDefaults() also re-applies defaults
+  // on every nav as a belt-and-suspenders measure.
+  $: search = $page.url.search;
+
+  function linkHref(href: string): string {
+    const path = href ? `${base}/${href}` : `${base}/`;
+    return `${path}${search}`;
+  }
 
   function isActive(href: string): boolean {
     const full = href ? `${baseNoTrailingSlash}/${href}` : baseNoTrailingSlash;
@@ -56,7 +66,7 @@
     {#each reportItems as item (item.href)}
       <li>
         <a
-          href={`${base}/${item.href}`}
+          href={linkHref(item.href)}
           class="flex items-center gap-2 rounded px-3 py-2 text-sm transition hover:bg-accent hover:text-accent-foreground
                  {isActive(item.href) ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground'}"
           aria-current={isActive(item.href) ? 'page' : undefined}
@@ -74,7 +84,7 @@
       {#each adminItems as item (item.href)}
         <li>
           <a
-            href={`${base}/${item.href}`}
+            href={linkHref(item.href)}
             class="flex items-center gap-2 rounded px-3 py-2 text-sm transition hover:bg-accent hover:text-accent-foreground
                    {isActive(item.href) ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground'}"
             aria-current={isActive(item.href) ? 'page' : undefined}

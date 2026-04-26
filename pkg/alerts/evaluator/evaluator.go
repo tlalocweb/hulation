@@ -168,7 +168,7 @@ func (e *Evaluator) evaluate(ctx context.Context, a hulabolt.StoredAlert) (float
 		}
 		var n int64
 		row := e.db.QueryRowContext(ctx,
-			`SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND is_goal = 1 AND goal_id = ?`,
+			`SELECT count() FROM events WHERE server_id = ? AND when >= ? AND is_goal = 1 AND goal_id = ?`,
 			a.ServerID, since, a.TargetGoalID)
 		if err := row.Scan(&n); err != nil {
 			return 0, false, err
@@ -206,7 +206,7 @@ func (e *Evaluator) evaluate(ctx context.Context, a hulabolt.StoredAlert) (float
 		}
 		var n int64
 		row := e.db.QueryRowContext(ctx,
-			`SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND code = 0x20 AND position(data, ?) > 0`,
+			`SELECT count() FROM events WHERE server_id = ? AND when >= ? AND code = 0x20 AND position(data, ?) > 0`,
 			a.ServerID, since, a.TargetFormID)
 		if err := row.Scan(&n); err != nil {
 			return 0, false, err
@@ -215,11 +215,11 @@ func (e *Evaluator) evaluate(ctx context.Context, a hulabolt.StoredAlert) (float
 		return rate, rate > a.Threshold, nil
 
 	case "bad_actor_rate":
-		// Bad-actor hits/min. Rides on events_v1.is_bot column (Phase
+		// Bad-actor hits/min. Rides on the events.is_bot column (Phase
 		// 0 enrichment tags bot traffic there).
 		var n int64
 		row := e.db.QueryRowContext(ctx,
-			`SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND is_bot = 1`,
+			`SELECT count() FROM events WHERE server_id = ? AND when >= ? AND is_bot = 1`,
 			a.ServerID, since)
 		if err := row.Scan(&n); err != nil {
 			return 0, false, err
@@ -233,7 +233,7 @@ func (e *Evaluator) evaluate(ctx context.Context, a hulabolt.StoredAlert) (float
 		// synthetic "build_failed" row on each failed build.
 		var n int64
 		row := e.db.QueryRowContext(ctx,
-			`SELECT count() FROM events_v1 WHERE server_id = ? AND when >= ? AND code = 0x1000`, // build_failed code reserved
+			`SELECT count() FROM events WHERE server_id = ? AND when >= ? AND code = 0x1000`, // build_failed code reserved
 			a.ServerID, since)
 		if err := row.Scan(&n); err != nil {
 			return 0, false, err
@@ -246,7 +246,7 @@ func (e *Evaluator) evaluate(ctx context.Context, a hulabolt.StoredAlert) (float
 func (e *Evaluator) countPageviews(ctx context.Context, serverID, path string, from, to time.Time) (int64, error) {
 	var n int64
 	err := e.db.QueryRowContext(ctx,
-		`SELECT count() FROM events_v1 WHERE server_id = ? AND url_path = ? AND when >= ? AND when < ? AND code = 1`,
+		`SELECT count() FROM events WHERE server_id = ? AND url_path = ? AND when >= ? AND when < ? AND code = 1`,
 		serverID, path, from, to).Scan(&n)
 	return n, err
 }

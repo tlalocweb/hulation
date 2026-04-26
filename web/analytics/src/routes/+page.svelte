@@ -25,16 +25,19 @@
   });
 
   // Project timeseries buckets into the shape LineChart expects and
-  // derive per-metric arrays for sparklines.
+  // derive per-metric arrays for sparklines. The proto int64 fields
+  // arrive as JSON strings (grpc-gateway preserves precision); coerce
+  // them to numbers here so chart math and toFixed() formatters work
+  // without per-call-site Number(...) wrapping.
   $: points = ($timeseries.data?.buckets ?? []).map(
     (b): TimeseriesPoint => ({
       ts: new Date(b.ts),
-      visitors: b.visitors,
-      pageviews: b.pageviews,
+      visitors: Number(b.visitors),
+      pageviews: Number(b.pageviews),
     })
   );
-  $: visitorSeries = ($timeseries.data?.buckets ?? []).map((b) => b.visitors);
-  $: pageviewSeries = ($timeseries.data?.buckets ?? []).map((b) => b.pageviews);
+  $: visitorSeries = ($timeseries.data?.buckets ?? []).map((b) => Number(b.visitors));
+  $: pageviewSeries = ($timeseries.data?.buckets ?? []).map((b) => Number(b.pageviews));
 </script>
 
 <section class="space-y-6">
@@ -53,7 +56,7 @@
     <KpiCard
       label="Visitors"
       kind="count"
-      value={$summary.data?.visitors ?? null}
+      value={$summary.data?.visitors != null ? Number($summary.data.visitors) : null}
       sparkline={visitorSeries}
       colorIndex={0}
       loading={$summary.loading}
@@ -61,7 +64,7 @@
     <KpiCard
       label="Pageviews"
       kind="count"
-      value={$summary.data?.pageviews ?? null}
+      value={$summary.data?.pageviews != null ? Number($summary.data.pageviews) : null}
       sparkline={pageviewSeries}
       colorIndex={1}
       loading={$summary.loading}
@@ -69,14 +72,14 @@
     <KpiCard
       label="Bounce rate"
       kind="pct"
-      value={$summary.data?.bounce_rate ?? null}
+      value={$summary.data?.bounce_rate != null ? Number($summary.data.bounce_rate) : null}
       colorIndex={2}
       loading={$summary.loading}
     />
     <KpiCard
       label="Avg session"
       kind="duration"
-      value={$summary.data?.avg_session_duration_seconds ?? null}
+      value={$summary.data?.avg_session_duration_seconds != null ? Number($summary.data.avg_session_duration_seconds) : null}
       colorIndex={3}
       loading={$summary.loading}
     />

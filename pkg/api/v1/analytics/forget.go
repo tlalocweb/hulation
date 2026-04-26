@@ -1,8 +1,8 @@
 package analytics
 
 // ForgetVisitor — GDPR erasure RPC. Deletes every event belonging to
-// the given visitor_id on the given server_id from events_v1, then
-// writes an audit row to Bolt's audit_forget bucket.
+// the given visitor_id on the given server_id from the events table,
+// then writes an audit row to Bolt's audit_forget bucket.
 //
 // ClickHouse caveats:
 //   * ALTER TABLE … DELETE is an async MUTATION. The statement
@@ -14,8 +14,8 @@ package analytics
 //     queue-and-confirm semantics are sufficient and we document it
 //     as "scheduled".
 //   * Aggregate MVs (mv_events_hourly, mv_events_daily, mv_sessions)
-//     are fed by INSERTS through events_v1; they won't shed the
-//     rows on their own. For strict GDPR compliance an operator
+//     are fed by INSERTS through the events table; they won't shed
+//     the rows on their own. For strict GDPR compliance an operator
 //     needs to run the same DELETE against each MV — we schedule
 //     those mutations here as part of the ForgetVisitor call.
 //
@@ -51,27 +51,27 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 	// Pre-count how many events we're about to delete. Best-effort —
 	// the actual mutation runs async.
 	var rowsDeleted int64
-	countQ := `SELECT count() FROM events_v1 WHERE server_id = ? AND belongs_to = ?`
+	countQ := `SELECT count() FROM events WHERE server_id = ? AND belongs_to = ?`
 	if err := db.QueryRowContext(ctx, countQ, req.GetServerId(), req.GetVisitorId()).Scan(&rowsDeleted); err != nil {
 		// Non-fatal; proceed with the deletion anyway. We just don't
 		// get an accurate count in the response.
 		rowsDeleted = -1
 	}
 
-	// Queue the mutation on events_v1. ALTER … DELETE doesn't support
-	// parameter binding in some clickhouse-go versions, so we format
-	// the WHERE clause with literal quotes — inputs are already
+	// Queue the mutation on the events table. ALTER … DELETE doesn't
+	// support parameter binding in some clickhouse-go versions, so we
+	// format the WHERE clause with literal quotes — inputs are already
 	// validated (visitor_id is a UUID-ish token per ingest; server_id
 	// comes from a signed JWT or the URL scope).
-	deleteStmt := "ALTER TABLE events_v1 DELETE WHERE server_id = ? AND belongs_to = ?"
+	deleteStmt := "ALTER TABLE events DELETE WHERE server_id = ? AND belongs_to = ?"
 	if _, err := db.ExecContext(ctx, deleteStmt, req.GetServerId(), req.GetVisitorId()); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete from events_v1: %s", err)
+		return nil, status.Errorf(codes.Internal, "delete from events: %s", err)
 	}
 
 	// Matching delete on the aggregate MVs — these feed summary /
 	// table reports so the visitor's traces linger there otherwise.
 	// Failures here are logged at warn level but don't fail the RPC:
-	// the events_v1 delete is the source-of-truth and the MVs will
+	// the events delete is the source-of-truth and the MVs will
 	// rebuild on their own next ingest cycle if they drift.
 	for _, mv := range []string{"mv_events_hourly", "mv_events_daily", "mv_sessions"} {
 		_, _ = db.ExecContext(ctx,

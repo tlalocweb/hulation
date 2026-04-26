@@ -6,6 +6,27 @@ package client
 // Same bytemare/opaque library the server uses — interop is by
 // construction. base64url unpadded everywhere (matches the wire
 // format the browser side speaks via @serenity-kit; OPAQUE_PLAN §18).
+//
+// Two opaque-ke compatibility shims are required for bytemare/opaque
+// (the Go server library) to produce records the browser-side
+// @serenity-kit/opaque (Rust→WASM wrapper around opaque-ke v4.0.1)
+// can decrypt:
+//
+//  1. KSF salt. bytemare/opaque defaults to a nil/empty Argon2id
+//     salt; opaque-ke calls Argon2id with a fixed 16-byte zero salt
+//     (RECOMMENDED_SALT_LEN; see opaque-ke v4.0.1 src/ksf.rs line 44).
+//  2. KSF output length. bytemare defaults to OPRFGroup.ElementLength
+//     (32 bytes for Ristretto255). opaque-ke runs Argon2id with input
+//     and output both equal to oprf_output length (Nh = 64 bytes for
+//     SHA-512); see opaque-ke src/opaque.rs line 1014. RFC 9807
+//     §6.2 prescribes the hash-output length, so opaque-ke's choice
+//     is the spec-correct one.
+//
+// Either mismatch causes the Argon2id-stretched output to diverge,
+// which propagates through the HKDF chain to randomized_pwd and on
+// to envelope-encryption + AKE MAC, so authentication fails. Setting
+// both via ClientOptions makes bytemare wire-compatible with opaque-ke
+// for the Ristretto255-SHA512 + Argon2id suite we use.
 
 import (
 	"bytes"
@@ -18,6 +39,12 @@ import (
 	"github.com/bytemare/opaque"
 
 	hulaopaque "github.com/tlalocweb/hulation/pkg/auth/opaque"
+)
+
+// opaque-ke compatibility constants. See file-level comment.
+var (
+	opaqueKEKsfSalt   = make([]byte, 16) // RECOMMENDED_SALT_LEN
+	opaqueKEKsfLength = 64               // SHA-512 Nh
 )
 
 // b64encU returns raw base64url for OPAQUE wire bytes.
@@ -130,7 +157,8 @@ func (c *Client) OpaqueRegister(provider, username, password string) error {
 	if err != nil {
 		return fmt.Errorf("deserialize M2: %w", err)
 	}
-	rec, _, err := cli.RegistrationFinalize(m2, []byte(username), []byte(hulaopaque.ServerIdentity))
+	rec, _, err := cli.RegistrationFinalize(m2, []byte(username), []byte(hulaopaque.ServerIdentity),
+		&opaque.ClientOptions{KSFSalt: opaqueKEKsfSalt, KSFLength: opaqueKEKsfLength})
 	if err != nil {
 		return fmt.Errorf("RegistrationFinalize: %w", err)
 	}
@@ -213,7 +241,8 @@ func (c *Client) OpaqueLogin(provider, username, password string) (*OpaqueLoginR
 	if err != nil {
 		return nil, fmt.Errorf("deserialize KE2: %w", err)
 	}
-	ke3, _, _, err := cli.GenerateKE3(ke2, []byte(username), []byte(hulaopaque.ServerIdentity))
+	ke3, _, _, err := cli.GenerateKE3(ke2, []byte(username), []byte(hulaopaque.ServerIdentity),
+		&opaque.ClientOptions{KSFSalt: opaqueKEKsfSalt, KSFLength: opaqueKEKsfLength})
 	if err != nil {
 		return nil, fmt.Errorf("GenerateKE3: %w", err)
 	}
