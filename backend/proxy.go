@@ -25,13 +25,14 @@ func NewProxyHandler(b *BackendConfig) *ProxyHandler {
 	ph.rp = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			originalPath := req.URL.Path
+			originalHost := req.Host
 			newPath := ph.rewritePath(originalPath)
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
 			req.URL.Path = newPath
 			req.Host = targetHost
 			req.Header.Set("X-Forwarded-For", clientIP(req))
-			req.Header.Set("X-Forwarded-Host", req.Host)
+			req.Header.Set("X-Forwarded-Host", originalHost)
 			if req.TLS != nil {
 				req.Header.Set("X-Forwarded-Proto", "https")
 			} else {
