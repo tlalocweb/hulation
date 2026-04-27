@@ -102,7 +102,7 @@ func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server, cid
 	}
 
 	// Initialize IP info cache (geo/ASN lookups)
-	InitIPInfoCache(db)
+	InitIPInfoCache(db, cfg.IPInfoUseHTTPS)
 
 	// Start eviction goroutine
 	ctx, cancel := context.WithCancel(context.Background())

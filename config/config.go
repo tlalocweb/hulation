@@ -602,6 +602,9 @@ type BadActorConfig struct {
 	NoLoadFromDB bool `yaml:"no_load_from_db"`
 	// Set true to only log matches without actually blocking (audit mode)
 	DryRun bool `yaml:"dry_run,omitempty"`
+	// Set true to use HTTPS for the ip-api.com geo/ASN lookup. Requires an
+	// ip-api Pro plan; the free tier is HTTP-only. Defaults to false.
+	IPInfoUseHTTPS bool `yaml:"ipinfo_use_https,omitempty"`
 }
 
 // TLSOptions allows tuning the TLS version for a virtual host or hula itself.
