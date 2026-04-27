@@ -229,7 +229,8 @@ func (ctx *filterCtx) whereClause(timeCol, serverIDCol string, onMV bool) (strin
 		if onMV && !c.onMV {
 			// Unreachable when pickSource did its job — but fail closed
 			// rather than silently drop the filter.
-			continue
+			sb.WriteString(" AND 1=0")
+			return sb.String(), params
 		}
 		sb.WriteString(" AND ")
 		sb.WriteString(c.col)
