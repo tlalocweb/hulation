@@ -214,7 +214,11 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		if conf.Analytics != nil {
 			ttl = conf.Analytics.EventsTTLDays
 		}
-		if err := clickhouse.Apply(ctx, db, ttl); err != nil {
+		chatRet := 0 // zero → runner picks DefaultChatRetentionDays
+		if conf.Chat != nil {
+			chatRet = conf.Chat.RetentionDays
+		}
+		if err := clickhouse.Apply(ctx, db, ttl, chatRet); err != nil {
 			log.Warnf("ClickHouse migrations failed to apply: %s", err.Error())
 		} else {
 			log.Infof("ClickHouse schema + migrations applied")

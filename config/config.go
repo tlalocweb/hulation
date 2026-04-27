@@ -783,6 +783,12 @@ type Config struct {
 	// Analytics — tunables for the visitor-analytics subsystem. All fields
 	// optional; sensible defaults applied by pkg/store/clickhouse.
 	Analytics *AnalyticsConfig `yaml:"analytics,omitempty"`
+	// Chat — tunables for the Phase-4b visitor chat subsystem. All
+	// fields optional; sensible defaults applied at boot. When the
+	// whole block is omitted, chat is still enabled (the public
+	// /chat/start endpoint exists) but with default retention,
+	// captcha provider, and email-verifier knobs.
+	Chat *ChatConfig `yaml:"chat,omitempty"`
 	// Mailer — SMTP config for the Phase-3 scheduled-report dispatcher.
 	// Optional; when unset the dispatcher logs reports without sending.
 	Mailer *MailerConfig `yaml:"mailer,omitempty"`

@@ -39,6 +39,9 @@ type TemplateVars struct {
 	// EventsTTLDays is the retention window for raw events. Default 395
 	// (~13 months); operators can tune in config.yaml.
 	EventsTTLDays int
+	// ChatRetentionDays is the retention window for chat_sessions and
+	// chat_messages. Default 365; operators can tune in config.yaml.
+	ChatRetentionDays int
 }
 
 // Apply runs all pending schema + migration files. Returns nil when the

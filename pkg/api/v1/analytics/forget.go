@@ -80,6 +80,19 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 		)
 	}
 
+	// Phase-4b extension: also wipe chat history. chat_messages and
+	// chat_sessions are keyed on visitor_id (matches events.belongs_to),
+	// so an erasure that didn't touch them would leave a side-channel
+	// of personal data behind. Best-effort like the MV deletes above:
+	// the events delete is canonical, and chat retention TTL would
+	// reap anything that lingers within a year regardless.
+	for _, table := range []string{"chat_messages", "chat_sessions"} {
+		_, _ = db.ExecContext(ctx,
+			"ALTER TABLE "+table+" DELETE WHERE server_id = ? AND visitor_id = ?",
+			req.GetServerId(), req.GetVisitorId(),
+		)
+	}
+
 	// Audit trail in Bolt. Admin identity comes from the authware
 	// Claims installed by the AdminBearerInterceptor / HTTP middleware.
 	adminUser := ""

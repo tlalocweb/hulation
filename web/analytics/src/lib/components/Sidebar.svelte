@@ -23,6 +23,7 @@
     { href: 'events', label: 'Events' },
     { href: 'forms', label: 'Forms' },
     { href: 'visitors', label: 'Visitors' },
+    { href: 'chats', label: 'Chats' },
   ];
 
   const adminItems = [

@@ -20,10 +20,13 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/model"
+	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
 	alertsimpl "github.com/tlalocweb/hulation/pkg/api/v1/alerts"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
+	chatimpl "github.com/tlalocweb/hulation/pkg/api/v1/chat"
 	mobileimpl "github.com/tlalocweb/hulation/pkg/api/v1/mobile"
 	notifyimpl "github.com/tlalocweb/hulation/pkg/api/v1/notify"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
@@ -36,6 +39,7 @@ import (
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
 	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
+	chatspec "github.com/tlalocweb/hulation/pkg/apispec/v1/chat"
 	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
 	notifyspec "github.com/tlalocweb/hulation/pkg/apispec/v1/notify"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
@@ -252,6 +256,25 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("register alerts handler: %w", err)
 	}
 
+	// Chat — Phase 4b. Admin REST surface for chat history,
+	// take/release, queue, search. The visitor-facing /chat/start
+	// HTTP handler + the visitor / agent WebSockets land in
+	// stages 4b.3 / 4b.4 / 4b.5 alongside hub + router; the live
+	// view passed in here is nil until then (the impl substitutes
+	// a noop view that reports no agents / visitor offline).
+	chatStore := chatpkg.NewStore(model.GetSQLDB())
+	// LiveSessionsView is wired to the per-process hub once
+	// registerChatPublic creates it (later in this same boot).
+	// Until then, chatHubSingleton is nil and chatimpl falls back
+	// to its noop view; we hand a closure here that re-resolves
+	// each call so /chat/admin/live-sessions returns real data
+	// the moment the WS endpoint is up.
+	chatSvc := chatimpl.New(chatStore, chatLiveLazy{}, chatACLLookup(cfg))
+	chatspec.RegisterChatServiceServer(grpcSrv, chatSvc)
+	if err := chatspec.RegisterChatServiceHandlerServer(ctx, gwMux, chatSvc); err != nil {
+		return nil, fmt.Errorf("register chat handler: %w", err)
+	}
+
 	// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
 	// device registration. Delegates the analytics math to the
 	// already-registered analyticsSvc; device storage rides on Bolt
@@ -317,6 +340,11 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// at /analytics/* and a tiny config shim at /analytics/config.json
 	// that the UI reads on boot. No-op when the bundle isn't present.
 	registerAnalyticsUI(srv, cfg)
+
+	// Phase 4b — visitor chat public endpoints. Registers
+	// POST /api/v1/chat/start (token issuer); the WS endpoint
+	// arrives in stage 4b.4.
+	registerChatPublic(srv, cfg)
 
 	// Per-server static TLS certs. Each configured server can ship its
 	// own cert+key; the unified server's SNI selector maps Host →
