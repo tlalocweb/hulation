@@ -1,10 +1,9 @@
-name: E2E Tests (Release)
+name: E2E Tests
 
 # Runs the full ./test/e2e/run.sh suite against a freshly-built
-# hula:local stack on a GitHub-hosted Ubuntu runner. Triggered by
-# any semver release tag (matches the patterns the docker-publish
-# + release workflows already use), so a release isn't published
-# without the e2e bar being green.
+# hula:local stack on a GitHub-hosted Ubuntu runner. Triggered on
+# every push and every pull request — same gate go.yml uses, but
+# end-to-end (compose-up + 30+ suites) instead of `go build`.
 #
 # Why GitHub-hosted (vs self-hosted): we already use self-hosted
 # runners for go.yml / release.yml / docker-publish.yml builds.
@@ -12,11 +11,14 @@ name: E2E Tests (Release)
 # Compose stack — and we'd rather catch packaging-environment
 # regressions on a clean stock-Ubuntu image than only on the
 # self-hosted runners.
+#
+# Concurrency: rapid pushes to the same ref cancel the in-flight
+# run so a long-running e2e doesn't queue up multiple superseded
+# runs and chew through runner minutes.
 
 on:
   push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  pull_request:
   workflow_dispatch:
     inputs:
       ref:
@@ -26,6 +28,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
