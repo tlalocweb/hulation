@@ -62,7 +62,7 @@ echo "=== Building Docker images ==="
 echo "--- Building hula-builder-ubuntu22.04 ---"
 for PLATFORM in "${PLATFORM_LIST[@]}"; do
     ARCH=$(echo "$PLATFORM" | cut -d/ -f2)
-    cp "${SCRIPT_DIR}/hulabuild-linux-${ARCH}" "${SCRIPT_DIR}/ubuntu22.04/hulabuild"
+    cp "${SCRIPT_DIR}/hulabuild-linux-${ARCH}" "${SCRIPT_DIR}/ubuntu22.04/hulabuild-linux-${ARCH}"
 done
 
 if [ "$PUSH" = true ]; then
@@ -81,7 +81,7 @@ fi
 echo "--- Building hula-builder-alpine-default ---"
 for PLATFORM in "${PLATFORM_LIST[@]}"; do
     ARCH=$(echo "$PLATFORM" | cut -d/ -f2)
-    cp "${SCRIPT_DIR}/hulabuild-linux-${ARCH}" "${SCRIPT_DIR}/alpine-default/hulabuild"
+    cp "${SCRIPT_DIR}/hulabuild-linux-${ARCH}" "${SCRIPT_DIR}/alpine-default/hulabuild-linux-${ARCH}"
 done
 
 if [ "$PUSH" = true ]; then
@@ -113,8 +113,8 @@ fi
 
 # Cleanup compiled binaries
 rm -f "${SCRIPT_DIR}"/hulabuild-linux-*
-rm -f "${SCRIPT_DIR}/ubuntu22.04/hulabuild"
-rm -f "${SCRIPT_DIR}/alpine-default/hulabuild"
+rm -f "${SCRIPT_DIR}/ubuntu22.04"/hulabuild-linux-*
+rm -f "${SCRIPT_DIR}/alpine-default"/hulabuild-linux-*
 
 echo ""
 echo "=== Done ==="

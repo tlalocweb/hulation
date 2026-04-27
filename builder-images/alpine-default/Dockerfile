@@ -39,8 +39,8 @@ RUN pip3 install --no-cache-dir --break-system-packages mkdocs mkdocs-material
 # Clean up npm cache
 RUN npm cache clean --force
 
-# Copy hulabuild binary
-COPY hulabuild /usr/local/bin/hulabuild
+# Copy hulabuild binary (per-arch, selected by buildx via TARGETARCH)
+COPY hulabuild-linux-${TARGETARCH} /usr/local/bin/hulabuild
 RUN chmod +x /usr/local/bin/hulabuild
 
 # Default working directory
