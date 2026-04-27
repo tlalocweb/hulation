@@ -64,6 +64,9 @@ var (
 	ipInfoMu       sync.Mutex
 	ipInfoRequests int
 	ipInfoWindow   time.Time
+	// ipInfoUseHTTPS toggles https:// vs http:// for ip-api.com. The free
+	// tier is HTTP-only; HTTPS requires an ip-api Pro plan.
+	ipInfoUseHTTPS bool
 )
 
 const (
@@ -73,9 +76,12 @@ const (
 	ipInfoAPITimeout   = 5 * time.Second
 )
 
-// InitIPInfoCache sets the database for persistent IP info caching.
-func InitIPInfoCache(db *gorm.DB) {
+// InitIPInfoCache sets the database for persistent IP info caching. The
+// useHTTPS flag controls whether the ip-api.com lookup uses https://
+// (requires Pro plan) or http:// (free tier).
+func InitIPInfoCache(db *gorm.DB, useHTTPS bool) {
 	ipInfoDB = db
+	ipInfoUseHTTPS = useHTTPS
 	// Create table
 	if err := db.Exec(sqlCreateIPInfoCache).Error; err != nil {
 		baLog.Warnf("ipinfo: failed to create cache table: %s", err)
@@ -196,7 +202,11 @@ func fetchIPInfo(ip string) *IPInfo {
 	ipInfoMu.Unlock()
 
 	client := &http.Client{Timeout: ipInfoAPITimeout}
-	url := fmt.Sprintf("http://ip-api.com/json/%s?fields=status,country,countryCode,regionName,city,isp,org,as", ip)
+	scheme := "http"
+	if ipInfoUseHTTPS {
+		scheme = "https"
+	}
+	url := fmt.Sprintf("%s://ip-api.com/json/%s?fields=status,country,countryCode,regionName,city,isp,org,as", scheme, ip)
 	resp, err := client.Get(url)
 	if err != nil {
 		baLog.Debugf("ipinfo: lookup failed for %s: %s", ip, err)
