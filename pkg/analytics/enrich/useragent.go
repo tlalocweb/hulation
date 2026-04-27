@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"strings"
+	"sync"
 
 	uaparser "github.com/ua-parser/uap-go/uaparser"
 )
@@ -20,12 +21,15 @@ type UAFields struct {
 
 // uaCachedParser is initialized lazily on first UA parse. uap-go loads a
 // large regex file (~1MB) at startup, so we do it exactly once.
-var uaCachedParser *uaparser.Parser
+var (
+	uaCachedParser *uaparser.Parser
+	uaParserOnce   sync.Once
+)
 
 func getUAParser() *uaparser.Parser {
-	if uaCachedParser == nil {
+	uaParserOnce.Do(func() {
 		uaCachedParser = uaparser.NewFromSaved()
-	}
+	})
 	return uaCachedParser
 }
 
