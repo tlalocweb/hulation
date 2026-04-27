@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -79,8 +80,8 @@ func clientIP(r *http.Request) string {
 		return strings.TrimSpace(xff)
 	}
 	if ra := r.RemoteAddr; ra != "" {
-		if i := strings.LastIndex(ra, ":"); i >= 0 {
-			return ra[:i]
+		if host, _, err := net.SplitHostPort(ra); err == nil {
+			return host
 		}
 		return ra
 	}
