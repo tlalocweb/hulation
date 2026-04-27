@@ -41,6 +41,11 @@ services:
       - ${TEST_SITE_SRC}:/var/hula/testsite-repo:ro
     environment:
       - GITHUB_AUTH_TOKEN=${GITHUB_AUTH_TOKEN}
+      # Phase-4b chat suites (32-34) need /chat/start to issue
+      # tokens without a real Turnstile call; the bypass mode
+      # accepts any non-empty token. Production hula must NOT
+      # set this — it logs a WARN at boot when active.
+      - HULA_CHAT_CAPTCHA_TEST_BYPASS=1
     # Trust the bind-mounted test site repo (ownership UID mismatch between
     # host and container would otherwise trigger a "dubious ownership" error).
     # We do it via git config --global here rather than the GIT_CONFIG_* env

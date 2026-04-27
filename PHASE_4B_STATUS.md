@@ -190,6 +190,21 @@ Summary of the Phase-4b rollout:
 
 ### Stage 4b.10 — Status doc + sign-off ✅
 - This document.
+- Three new e2e suites at `test/e2e/suites/`:
+  - `32-chat-admin.sh` — auth gate + ListSessions / GetSession /
+    GetMessages / SearchMessages / TakeSession /
+    PostAdminMessage / ReleaseSession / CloseSession +
+    closed-session write rejection.
+  - `33-chat-ws.sh` — visitor WS msg+ack round-trip;
+    chat_messages persistence; agent-WS upgrade reachability;
+    `presence_snapshot` on agent connect.
+  - `34-chat-routing.sh` — control-WS `queue_snapshot` on
+    connect; `session_assigned` lands within 2 s of a visitor
+    `/chat/start` while an agent is in the ready pool.
+- Fixture `docker-compose.yaml` sets
+  `HULA_CHAT_CAPTCHA_TEST_BYPASS=1` so the suites can issue real
+  chat tokens without a Turnstile site key. Production hula
+  must NOT set this — boot logs a WARN when active.
 
 ## Final sign-off checklist (Phase 4b → Phase 5a)
 
