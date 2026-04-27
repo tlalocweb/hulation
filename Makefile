@@ -44,19 +44,21 @@ DOCKERFILE      := $(CURDIR)/Dockerfile
 BUILDX_BUILDER  := hula-builder
 
 # Build targets
-HULA_BIN     := $(BIN_DIR)/hula
-HULACTL_BIN  := $(BIN_DIR)/hulactl
-SETUPDB_BIN  := $(BIN_DIR)/setupdb
+HULA_BIN      := $(BIN_DIR)/hula
+HULACTL_BIN   := $(BIN_DIR)/hulactl
+SETUPDB_BIN   := $(BIN_DIR)/setupdb
+HULABUILD_BIN := $(BIN_DIR)/hulabuild
 
 # ============================================================================
 # Primary targets
 # ============================================================================
 
-.PHONY: all build hula hulactl setupdb tools
+.PHONY: all build hula hulactl setupdb hulabuild tools
 .PHONY: docker docker-push docker-local
 .PHONY: test test-unit test-verbose vet lint
 .PHONY: clean clean-docker
 .PHONY: deps version help
+.PHONY: protobuf protobuf-clean protoc-install
 
 ## build: Build the hula server binary (default)
 build: hula
@@ -64,8 +66,8 @@ build: hula
 ## all: Build server and all CLI tools
 all: hula tools
 
-## tools: Build all CLI tools (hulactl, setupdb)
-tools: hulactl setupdb
+## tools: Build all CLI tools (hulactl, setupdb, hulabuild)
+tools: hulactl setupdb hulabuild
 
 # ============================================================================
 # Go binaries
@@ -91,6 +93,13 @@ setupdb: $(SETUPDB_BIN)
 $(SETUPDB_BIN): $(shell find . -name '*.go' -not -path './.external/*' -not -path './.bin/*' -not -path './.gopath/*') go.mod go.sum | $(BIN_DIR)
 	@echo "Building setupdb..."
 	$(GO) build -ldflags "$(LDFLAGS)" -o $@ ./model/tools/setupdb
+
+## hulabuild: Build the hulabuild binary (runs inside builder containers)
+hulabuild: $(HULABUILD_BIN)
+
+$(HULABUILD_BIN): $(shell find . -name '*.go' -not -path './.external/*' -not -path './.bin/*' -not -path './.gopath/*') go.mod go.sum | $(BIN_DIR)
+	@echo "Building hulabuild..."
+	$(GO) build -ldflags "$(LDFLAGS)" -o $@ ./model/tools/hulabuild
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
@@ -140,6 +149,76 @@ docker-local:
 		$(DOCKER_CONTEXT)
 
 # ============================================================================
+# Protobuf / gRPC
+# ============================================================================
+
+# Folders containing .proto files whose generated code is checked into the repo.
+# Note: $(PROTOBUF_SRCS) is computed at Make time using shell find. New .proto
+# files are picked up automatically on the next invocation.
+PROTOBUF_FOLDERS = protoext/hula/auth \
+                   pkg/server/authware/proto \
+                   pkg/apiobjects/v1 \
+                   pkg/apispec/v1
+PROTOBUF_SRCS = $(shell find $(PROTOBUF_FOLDERS) -name '*.proto' 2>/dev/null)
+PROTOBUF_OUTS = $(PROTOBUF_SRCS:.proto=.pb.go)
+
+PROTOC       := $(BIN_DIR)/protoc
+PROTOC_INC   := -I. -I./protoext -I$(BIN_DIR)/include
+
+## protoc-install: Install pinned protoc + plugins into .bin/
+protoc-install:
+	@bash $(CURDIR)/hack/install-protoc.sh
+
+## protobuf: Regenerate Go code from all .proto files
+protobuf: $(PROTOBUF_OUTS)
+
+# Per-folder rules. Each folder has slightly different generation requirements
+# (gotag for tag injection, grpc for services, gateway for REST).
+
+# protoext/hula/auth — annotation extension, Go only
+protoext/hula/auth/%.pb.go: protoext/hula/auth/%.proto | $(PROTOC)
+	@echo "protoc (extension): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+
+# pkg/server/authware/proto — annotation extension, Go only
+pkg/server/authware/proto/%.pb.go: pkg/server/authware/proto/%.proto | $(PROTOC)
+	@echo "protoc (extension): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+
+# pkg/apiobjects/v1 — message types with optional gotag injection
+pkg/apiobjects/v1/%.pb.go: pkg/apiobjects/v1/%.proto | $(PROTOC)
+	@echo "protoc (apiobjects): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		$<
+	@if grep -q '@gotags' $<; then \
+		PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) --gotag_out=paths=source_relative:. $<; \
+	fi
+
+# pkg/apispec/v1 — gRPC services with REST gateway
+pkg/apispec/v1/%.pb.go: pkg/apispec/v1/%.proto | $(PROTOC)
+	@echo "protoc (service): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		--grpc-gateway_out=. --grpc-gateway_opt=paths=source_relative \
+		$<
+
+$(PROTOC):
+	@echo ""
+	@echo "protoc not installed. Run: make protoc-install"
+	@echo ""
+	@exit 1
+
+## protobuf-clean: Remove generated .pb.go files
+protobuf-clean:
+	@find $(PROTOBUF_FOLDERS) -type f \( -name '*.pb.go' -o -name '*.pb.gw.go' \) -print -delete 2>/dev/null || true
+
+# ============================================================================
 # Testing & Quality
 # ============================================================================
 
@@ -184,7 +263,7 @@ tidy:
 
 ## clean: Remove build artifacts
 clean:
-	rm -rf $(BIN_DIR)/hula $(BIN_DIR)/hulactl $(BIN_DIR)/setupdb
+	rm -rf $(BIN_DIR)/hula $(BIN_DIR)/hulactl $(BIN_DIR)/setupdb $(BIN_DIR)/hulabuild
 
 ## clean-all: Remove all generated files (binaries, external downloads)
 clean-all:

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+// Minimal tenant proto. Hulation is single-tenant in v1, but the adopted
+// izcr authware/apispec carry forward tenant-shaped types so the
+// multi-tenant path (future distributed deployments) is open without a
+// schema break. Only the TenantRole enum is defined here; full tenant
+// management (TenantOwner, TenantMember, etc.) ships with a later phase
+// if and when multi-tenancy is enabled.
+
+package hulation.v1.apiobjects;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apiobjects/v1;apiobjects";
+
+// TenantRole enumerates roles a user can hold within a tenant.
+// Reserved for future multi-tenant support. Unused in hulation v1.
+enum TenantRole {
+  TENANT_ROLE_UNSPECIFIED = 0;
+  TENANT_ROLE_VIEWER = 1;      // Read-only
+  TENANT_ROLE_MEMBER = 2;      // Basic member
+  TENANT_ROLE_OPERATOR = 3;    // Operational access
+}

@@ -55,7 +55,7 @@ func (c *Client) FormCreate(modelreq string) (err error) {
 		err = &ClientError{RootCause: fmt.Errorf("error marshalling request body: %v", err)}
 		return
 	}
-	url := c.apiUrl + "/form/create"
+	url := c.apiUrl + "/api/form/create"
 	c.out("FormCreate: POST url: %s\n", url)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(modelbody))
 	if err != nil {
@@ -127,7 +127,7 @@ func (c *Client) FormModify(formid string, modelreq string) (err error) {
 		err = &ClientError{RootCause: fmt.Errorf("error marshalling request body: %v", err)}
 		return
 	}
-	url := c.apiUrl + "/form/" + formid
+	url := c.apiUrl + "/api/form/" + formid
 	c.out("FormModify: PATCH url: %s\n", url)
 	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(modelbody))
 	if err != nil {
@@ -158,7 +158,7 @@ func (c *Client) FormModify(formid string, modelreq string) (err error) {
 }
 
 func (c *Client) FormDelete(formid string) (err error) {
-	url := c.apiUrl + "/form/" + formid
+	url := c.apiUrl + "/api/form/" + formid
 	c.out("FormDelete: DELETE url: %s\n", url)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {

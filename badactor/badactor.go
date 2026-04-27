@@ -3,6 +3,7 @@ package badactor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,8 @@ type Store struct {
 	sigs           *CompiledSignatures
 	tree           atomic.Pointer[iradix.Tree[BadActorEntry]]
 	allowTree      atomic.Pointer[iradix.Tree[struct{}]]
-	validPaths     []string // known valid URL path prefixes
+	cidrAllowlist  []*net.IPNet // CIDR-based allowlist (e.g. Cloudflare IP ranges)
+	validPaths     []string     // known valid URL path prefixes
 	servers        []*config.Server
 	ttl            time.Duration
 	evictInterval  time.Duration
@@ -51,7 +53,8 @@ func IsEnabled() bool {
 }
 
 // Init initializes the bad actor detection system.
-func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server) error {
+// cidrAllowlist is an optional list of CIDR ranges to always allow (e.g. Cloudflare IP ranges).
+func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server, cidrAllowlist []*net.IPNet) error {
 	if cfg == nil || cfg.Disable {
 		return nil
 	}
@@ -81,6 +84,7 @@ func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server) err
 		cfg:            cfg,
 		db:             db,
 		sigs:           sigs,
+		cidrAllowlist:  cidrAllowlist,
 		servers:        servers,
 		ttl:            ttl,
 		evictInterval:  evictInterval,
@@ -96,6 +100,9 @@ func Init(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server) err
 	if !cfg.NoLoadFromDB {
 		s.loadFromDB()
 	}
+
+	// Initialize IP info cache (geo/ASN lookups)
+	InitIPInfoCache(db, cfg.IPInfoUseHTTPS)
 
 	// Start eviction goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,10 +122,10 @@ func Shutdown() {
 }
 
 // Reinit tears down the current bad actor system and re-initializes with new config.
-func Reinit(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server) error {
+func Reinit(cfg *config.BadActorConfig, db *gorm.DB, servers []*config.Server, cidrAllowlist []*net.IPNet) error {
 	Shutdown()
 	store = nil
-	return Init(cfg, db, servers)
+	return Init(cfg, db, servers, cidrAllowlist)
 }
 
 func (s *Store) buildValidPaths(servers []*config.Server) {
@@ -179,9 +186,19 @@ func (s *Store) loadFromDB() {
 // CheckAndBlock checks if a request should be blocked.
 // Returns (should_block, reason).
 func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host string) (bool, string) {
-	// 1. Allowlist check
+	// 1a. Allowlist check (exact IP)
 	if _, found := s.allowTree.Load().Get([]byte(ip)); found {
 		return false, ""
+	}
+	// 1b. CIDR allowlist check (e.g. Cloudflare IP ranges)
+	if len(s.cidrAllowlist) > 0 {
+		if parsed := net.ParseIP(ip); parsed != nil {
+			for _, cidr := range s.cidrAllowlist {
+				if cidr.Contains(parsed) {
+					return false, ""
+				}
+			}
+		}
 	}
 
 	// 2. Known bad actor check
@@ -233,7 +250,8 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	})
 	s.tree.Store(txn.Commit())
 
-	// Record to ClickHouse (async)
+	// Record to ClickHouse and enrich with IP info (async)
+	LookupIPInfoAsync(ip)
 	go func() {
 		for _, m := range matches {
 			if err := InsertBadActorRecord(s.db, ip, userAgent, method, urlPath, host, m.Reason, m.SigName, m.Category, m.Score); err != nil {
@@ -243,11 +261,12 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	}()
 
 	if newScore >= s.blockThreshold {
+		ipInfoStr := FormatIPInfoCached(ip)
 		if s.cfg.DryRun {
-			baLog.Warnf("[DRY RUN] would block %s (score=%d, reason=%s, sig=%s)", ip, newScore, topReason, topSigName)
+			baLog.Warnf("[DRY RUN] would block [%s] %s (score=%d, reason=%s, sig=%s) %s", host, ip, newScore, topReason, topSigName, ipInfoStr)
 			return false, ""
 		}
-		baLog.Infof("BLOCKED %s (score=%d, reason=%s, sig=%s, category=%s)", ip, newScore, topReason, topSigName, topCategory)
+		baLog.Infof("BLOCKED [%s] %s (score=%d, reason=%s, sig=%s, category=%s) %s", host, ip, newScore, topReason, topSigName, topCategory, ipInfoStr)
 		return true, topReason
 	}
 
@@ -409,4 +428,37 @@ func (s *Store) ListBlockedIPsWithDetail(limit, offset int) []BadActorListEntry 
 		i++
 	}
 	return entries
+}
+
+// DB returns the gorm DB handle bound to this Store. Used by external
+// packages (e.g. the gRPC admin service) that need to call the
+// package-level DB helpers (LoadAllowlist, AddToAllowlistDB, etc.).
+func (s *Store) DB() *gorm.DB { return s.db }
+
+// BlockThreshold returns the score above which an IP is considered
+// blocked. Used by the gRPC admin service when inserting a manual
+// block.
+func (s *Store) BlockThreshold() int { return s.blockThreshold }
+
+// AllSignatures returns the list of currently loaded signatures. Used
+// by the gRPC ListSignatures RPC.
+func (s *Store) AllSignatures() []*CompiledSignature {
+	if s == nil || s.sigs == nil {
+		return nil
+	}
+	return s.sigs.All
+}
+
+// ManualInsertBlocked inserts or refreshes an IP in the radix tree with
+// a reason sufficient to block it (score = blockThreshold). Called by
+// the gRPC ManualBlock RPC after it has persisted the DB record.
+func (s *Store) ManualInsertBlocked(ip, reason string) {
+	txn := s.tree.Load().Txn()
+	txn.Insert([]byte(ip), BadActorEntry{
+		Score:      s.blockThreshold,
+		DetectedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(s.ttl),
+		LastReason: reason,
+	})
+	s.tree.Store(txn.Commit())
 }

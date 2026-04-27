@@ -526,3 +526,14 @@ func (f *FormModel) Delete(db *gorm.DB) (err error) {
 	formModelIDCache.Del(f.Name)
 	return
 }
+
+// ListFormModels returns all forms in the database, newest first.
+// Used by the gRPC FormsService.ListForms RPC. Results are not cached;
+// callers get a fresh read every time.
+func ListFormModels(db *gorm.DB) (ret []*FormModel, err error) {
+	err = db.Model(&FormModel{}).Order("created_at DESC").Find(&ret).Error
+	if err == gorm.ErrRecordNotFound {
+		err = nil
+	}
+	return
+}

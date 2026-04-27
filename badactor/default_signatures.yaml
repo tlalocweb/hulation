@@ -430,6 +430,21 @@ categories:
         pattern: "(?i)/wp-json/wp/v2/users"
         score: 20
         reason: "WordPress user enumeration"
+      - name: wp_wlwmanifest
+        type: url
+        pattern: "(?i)/wp-includes/wlwmanifest\\.xml"
+        score: 30
+        reason: "WordPress wlwmanifest scanner probe"
+      - name: wp_includes
+        type: url
+        pattern: "(?i)/wp-includes/"
+        score: 20
+        reason: "WordPress wp-includes probe"
+      - name: wp_content
+        type: url
+        pattern: "(?i)/wp-content/"
+        score: 20
+        reason: "WordPress wp-content probe"
       - name: phpunit_rce
         type: url
         pattern: "(?i)/vendor/phpunit/"
@@ -488,3 +503,51 @@ categories:
         pattern: "(?i)XDEBUG_SESSION_START"
         score: 30
         reason: "Xdebug remote debugging probe"
+
+  ide_config:
+    description: "IDE and editor configuration file probes"
+    signatures:
+      - name: cursor_config
+        type: url
+        pattern: "(?i)/\\.cursor/"
+        score: 80
+        reason: "Cursor IDE config probe"
+      - name: vscode_config
+        type: url
+        pattern: "(?i)/\\.vscode/"
+        score: 80
+        reason: "VS Code config probe"
+      - name: idea_config
+        type: url
+        pattern: "(?i)/\\.idea/"
+        score: 80
+        reason: "JetBrains IDE config probe"
+      - name: sublime_config
+        type: url
+        pattern: "(?i)/\\.sublime-(project|workspace)"
+        score: 80
+        reason: "Sublime Text config probe"
+
+  secrets_files:
+    description: "Generic secrets and credential file probes"
+    signatures:
+      - name: secrets_json
+        type: url
+        pattern: "(?i)/secrets\\.(json|ya?ml|toml|txt)$"
+        score: 80
+        reason: "Secrets file probe"
+      - name: credentials_file
+        type: url
+        pattern: "(?i)/credentials\\.(json|ya?ml|toml|txt|xml)$"
+        score: 80
+        reason: "Credentials file probe"
+      - name: private_key_file
+        type: url
+        pattern: "(?i)/.*\\.(pem|key|p12|pfx|jks)$"
+        score: 80
+        reason: "Private key file probe"
+      - name: token_file
+        type: url
+        pattern: "(?i)/(token|api[_-]?key|access[_-]?token)\\.(json|txt|ya?ml)$"
+        score: 80
+        reason: "Token/API key file probe"

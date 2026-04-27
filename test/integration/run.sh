@@ -15,10 +15,11 @@ cleanup() {
     echo ""
     echo "=== Cleanup ==="
     cd "$WORKDIR"
+    docker logs "${COMPOSE_PROJECT}-hula" > /tmp/hula-full.log 2>&1 || true
     docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans 2>/dev/null || true
     docker rmi "${COMPOSE_PROJECT}-counter-backend" 2>/dev/null || true
     rm -rf "$WORKDIR"
-    echo "Cleaned up $WORKDIR"
+    echo "Cleaned up $WORKDIR (hula logs at /tmp/hula-full.log)"
     echo ""
     echo "=== Results: $PASSED passed, $FAILED failed ==="
     if [ "$FAILED" -gt 0 ]; then
@@ -105,7 +106,7 @@ docker buildx build --network=host --load \
     --build-arg hulaversion=test \
     --build-arg hulabuilddate="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --tag hula-inttest:latest \
-    . > /dev/null 2>&1
+    . 2>&1 | tail -20
 echo "  Built hula-inttest:latest"
 
 # -------------------------------------------------------
@@ -113,7 +114,7 @@ echo "  Built hula-inttest:latest"
 # -------------------------------------------------------
 echo "--- Step 4: Build counter backend ---"
 docker build --network=host -t "${COMPOSE_PROJECT}-counter-backend:latest" \
-    "$SCRIPT_DIR/counter-backend" > /dev/null 2>&1
+    "$SCRIPT_DIR/counter-backend" 2>&1 | tail -10
 echo "  Built counter backend image"
 
 # -------------------------------------------------------
@@ -157,7 +158,6 @@ servers:
     id: testsite1
     aliases:
       - "127.0.0.1"
-    ignore_port_in_host: true
     publish_port: true
     http_scheme: https
     root: /var/hula/site
@@ -231,14 +231,26 @@ docker compose -p "$COMPOSE_PROJECT" up -d 2>/dev/null
 # Wait for hula to be ready
 echo -n "  Waiting for hula"
 for i in $(seq 1 60); do
-    if curl11 -o /dev/null -w "%{http_code}" "https://${DOMAIN}:${PORT}/" 2>/dev/null | grep -q "200"; then
+    probe=$(curl11 -o /dev/null -w "%{http_code}" "https://${DOMAIN}:${PORT}/" 2>&1 || true)
+    if echo "$probe" | grep -q "200"; then
         echo " ready (${i}s)"
         break
     fi
+    if [ "$i" -eq 10 ]; then
+        echo ""
+        echo "  [debug] probe at 10s: $probe"
+    fi
     if [ "$i" -eq 60 ]; then
         echo " TIMEOUT"
-        echo "--- Hula logs ---"
+        echo "--- Hula logs (saved full to /tmp/hula-full.log) ---"
+        docker logs "${COMPOSE_PROJECT}-hula" >/tmp/hula-full.log 2>&1
         docker logs "${COMPOSE_PROJECT}-hula" 2>&1 | tail -30
+        echo "--- probe diagnostic ---"
+        curl11 -v "https://${DOMAIN}:${PORT}/" 2>&1 | tail -40
+        echo "--- hulastatus diagnostic ---"
+        curl11 -v "https://${DOMAIN}:${PORT}/hulastatus" 2>&1 | tail -30
+        echo "--- container site dir ---"
+        docker exec "${COMPOSE_PROJECT}-hula" ls -la /var/hula/site 2>&1 | head -20
         fail "Hula did not start within 60s"
         exit 1
     fi
@@ -354,13 +366,17 @@ echo "--- Test: Visitor tracking ---"
 # Step 4a: Load iframe (sets cookies, creates bounce)
 # HTTP/1.1
 IFRAME_RESP=$(curl11 -v -c "$WORKDIR/cookies11.txt" \
+    -H "User-Agent: TestBot/1.0-h1" \
     "https://${DOMAIN}:${PORT}/v/hula_hello.html?h=testsite1&u=https%3A%2F%2Fexample.com%2Fpage-h1" \
-    2>"$WORKDIR/iframe11_headers.txt")
-BOUNCE_H1=$(echo "$IFRAME_RESP" | grep -oP 'b=\K[a-f0-9-]+' | head -1 || echo "")
+    2>"$WORKDIR/iframe11_headers.txt" || true)
+BOUNCE_H1=$(echo "$IFRAME_RESP" | grep -oP 'b=\K[A-Za-z0-9_+/=-]+' | head -1 || echo "")
 if [ -n "$BOUNCE_H1" ]; then
     pass "HelloIframe (HTTP/1.1) - bounce: ${BOUNCE_H1:0:12}..."
 else
     fail "HelloIframe (HTTP/1.1) - no bounce ID in response"
+    cp "$WORKDIR/iframe11_headers.txt" /tmp/iframe11_headers.txt 2>/dev/null || true
+    echo "        iframe-body-bytes: $(echo -n "$IFRAME_RESP" | wc -c)"
+    echo "        first 200 of body: $(echo "$IFRAME_RESP" | head -c 200)"
 fi
 
 # Check cookies were set
@@ -372,13 +388,19 @@ fi
 
 # HTTP/2
 IFRAME_RESP2=$(curl2 -v -c "$WORKDIR/cookies2.txt" \
+    -H "User-Agent: TestBot/1.0-h2" \
     "https://${DOMAIN}:${PORT}/v/hula_hello.html?h=testsite1&u=https%3A%2F%2Fexample.com%2Fpage-h2" \
-    2>"$WORKDIR/iframe2_headers.txt")
-BOUNCE_H2=$(echo "$IFRAME_RESP2" | grep -oP 'b=\K[a-f0-9-]+' | head -1 || echo "")
+    2>"$WORKDIR/iframe2_headers.txt" || true)
+BOUNCE_H2=$(echo "$IFRAME_RESP2" | grep -oP 'b=\K[A-Za-z0-9_+/=-]+' | head -1 || echo "")
 if [ -n "$BOUNCE_H2" ]; then
     pass "HelloIframe (HTTP/2) - bounce: ${BOUNCE_H2:0:12}..."
 else
     fail "HelloIframe (HTTP/2) - no bounce ID in response"
+    cp "$WORKDIR/iframe2_headers.txt" /tmp/iframe2_headers.txt 2>/dev/null || true
+    echo "        iframe2-body-bytes: $(echo -n "$IFRAME_RESP2" | wc -c)"
+    echo "        --- full body begin ---"
+    echo "$IFRAME_RESP2"
+    echo "        --- full body end ---"
 fi
 
 if grep -q "hula_hello\b" "$WORKDIR/cookies2.txt" 2>/dev/null; then
@@ -476,6 +498,34 @@ if [ "$VISITOR_COUNT" -gt 0 ] 2>/dev/null; then
     pass "Visitors recorded in ClickHouse: $VISITOR_COUNT"
 else
     fail "No visitors found in ClickHouse"
+fi
+
+# -------------------------------------------------------
+# Test 7: Analytics API smoke (Phase 1 stage 1.3)
+# -------------------------------------------------------
+echo "--- Test: Analytics API (REST gateway) ---"
+# Build a 48h window ending now so Summary picks raw events.
+ANALYTICS_TO=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+ANALYTICS_FROM=$(date -u -d '2 days ago' +'%Y-%m-%dT%H:%M:%SZ')
+SUMMARY_RESP=$(curl11 -X GET "https://${DOMAIN}:${PORT}/api/v1/analytics/summary?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}" \
+    -H "Authorization: Bearer ${JWT}" 2>&1 || true)
+if ! echo "$SUMMARY_RESP" | grep -q '"visitors"'; then
+    echo "        summary body: $(echo "$SUMMARY_RESP" | head -c 400)"
+fi
+assert_contains "$SUMMARY_RESP" '"visitors"' "/api/v1/analytics/summary returns visitors field"
+assert_contains "$SUMMARY_RESP" '"pageviews"' "/api/v1/analytics/summary returns pageviews field"
+
+TIMESERIES_RESP=$(curl11 -X GET "https://${DOMAIN}:${PORT}/api/v1/analytics/timeseries?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}&filters.granularity=hour" \
+    -H "Authorization: Bearer ${JWT}" 2>&1 || true)
+assert_contains "$TIMESERIES_RESP" '"buckets"' "/api/v1/analytics/timeseries returns buckets array"
+
+# Without a token, Summary must refuse (Unauthenticated → 401 at the gateway).
+STATUS=$(curl11 -o /dev/null -w "%{http_code}" \
+    "https://${DOMAIN}:${PORT}/api/v1/analytics/summary?server_id=testsite1&filters.from=${ANALYTICS_FROM}&filters.to=${ANALYTICS_TO}")
+if [ "$STATUS" != "200" ]; then
+    pass "/api/v1/analytics/summary rejects unauthenticated caller (status $STATUS)"
+else
+    fail "/api/v1/analytics/summary should reject unauthenticated caller"
 fi
 
 echo ""

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" %sveltekit.theme%>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Hula Analytics</title>
+    <script>
+      // Inline theme bootstrap — avoids a flash of light content when
+      // the user's saved preference is dark. Keep this tiny; it runs
+      // before any Svelte hydration.
+      (function () {
+        try {
+          const saved = localStorage.getItem('hula:theme');
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const useDark = saved === 'dark' || (saved === null && prefersDark);
+          if (useDark) document.documentElement.classList.add('dark');
+        } catch (_) {
+          /* storage unavailable — fall back to system */
+        }
+      })();
+    </script>
+    %sveltekit.head%
+  </head>
+  <body class="min-h-screen bg-background font-sans antialiased text-foreground">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

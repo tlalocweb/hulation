@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package hulation.v1.apiobjects;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apiobjects/v1;apiobjects";
+
+// RootUser is a special user which can manipulate any object
+// it should be used for setup and maintenance tasks only
+// not for cluster access. There is only one root user.
+message RootUser {
+    // the API version
+    string apiver = 1;
+    int64 created = 2;
+    // the most recently updated timestamp
+    // would be the most accurate copy (highest number)
+    // these are implemented as a UnixNano()
+    int64 updated = 3;
+    string email = 4;
+    string tenant_id = 5;
+    string hash = 6;
+    // the last good token version - any token LOWER than this version 
+    // is not a valid token
+    int64 good_token_version = 7;
+    // the last produced token - the next token will be this + 1
+    int64 last_token_version = 8;
+
+}

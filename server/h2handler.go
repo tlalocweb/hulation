@@ -48,20 +48,42 @@ func (rr *responseRecorder) WriteHeader(code int) {
 }
 
 func (h *H2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Bad actor check — before any routing
+	clientIP := extractIPFromRequest(r)
+	// Bad actor check — uses real client IP (CF-Connecting-IP when behind Cloudflare)
 	if badactor.IsEnabled() {
-		ip := extractIPFromRequest(r)
-		if block, _ := badactor.GetStore().CheckAndBlock(ip, r.UserAgent(), r.Method, r.URL.Path, r.URL.RawQuery, r.Host); block {
+		if block, _ := badactor.GetStore().CheckAndBlock(clientIP, r.UserAgent(), r.Method, r.URL.Path, r.URL.RawQuery, r.Host); block {
 			panic(http.ErrAbortHandler) // abort silently
 		}
+	}
+	// Redirect alias check — before any routing
+	ctx := handler.NewNetHTTPCtx(w, r)
+	if redirected, _ := handler.CheckRedirectAlias(ctx); redirected {
+		return
 	}
 	start := time.Now()
 	rec := &responseRecorder{ResponseWriter: w, status: 200}
 	h.mux.ServeHTTP(rec, r)
-	log.Infof("h2 %s %s %s %d %s %s", r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	serverID := ""
+	if srv := h.listener.GetServer(r.Host); srv != nil {
+		serverID = srv.ID
+	}
+	if log.IsVerbose() && clientIP != r.RemoteAddr {
+		log.Infof("h2 [%s] %s (%s) %s %s %d %s %s", serverID, clientIP, r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	} else {
+		log.Infof("h2 [%s] %s %s %s %d %s %s", serverID, clientIP, r.Method, r.URL.Path, rec.status, time.Since(start), r.UserAgent())
+	}
 }
 
 func extractIPFromRequest(r *http.Request) string {
+	// Trust CF-Connecting-IP only if RemoteAddr is a verified Cloudflare IP
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges != nil {
+		if cfip := r.Header.Get("CF-Connecting-IP"); cfip != "" {
+			if cfRanges.ContainsString(r.RemoteAddr) {
+				return strings.TrimSpace(cfip)
+			}
+		}
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.IndexByte(xff, ','); i > 0 {
 			return strings.TrimSpace(xff[:i])
@@ -187,6 +209,27 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("POST /api/auth/totp/disable", wrapOpa(handler.TotpDisable))
 	h.mux.Handle("GET /api/auth/totp/status", wrapOpa(handler.TotpStatus))
 
+	// Site deployment
+	h.mux.Handle("POST /api/site/trigger-build", wrapOpa(handler.TriggerBuild))
+	h.mux.Handle("GET /api/site/build-status/{buildid}", wrapOpa(handler.BuildStatus))
+	h.mux.Handle("GET /api/site/builds/{serverid}", wrapOpa(handler.ListBuilds))
+
+	// Staging
+	h.mux.Handle("POST /api/staging/build", wrapOpa(handler.StagingBuild))
+	// WebDAV: register without method so all WebDAV methods (PROPFIND, MKCOL, COPY, MOVE, etc.) match.
+	// The handler does its own Bearer token auth since http.ServeMux method patterns
+	// don't support non-standard HTTP methods.
+	verifyToken := func(token string) (bool, bool, error) {
+		valid, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+		if err != nil || !valid {
+			return false, false, err
+		}
+		return true, perms.HasCap("admin"), nil
+	}
+	stagingDAV := handler.StagingWebDAVNetHTTP(verifyToken)
+	h.mux.Handle("/api/staging/{serverid}/dav", stagingDAV)
+	h.mux.Handle("/api/staging/{serverid}/dav/", stagingDAV)
+
 	// Bad actor admin API
 	if badactor.IsEnabled() {
 		h.mux.Handle("GET /api/badactor/list", wrapOpa(badactor.ListBadActors))
@@ -202,9 +245,15 @@ func (h *H2Handler) setupRoutes() {
 	log.Infof("h2: registered all unified handler routes")
 
 	// --- Backend proxy and static file routes (per-server) ---
+	// Collect handlers by pattern to avoid duplicate ServeMux registration
+	// when multiple virtual hosts share the same path (e.g., both have /api).
+	type hostHandler struct {
+		host    string
+		handler http.Handler
+	}
+	patternHandlers := make(map[string][]hostHandler) // pattern -> handlers by host
 
 	for _, server := range h.listener.GetServers() {
-		// Register backend proxy routes
 		for _, b := range server.Backends {
 			if !b.IsReady() {
 				continue
@@ -220,33 +269,36 @@ func (h *H2Handler) setupRoutes() {
 			serverHost := server.Host
 
 			proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Host != serverHost {
-					http.NotFound(w, r)
-					return
-				}
 				if containerPath != "" && containerPath != virtualPath {
 					r.URL.Path = strings.Replace(r.URL.Path, virtualPath, containerPath, 1)
 				}
 				proxy.ServeHTTP(w, r)
 			})
 
-			h.mux.Handle(virtualPath+"/", proxyHandler)
-			h.mux.Handle(virtualPath, proxyHandler)
-			log.Infof("h2: registered proxy %s -> %s (container: %s)", virtualPath, target, b.ContainerName)
+			patternHandlers[virtualPath+"/"] = append(patternHandlers[virtualPath+"/"], hostHandler{serverHost, proxyHandler})
+			patternHandlers[virtualPath] = append(patternHandlers[virtualPath], hostHandler{serverHost, proxyHandler})
+			log.Infof("h2: registered proxy %s -> %s (container: %s) for %s", virtualPath, target, b.ContainerName, serverHost)
 		}
 
-		// Serve static files if configured
 		if server.Root != "" {
 			serverHost := server.Host
 			fileServer := http.FileServer(http.Dir(server.Root))
-			h.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				if r.Host != serverHost {
-					http.NotFound(w, r)
-					return
-				}
-				fileServer.ServeHTTP(w, r)
-			})
+			patternHandlers["/"] = append(patternHandlers["/"], hostHandler{serverHost, fileServer})
 			log.Infof("h2: serving static files from %s for %s", server.Root, serverHost)
 		}
+	}
+
+	// Register a single dispatching handler per pattern
+	for pattern, handlers := range patternHandlers {
+		handlers := handlers // capture for closure
+		h.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, hh := range handlers {
+				if r.Host == hh.host {
+					hh.handler.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		}))
 	}
 }

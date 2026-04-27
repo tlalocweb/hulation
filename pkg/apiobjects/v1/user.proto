@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+// User model for hulation. Adapted from izcr's pkg/apiobjects/v1/user.proto.
+// Registry-specific fields and the RegistryUser message have been dropped;
+// ProjectRoleAssignment is dropped (narrower scope hierarchy).
+
+package hulation.v1.apiobjects;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apiobjects/v1;apiobjects";
+
+import "google/protobuf/timestamp.proto";
+import "pkg/apiobjects/v1/rbac.proto";
+
+// User models an administrative account within hulation.
+message User {
+  string apiver = 1;
+  string uuid = 2;
+  // Numeric identifier for compatibility with external systems (optional).
+  int64 user_id = 3;
+
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+
+  string username = 6;
+  string email = 7;
+  string display_name = 8;
+  string comment = 9;
+  repeated string secondary_emails = 10;
+
+  // System administrator (bypasses all permission checks).
+  bool sys_admin = 11;
+  // User account is disabled (cannot login). `optional` distinguishes
+  // "not provided" from "explicitly set to false" in PATCH requests.
+  optional bool disabled = 12;
+
+  // Primary authentication provider asserting this user (internal if unset).
+  AuthProviderRef auth_provider = 13;
+  // External subject identifier from the auth provider (e.g., OIDC sub).
+  string external_identity = 14;
+
+  google.protobuf.Timestamp last_login_at = 15;
+  google.protobuf.Timestamp last_activity_at = 16;
+
+  // Password hash for internal/local authentication (Argon2).
+  // Used when auth_provider is "internal" or unset. Never returned in
+  // API responses.
+  optional string password_hash = 20;
+
+  // Groups the user belongs to; principals must use kind=GROUP.
+  repeated PrincipalRef groups = 21;
+
+  // Role assignments for this user (system or server scoped).
+  repeated RoleAssignment role_assignments = 30 [json_name = "roleAssignments"];
+
+  // Direct allow permission grants (cherry-picked).
+  repeated PermissionGrant direct_permissions = 31 [json_name = "directPermissions"];
+
+  // Direct deny permissions (explicit blocks).
+  repeated PermissionGrant direct_deny_permissions = 32 [json_name = "directDenyPermissions"];
+
+  // Group UUIDs this user belongs to (groups also grant permissions).
+  repeated string group_uuids = 33 [json_name = "groupUuids"];
+
+  // ============================================================================
+  // User validation
+  // ============================================================================
+
+  // Last auth change: last time the user set a password or logged in via their
+  // provider. If zero, user has never completed auth setup.
+  google.protobuf.Timestamp last_auth_change_at = 40;
+  // If zero, user email is unvalidated.
+  google.protobuf.Timestamp validated_at = 41;
+  repeated EmailValidation pending_validation = 42;
+
+  // Password reset fields.
+  string password_reset_token = 43;
+  google.protobuf.Timestamp password_reset_expires = 44;
+
+  // ============================================================================
+  // TOTP (Time-based One-Time Password)
+  // ============================================================================
+
+  bool totp_enabled = 50;
+  bool totp_pending_setup = 51;
+  // AES-GCM encrypted TOTP secret. NEVER returned in API responses.
+  string totp_secret_encrypted = 52;
+  // Argon2 hashed recovery codes for emergency access.
+  repeated string totp_recovery_codes_hashed = 53;
+  google.protobuf.Timestamp totp_enabled_at = 54;
+
+  // ============================================================================
+  // Hulation-specific: allowed server IDs
+  // ============================================================================
+
+  // Denormalized list of server IDs this user can access. Populated from
+  // role_assignments at token issue. Used by the analytics API layer to
+  // intersect requested serverIds[] with the user's scope.
+  repeated string allowed_server_ids = 60 [json_name = "allowedServerIds"];
+}
+
+// EmailValidation represents a pending email validation token.
+message EmailValidation {
+    string uuid = 1;
+    string email = 2;
+    // Special token emailed to the user for validation.
+    string validation_token = 3;
+}

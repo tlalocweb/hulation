@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+// RBAC primitives for hulation. Adapted from izcr's pkg/apiobjects/v1/rbac.proto.
+// The scope hierarchy here is narrower — hulation uses (system, server) rather
+// than izcr's (system, tenant, project). We keep `scope_type` as a string so a
+// later phase can widen it without a schema break; "tenant" and "project" are
+// reserved values for that future use.
+
+package hulation.v1.apiobjects;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apiobjects/v1;apiobjects";
+
+import "google/protobuf/timestamp.proto";
+
+// AuthProviderRef points to a configured authentication provider declared
+// under pkg/server/authware/provider.
+message AuthProviderRef {
+  // Name uniquely identifies the provider instance (e.g. "google").
+  string provider_name = 1;
+  // Provider type (e.g. "oidc", "internal") mirrors AuthProviderConfig.ProviderType.
+  string provider_type = 2;
+}
+
+// PrincipalKind distinguishes the type of subject attached to a role.
+enum PrincipalKind {
+  PRINCIPAL_KIND_UNSPECIFIED = 0;
+  PRINCIPAL_KIND_USER = 1;
+  PRINCIPAL_KIND_GROUP = 2;
+}
+
+// PrincipalRef provides a lightweight reference to a subject.
+message PrincipalRef {
+  PrincipalKind kind = 1;
+  string uuid = 2;
+  string display_name = 3;
+  AuthProviderRef provider = 4;
+}
+
+// SystemRole enumerates elevated global permissions for hulation.
+// Only ADMIN is supported in v1; other values are reserved for forward-compat.
+enum SystemRole {
+  SYSTEM_ROLE_UNSPECIFIED = 0;
+  SYSTEM_ROLE_ADMIN = 1;
+}
+
+// PermissionEffect expresses whether an access grants or denies an action.
+enum PermissionEffect {
+  PERMISSION_EFFECT_UNSPECIFIED = 0;
+  PERMISSION_EFFECT_ALLOW = 1;
+  PERMISSION_EFFECT_DENY = 2;
+}
+
+// ProjectRoleAssignment is reserved for future multi-tenant deployments
+// (where a user may hold project-scoped roles within a tenant). Unused in
+// hulation v1; referenced by the adopted auth apispec so the schema stays
+// portable if distributed tenancy is enabled later.
+message ProjectRoleAssignment {
+  string project_uuid = 1;
+  string project_name = 2;
+  string role = 3;
+  google.protobuf.Timestamp granted_at = 4;
+  string granted_by = 5;
+}
+
+// RoleDefinition defines a named role with its associated permissions.
+// Built-in roles (admin, viewer, manager) are defined in code. Custom roles
+// can be stored in the database.
+message RoleDefinition {
+  string uuid = 1;
+  string name = 2;                              // e.g., "viewer", "manager"
+  string description = 3;
+  repeated string allow_permissions = 4;        // Permissions granted by this role
+  repeated string deny_permissions = 5;         // Permissions explicitly denied by this role
+  bool is_system_role = 6;                      // Built-in vs custom
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  string created_by = 9;                        // UUID of user who created this role
+}
+
+// RoleAssignment assigns a role to a user at a specific scope.
+//
+// scope_type values in hula's current single-tenant deployment:
+//   "system"  — applies everywhere; tenant_uuid and project_uuid empty.
+//   "server"  — applies to one virtual server; tenant_uuid holds the
+//               server ID from config.yaml; project_uuid unused.
+//   "tenant", "project" — reserved for future multi-tenant / per-server-
+//               tenancy support. Field names mirror izcr for port parity.
+message RoleAssignment {
+  string uuid = 1;
+  string role_name = 2;
+  string scope_type = 3;
+  // Tenant/server scope ID. In hula, this is the server_id when
+  // scope_type="server". Named tenant_uuid for izcr port parity.
+  string tenant_uuid = 4;
+  // Project scope ID. Unused in hula v1. Reserved.
+  string project_uuid = 5;
+  google.protobuf.Timestamp granted_at = 6;
+  string granted_by = 7;                        // UUID of user who granted the role
+}
+
+// PermissionGrant is a direct permission grant or deny for a user or group.
+// This allows fine-grained control beyond role-based permissions.
+message PermissionGrant {
+  string uuid = 1;
+  string permission = 2;                        // e.g., "server.{server_id}.forms.create"
+  bool is_deny = 3;
+  string scope_type = 4;                        // "system", "server"
+  // See RoleAssignment.tenant_uuid for field-naming rationale.
+  string tenant_uuid = 5;
+  string project_uuid = 6;
+  google.protobuf.Timestamp granted_at = 7;
+  string granted_by = 8;
+}
+
+// PermissionSource tracks where a permission came from (for debugging/audit).
+message PermissionSource {
+  string permission = 1;
+  string source_type = 2;                       // "role", "group", "direct"
+  string source_name = 3;
+  string scope = 4;                             // "system", "server:<id>"
+  bool is_deny = 5;
+}
