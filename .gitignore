@@ -42,3 +42,6 @@ hula
 .gopath/
 env.sh
 hulactl
+hulabuild
+.cache/
+builder-images/hulabuild-linux

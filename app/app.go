@@ -16,7 +16,8 @@ const (
 	defaultLogLevel = zerolog.ErrorLevel
 )
 
-var appConfig *config.Config
+// appConfigFile: only the CLI-provided path is tracked here; the loaded
+// Config itself lives in the config package (config.GetConfig).
 var appConfigFile string
 var appDebugLevel int
 var jsonLogs bool
@@ -149,62 +150,42 @@ func DumpVersion() {
 	fmt.Println("(unknown)")
 }
 
-// ReloadConfig re-reads the config file from disk and swaps the global config pointer.
-// Returns the old config so callers can compare fields.
+// ReloadConfig delegates to config.ReloadConfig.
 func ReloadConfig() (oldConf *config.Config, err error) {
-	newConf, err := config.LoadConfig(appConfigFile)
-	if err != nil {
-		err = fmt.Errorf("reload config: %w", err)
-		return
-	}
-	oldConf = appConfig
-	appConfig = newConf
-	return
+	return config.ReloadConfig()
 }
 
-// ApplyLogTagConfig applies log tag filters from the config file.
-// CLI flags take precedence over config values.
+// ApplyLogTagConfig delegates to config.ApplyLogTagConfig.
 func ApplyLogTagConfig() {
-	if appConfig == nil {
-		return
-	}
-	if log.GetTagFilter() == 0 && appConfig.LogTags != "" {
-		if err := log.SetTagFilterFromString(appConfig.LogTags); err != nil {
-			log.Warnf("Invalid log_tags in config: %s", err.Error())
-		}
-	}
-	if appConfig.NoLogTags != "" {
-		if err := log.SetTagBlockFilterFromString(appConfig.NoLogTags); err != nil {
-			log.Warnf("Invalid no_log_tags in config: %s", err.Error())
-		}
-	}
+	config.ApplyLogTagConfig()
 }
 
+// GetConfigPath returns the file path the config was loaded from.
 func GetConfigPath() string {
-	return appConfigFile
+	return config.GetConfigPath()
 }
 
+// GetHulaOriginHost returns the hula origin hostname.
 func GetHulaOriginHost() string {
-	return appConfig.HulaHost
+	return config.GetHulaOriginHost()
 }
 
+// GetHulaOriginBaseUrl returns the hula origin base URL.
 func GetHulaOriginBaseUrl() string {
-	return appConfig.GetHulaServer().GetExternalUrl()
+	return config.GetHulaOriginBaseUrl()
 }
 
+// LoadConfig loads the config file using the path set by ParseFlags.
 func LoadConfig() (err error) {
-	appConfig, err = config.LoadConfig(appConfigFile)
-	return err
+	return config.InitConfig(appConfigFile)
 }
 
-// only used in test harness
+// LoadConfigWithFile is only used in the test harness.
 func LoadConfigWithFile(configfile string) (configret *config.Config, err error) {
-	appConfig, err = config.LoadConfig(configfile)
-	if err != nil {
+	if err = config.InitConfig(configfile); err != nil {
 		return nil, err
 	}
-	configret = appConfig
-	return
+	return config.GetConfig(), nil
 }
 
 func GetLogLevel() int {
@@ -215,8 +196,10 @@ func GetAppDebugLevel() int {
 	return appDebugLevel
 }
 
+// GetConfig is a delegating alias for config.GetConfig. New code should
+// call config.GetConfig() directly.
 func GetConfig() *config.Config {
-	return appConfig
+	return config.GetConfig()
 }
 
 func ConnectToDB() {

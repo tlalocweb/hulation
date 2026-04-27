@@ -12,6 +12,12 @@ import (
 	"github.com/tlalocweb/hulation/utils"
 )
 
+// IPInfoHook is set by the badactor package at startup. It lets the
+// visitor enrichment path pull cached geo info without creating a
+// handler → badactor import cycle (badactor already imports handler).
+// Returns empty strings when no cached info exists; non-blocking.
+var IPInfoHook func(ip string) (countryCode, region, city string)
+
 const (
 	VisitBounceFlagSawURL = 1 << iota
 )
@@ -25,6 +31,7 @@ const (
 	BMIndexSSCookieM = iota // *model.VisitorCookie
 	BMIndexVisitorM  = iota // *model.Visitor
 	BMHostConf       = iota // *config.Server
+	BMIndexReferer   = iota // string — raw Referer header captured at ingest
 	// user
 	BMIndexData1 = iota
 	BMIndexData2 = iota
@@ -51,6 +58,38 @@ func InitVisitorHandlers() {
 		visitorBounceMap = model.NewBounceMap(app.GetConfig().BounceTimeout)
 	}
 	visitorBounceMap.Start()
+}
+
+// enrichEventFromBounce populates an event's Phase-0 analytics fields
+// using inputs stashed in the bounce Data map. Call this immediately
+// before ev.CommitTo(...). It's safe to call with missing keys — each
+// enrichment step is a no-op on empty inputs.
+func enrichEventFromBounce(ev *model.Event, b *model.Bounce, visitorID string) {
+	var ua, ip, referer, serverID string
+	if v, ok := b.Data[BMIndexUA]; ok {
+		ua, _ = v.(string)
+	}
+	if v, ok := b.Data[BMIndexIP]; ok {
+		ip, _ = v.(string)
+	}
+	if v, ok := b.Data[BMIndexReferer]; ok {
+		referer, _ = v.(string)
+	}
+	ownHost := ""
+	if v, ok := b.Data[BMHostConf]; ok {
+		if hconf, _ := v.(*config.Server); hconf != nil {
+			serverID = hconf.ID
+			ownHost = hconf.Host
+		}
+	}
+	// Geo enrichment from the ipinfo cache. Non-blocking: if the hook
+	// isn't registered (test harnesses, etc.) or the IP isn't cached,
+	// geo fields are left empty.
+	var countryCode, region, city string
+	if ip != "" && IPInfoHook != nil {
+		countryCode, region, city = IPInfoHook(ip)
+	}
+	ev.ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city)
 }
 
 var precompileNewVisitorHooks = &utils.RunOnceSingleton{Run: func(p interface{}) (err error) {
@@ -129,6 +168,7 @@ func Hello(ctx RequestCtx) error {
 				ev.SetMethod("hello")
 				ev.SetBrowserUA(b.Data[BMIndexUA].(string))
 				ev.SetFromIP(b.Data[BMIndexIP].(string))
+				enrichEventFromBounce(ev, b, b.Visitor.ID)
 				err = ev.CommitTo(model.GetDB(), b.Visitor)
 				if err != nil {
 					log.Errorf("error committing event: %s", err.Error())
@@ -146,7 +186,7 @@ func Hello(ctx RequestCtx) error {
 		}
 
 		return err
-	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hconf})
+	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hconf, BMIndexReferer: strings.Clone(ctx.Referer())})
 
 	return ctx.SendString(`{"status":"ok","vc":"` + sscookie + `"}`)
 }
@@ -239,6 +279,7 @@ func HelloIframe(ctx RequestCtx) error {
 			ev.SetMethod("helloiframe")
 			ev.SetBrowserUA(b.Data[BMIndexUA].(string))
 			ev.SetFromIP(b.Data[BMIndexIP].(string))
+			enrichEventFromBounce(ev, b, b.Visitor.ID)
 
 			err = ev.CommitTo(model.GetDB(), b.Visitor)
 			if err != nil {
@@ -260,7 +301,7 @@ func HelloIframe(ctx RequestCtx) error {
 
 		return err
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(thisurl), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
-		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hostconf})
+		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hostconf, BMIndexReferer: strings.Clone(ctx.Referer())})
 
 	hulaurl, err := utils.GetBaseUrl(ctx.OriginalURL())
 	if err != nil {
@@ -386,6 +427,7 @@ func HelloNoScript(ctx RequestCtx) error {
 			ev.SetMethod("hellonoscript")
 			ev.SetBrowserUA(b.Data[BMIndexUA].(string))
 			ev.SetFromIP(b.Data[BMIndexIP].(string))
+			enrichEventFromBounce(ev, b, b.Visitor.ID)
 			err = ev.CommitTo(model.GetDB(), b.Visitor)
 			if err != nil {
 				log.Errorf("error committing event: %s", err.Error())
@@ -396,7 +438,7 @@ func HelloNoScript(ctx RequestCtx) error {
 		return err
 
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(refurl), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
-		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP())})
+		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hostconf, BMIndexReferer: strings.Clone(refurl)})
 
 	body, err = iframeTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
 		"b": bounceS, "iframename": app.GetConfig().PublishedIFrameNoScriptFilename, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})

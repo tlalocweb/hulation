@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/tlalocweb/hulation/app"
 	"sync"
 )
 
@@ -80,7 +82,16 @@ func (n *NetHTTPCtx) Param(name string) string {
 }
 
 func (n *NetHTTPCtx) IP() string {
-	// Check standard proxy headers first
+	// Trust CF-Connecting-IP only if RemoteAddr is a verified Cloudflare IP
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges != nil {
+		if cfip := n.r.Header.Get("CF-Connecting-IP"); cfip != "" {
+			if cfRanges.ContainsString(n.r.RemoteAddr) {
+				return strings.TrimSpace(cfip)
+			}
+		}
+	}
+	// Standard proxy headers
 	if xff := n.r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.IndexByte(xff, ','); i > 0 {
 			return strings.TrimSpace(xff[:i])
@@ -251,6 +262,48 @@ func (n *NetHTTPCtx) SetNext(h Handler) {
 func WrapForNetHTTP(h Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := NewNetHTTPCtx(w, r)
+		if err := h(ctx); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// JWTVerifier verifies a bearer token and returns the parsed permissions.
+// Wired from the server package so handler can stay model-free at this
+// layer; matches the signature of model.VerifyJWTClaims + a nil check
+// compacted into one callback.
+type JWTVerifier func(token string) (valid bool, perms interface{}, err error)
+
+// WrapAdminForNetHTTP is WrapForNetHTTP with a mandatory admin bearer
+// token check. The verified token and parsed permissions are stashed on
+// the ctx via Locals("jwt") and Locals("perms"), matching the contract
+// that handlers like StatusAuthOK, FormModify, and UserCreate already
+// rely on.
+//
+// verify is expected to ensure the token is valid AND the caller holds
+// the "admin" capability; return valid=false to reject. A nil verify
+// rejects every request.
+func WrapAdminForNetHTTP(h Handler, verify JWTVerifier) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const prefix = "Bearer "
+		authz := r.Header.Get("Authorization")
+		if len(authz) <= len(prefix) || authz[:len(prefix)] != prefix {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if verify == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		token := authz[len(prefix):]
+		ok, perms, err := verify(token)
+		if err != nil || !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ctx := NewNetHTTPCtx(w, r)
+		ctx.SetLocals("jwt", token)
+		ctx.SetLocals("perms", perms)
 		if err := h(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

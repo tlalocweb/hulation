@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+// FormsService — CRUD for forms hosted on a virtual server.
+//
+// Forms in hulation are identified by name/id; the server_id is a
+// permission-scoping param only (the underlying Form record is not
+// per-server). A caller must hold the server-scoped permission to
+// manage forms on that server.
+
+package hulation.v1.forms;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/forms;formsspec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service FormsService {
+  rpc CreateForm(CreateFormRequest) returns (CreateFormResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/forms/{server_id}"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.create"] };
+  }
+
+  rpc ModifyForm(ModifyFormRequest) returns (ModifyFormResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/forms/{server_id}/{form_id}"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.modify"] };
+  }
+
+  rpc DeleteForm(DeleteFormRequest) returns (DeleteFormResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/forms/{server_id}/{form_id}"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.delete"] };
+  }
+
+  rpc ListForms(ListFormsRequest) returns (ListFormsResponse) {
+    option (google.api.http) = { get: "/api/v1/forms/{server_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.list"] };
+  }
+
+  rpc GetForm(GetFormRequest) returns (GetFormResponse) {
+    option (google.api.http) = { get: "/api/v1/forms/{server_id}/{form_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.forms.read"] };
+  }
+}
+
+// Form mirrors model.FormModel. `schema` is a JSON-schema string
+// (santhosh-tekuri/jsonschema format); `captcha` is one of the
+// supported captcha providers; `feedback` is a template message
+// returned on successful submission.
+message Form {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string schema = 4;
+  string captcha = 5;
+  string feedback = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message CreateFormRequest {
+  string server_id = 1;
+  string name = 2;
+  string description = 3;
+  string schema = 4;
+  string captcha = 5;
+  string feedback = 6;
+}
+
+message CreateFormResponse {
+  Form form = 1;
+}
+
+message ModifyFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+  // Omitted (empty-string) fields are left unchanged, matching the
+  // existing handler's PATCH semantics.
+  string name = 3;
+  string description = 4;
+  string schema = 5;
+  string captcha = 6;
+  string feedback = 7;
+}
+
+message ModifyFormResponse {
+  Form form = 1;
+}
+
+message DeleteFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+}
+
+message DeleteFormResponse {
+  bool ok = 1;
+}
+
+message ListFormsRequest {
+  string server_id = 1;
+}
+
+message ListFormsResponse {
+  repeated Form forms = 1;
+}
+
+message GetFormRequest {
+  string server_id = 1;
+  string form_id = 2;
+}
+
+message GetFormResponse {
+  Form form = 1;
+}

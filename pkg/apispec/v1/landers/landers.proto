@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+// LandersService — CRUD for landing-page tracking records on a virtual server.
+
+package hulation.v1.landers;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/landers;landersspec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service LandersService {
+  rpc CreateLander(CreateLanderRequest) returns (CreateLanderResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/landers/{server_id}"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.create"] };
+  }
+
+  rpc ModifyLander(ModifyLanderRequest) returns (ModifyLanderResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/landers/{server_id}/{lander_id}"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.modify"] };
+  }
+
+  rpc DeleteLander(DeleteLanderRequest) returns (DeleteLanderResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/landers/{server_id}/{lander_id}"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.delete"] };
+  }
+
+  rpc ListLanders(ListLandersRequest) returns (ListLandersResponse) {
+    option (google.api.http) = { get: "/api/v1/landers/{server_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.list"] };
+  }
+
+  rpc GetLander(GetLanderRequest) returns (GetLanderResponse) {
+    option (google.api.http) = { get: "/api/v1/landers/{server_id}/{lander_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.landers.read"] };
+  }
+}
+
+// Lander mirrors model.Lander.
+message Lander {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // Server name (as declared in hula config.yaml). Distinct from the
+  // server_id used for permission scoping, though in practice they match.
+  string server = 4;
+  // url_postfix is the path suffix for the lander (e.g., "/launch").
+  string url_postfix = 5;
+  // redirect is the target URL. Optional — empty means the lander just
+  // counts hits without redirecting.
+  string redirect = 6;
+  // Hits counter. Incremented by the visitor-tracking hot path.
+  uint64 hits = 7;
+  bool ignore_port = 8;
+  bool no_serve = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message CreateLanderRequest {
+  string server_id = 1;
+  Lander lander = 2;
+}
+
+message CreateLanderResponse {
+  Lander lander = 1;
+}
+
+message ModifyLanderRequest {
+  string server_id = 1;
+  string lander_id = 2;
+  Lander lander = 3;
+}
+
+message ModifyLanderResponse {
+  Lander lander = 1;
+}
+
+message DeleteLanderRequest {
+  string server_id = 1;
+  string lander_id = 2;
+}
+
+message DeleteLanderResponse {
+  bool ok = 1;
+}
+
+message ListLandersRequest {
+  string server_id = 1;
+}
+
+message ListLandersResponse {
+  repeated Lander landers = 1;
+}
+
+message GetLanderRequest {
+  string server_id = 1;
+  string lander_id = 2;
+}
+
+message GetLanderResponse {
+  Lander lander = 1;
+}

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package hulation.annotations;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/server/authware/proto";
+
+import "google/protobuf/descriptor.proto";
+
+// Define custom options for method-level authentication control
+extend google.protobuf.MethodOptions {
+  // Mark endpoint as not requiring authentication at all
+  bool noauth = 50001;
+  // Mark endpoint as skipping email validation check (still requires auth)
+  bool skip_email_validation = 50002;
+  // Mark endpoint as skipping auth setup check (for users who haven't set password yet)
+  bool skip_auth_setup_check = 50003;
+  // Mark endpoint as skipping TOTP check (allow totp_pending tokens)
+  bool skip_totp_check = 50004;
+}

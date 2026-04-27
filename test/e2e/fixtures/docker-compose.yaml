@@ -1,0 +1,125 @@
+# Hula E2E test stack.
+#
+# All services are named so lookups via docker DNS work:
+#   hula, hula-clickhouse
+#
+# hulactl-runner and test-runner are launched via `docker compose run --rm`
+# so they are short-lived ephemerals for each test command.
+#
+# Note: `${HULA_E2E_ROOT}` is set by setup.sh (points at test/e2e/).
+
+services:
+  hula-clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    restart: on-failure:3
+    environment:
+      - CLICKHOUSE_DB=hula
+      - CLICKHOUSE_USER=hula
+      - CLICKHOUSE_PASSWORD=hula
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - ch_data:/var/lib/clickhouse
+      - ch_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=hula --password=hula -q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  hula:
+    image: hula:local
+    restart: on-failure:3
+    ports:
+      - "${HULA_HOST_PORT:-4443}:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HULA_E2E_ROOT}/workdir/hula-config.yaml:/etc/hula/config.yaml:ro
+      - ${HULA_E2E_ROOT}/workdir/certs:/var/hula/certs:ro
+      - hula-sitedeploy:/var/hula/sitedeploy
+      - hula-staging-data:/var/hula/staging
+      # Bind-mount the local test site repo (read-only) so hula can clone via file://
+      - ${TEST_SITE_SRC}:/var/hula/testsite-repo:ro
+    environment:
+      - GITHUB_AUTH_TOKEN=${GITHUB_AUTH_TOKEN}
+      # Phase-4b chat suites (32-34) need /chat/start to issue
+      # tokens without a real Turnstile call; the bypass mode
+      # accepts any non-empty token. Production hula must NOT
+      # set this — it logs a WARN at boot when active.
+      - HULA_CHAT_CAPTCHA_TEST_BYPASS=1
+    # Trust the bind-mounted test site repo (ownership UID mismatch between
+    # host and container would otherwise trigger a "dubious ownership" error).
+    # We do it via git config --global here rather than the GIT_CONFIG_* env
+    # vars because git's .git directory ownership check happens before env
+    # vars are parsed.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        git config --global safe.directory '*'
+        exec /hula/hula -config /etc/hula/config.yaml
+    depends_on:
+      hula-clickhouse:
+        condition: service_healthy
+
+  # Run hulactl inside a short-lived container.
+  # Entrypoint sets up CA trust and /etc/hosts aliases pointing to the hula
+  # service, then execs hulactl with the provided arguments.
+  hulactl-runner:
+    image: alpine:3.19
+    profiles: ["cli"]
+    volumes:
+      - ${HULA_E2E_ROOT}/workdir/hulactl:/usr/local/bin/hulactl:ro
+      - ${HULA_E2E_ROOT}/workdir/certs/rootCA.pem:/usr/local/share/ca-certificates/hula-test-root.crt:ro
+      - hulactl-config:/root/.hula
+      - ${HULA_E2E_ROOT}/workdir/hulactl-mount:/mnt/hulactl-mount
+    environment:
+      - HULACTL_HOST=hula.test.local
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        # Install CA trust + curl + jq + grpcurl-ready toolchain. Suites 19
+        # (http/2 probe) and 13 (grpc smoke) reuse this runner for curl and
+        # network tooling, so keep the deps co-located with hulactl.
+        if ! command -v curl >/dev/null 2>&1; then
+          apk add --no-cache ca-certificates curl jq >/dev/null 2>&1
+        fi
+        update-ca-certificates >/dev/null 2>&1
+        # Map test hostnames to the hula service IP.
+        HULA_IP=$$(getent hosts hula | awk '{print $$1}')
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        exec hulactl "$$@"
+      - "--"
+    depends_on:
+      - hula
+
+  # Same idea for curl-based tests (direct WebDAV, Hugo output verification).
+  test-runner:
+    image: alpine:3.19
+    profiles: ["cli"]
+    volumes:
+      - ${HULA_E2E_ROOT}/workdir/certs/rootCA.pem:/usr/local/share/ca-certificates/hula-test-root.crt:ro
+      - ${HULA_E2E_ROOT}/workdir:/workdir
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if ! command -v curl >/dev/null 2>&1; then
+          apk add --no-cache curl ca-certificates jq >/dev/null 2>&1
+        fi
+        update-ca-certificates >/dev/null 2>&1
+        HULA_IP=$$(getent hosts hula | awk '{print $$1}')
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        exec "$$@"
+      - "--"
+    depends_on:
+      - hula
+
+volumes:
+  ch_data:
+  ch_logs:
+  hula-sitedeploy:
+  hula-staging-data:
+  hulactl-config:

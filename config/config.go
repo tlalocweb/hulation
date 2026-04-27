@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/backend"
 	"github.com/tlalocweb/hulation/hooks"
 	"github.com/tlalocweb/hulation/log"
@@ -334,6 +333,50 @@ func (s *Server) GetCSPMap() map[string]string {
 // 	return vh.onNewVisitorRisorHooks
 // }
 
+// GitCredentials holds authentication for git operations.
+type GitCredentials struct {
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+}
+
+// GitRefConfig specifies which git ref to check out.
+// Branch: a branch name. Tag: "semver" (any valid semver tag), "any" (any tag), or a specific tag name.
+type GitRefConfig struct {
+	Branch string `yaml:"branch,omitempty"`
+	Tag    string `yaml:"tag,omitempty"`
+}
+
+// GitAutoDeployConfig configures automatic site deployment from a git repository.
+type GitAutoDeployConfig struct {
+	Repo      string          `yaml:"repo"`
+	Creds     *GitCredentials `yaml:"creds,omitempty"`
+	Ref       GitRefConfig    `yaml:"ref"`
+	HulaBuild string          `yaml:"hula_build,omitempty" default:"production"`
+	// Where to store cloned repos and build artifacts.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	DataDir string `yaml:"data_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/repo"`
+	// Where the built site is deployed and served from.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	DeployDir string `yaml:"deploy_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/site"`
+	// Where the staging site is served from (host-side volume mount for built output).
+	// Only used when the resolved build profile is a staging profile.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	StagingDir string `yaml:"staging_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/staging-site"`
+	// Where the staging source lives on the host (bind-mounted into the builder at {WORKDIR}/site/).
+	// This is what WebDAV exposes — editable source files (hugo.toml, markdown, etc).
+	// Only used when the resolved build profile is a staging profile.
+	// Supports {{env:*}}, {{confdir}}, {{serverid}} substitution.
+	StagingSrcDir string `yaml:"staging_src_dir,omitempty" default:"/var/hula/sitedeploy/{{serverid}}/staging-src"`
+	// Environment variables to pass into the builder container.
+	// Format: KEY=VALUE. Supports {{env:*}} substitution.
+	// Useful for passing secrets to static site generators at build time,
+	// e.g. "HUGO_PARAMS_TURNSTILESITE_KEY={{env:TURNSTILE_SITE_KEY}}"
+	BuildEnv []string `yaml:"build_env,omitempty"`
+	// If true, hula will NOT automatically pull and build the site on startup.
+	// By default hula pulls and builds all root_git_autodeploy sites at startup.
+	NoPullOnStart bool `yaml:"no_pull_on_start,omitempty"`
+}
+
 type Server struct {
 	Host string `yaml:"host,omitempty" env:"SERVER_HOST" test:"~.+"`
 	// optionally tell hulation to only run the server on the given network interfaces. By default hulation listens on all interfaces
@@ -345,6 +388,9 @@ type Server struct {
 	Port int `yaml:"port,omitempty"`
 	// optional - other names the Host header can be to match this server
 	Aliases []string `yaml:"aliases,omitempty"`
+	// optional - aliases that should 301 redirect to the primary Host instead of serving content
+	// these are registered like regular aliases for ACME/TLS but trigger a permanent redirect at request time
+	RedirectAliases []string `yaml:"redirect_aliases,omitempty"`
 	// ID should be a short random string - it is used as a parameter to the hulation server to identify the server
 	// and do a check with the Host header. It must be set - there is no default. This is not a secret.
 	ID     string `yaml:"id,omitempty" env:"SERVER_ID" test:"~.+"`
@@ -390,7 +436,8 @@ type Server struct {
 	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
 	Hooks    *VisitorHooks `yaml:"hooks,omitempty"`
-	Backends []*backend.BackendConfig `yaml:"backends,omitempty"`
+	Backends      []*backend.BackendConfig `yaml:"backends,omitempty"`
+	GitAutoDeploy *GitAutoDeployConfig    `yaml:"root_git_autodeploy,omitempty"`
 	externalUrl      string
 	externalHostPort string
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
@@ -401,10 +448,21 @@ type Server struct {
 	// if this is true, the utils.GetHostConfig and similar lookups for this server based on the host header, will look both at the DNS name _and_
 	// the port number. By default, the port number is ignored in the lookup
 	respectPortInLookup bool
+	// set of aliases that should 301 redirect to the primary Host
+	redirectAliasSet map[string]bool
 }
 
 func (s *Server) RespectPortInLookup() bool {
 	return s.respectPortInLookup
+}
+
+// IsRedirectAlias returns true if the given hostname is configured as a redirect alias
+// (should 301 to the primary Host rather than serving content).
+func (s *Server) IsRedirectAlias(host string) bool {
+	if s.redirectAliasSet == nil {
+		return false
+	}
+	return s.redirectAliasSet[host]
 }
 
 func (s *Server) GetExternalUrl() string {
@@ -434,8 +492,6 @@ type Listener struct {
 	ACMEManager *autocert.Manager
 	// Port for the ACME HTTP-01 challenge listener (default: 80)
 	ACMEHTTPPort int
-	// the fiber app for this listener - if applicable
-	FiberApp *fiber.App
 	// this is just a flag used to mark the Hulation API server entry from the others - its just a marker to know which
 	// actual server port/router to put the APIs on
 	hulacore bool
@@ -558,6 +614,8 @@ type SSLConfig struct {
 	Key  string `yaml:"key,omitempty"`
 	// ACME / Let's Encrypt automatic certificate management
 	ACME *ACMEConfig `yaml:"acme,omitempty"`
+	// Cloudflare Origin CA automatic certificate provisioning
+	CloudflareOriginCA *CloudflareOriginCAConfig `yaml:"cloudflare_origin_ca,omitempty"`
 	// TLS version controls (min/max)
 	TLS *TLSOptions `yaml:"tls,omitempty"`
 	// if the above is a path, it moved here
@@ -566,12 +624,56 @@ type SSLConfig struct {
 	tlsCert  *tls.Certificate
 }
 
+// NoConfig returns true if no TLS mode was configured at all.
+// This checks struct presence (non-nil pointers from YAML parsing), not whether
+// fields like ZoneID are populated — those may be resolved from env vars later.
 func (cfg *SSLConfig) NoConfig() bool {
-	return len(cfg.Cert) < 1 && len(cfg.Key) < 1 && cfg.ACME == nil
+	return !cfg.hasStaticCert() && !cfg.hasACMEConfig() && cfg.CloudflareOriginCA == nil
 }
 
+func (cfg *SSLConfig) hasStaticCert() bool {
+	return len(cfg.Cert) > 0 || len(cfg.Key) > 0
+}
+
+// hasACMEConfig returns true if ACME was explicitly configured in the YAML
+// (Email is required and has no default tag, so it distinguishes real config
+// from conftagz auto-filling defaults on nested structs).
+func (cfg *SSLConfig) hasACMEConfig() bool {
+	return cfg.ACME != nil && cfg.ACME.Email != ""
+}
+
+// IsACME returns true if ACME is the active TLS mode.
 func (cfg *SSLConfig) IsACME() bool {
-	return cfg.ACME != nil
+	return cfg.hasACMEConfig()
+}
+
+// IsCloudflareOriginCA returns true if Cloudflare Origin CA is the active TLS mode.
+// ZoneID must be populated (from YAML or env var resolution) before this is called.
+func (cfg *SSLConfig) IsCloudflareOriginCA() bool {
+	return cfg.CloudflareOriginCA != nil && cfg.CloudflareOriginCA.ZoneID != ""
+}
+
+// Validate checks that at most one TLS mode is configured and returns an error
+// describing the conflict if multiple modes are set.
+func (cfg *SSLConfig) Validate() error {
+	modes := 0
+	var names []string
+	if cfg.hasStaticCert() {
+		modes++
+		names = append(names, "static cert/key")
+	}
+	if cfg.IsACME() {
+		modes++
+		names = append(names, "acme")
+	}
+	if cfg.IsCloudflareOriginCA() {
+		modes++
+		names = append(names, "cloudflare_origin_ca")
+	}
+	if modes > 1 {
+		return fmt.Errorf("conflicting TLS modes: %s — configure exactly one", strings.Join(names, " + "))
+	}
+	return nil
 }
 
 func (cfg *SSLConfig) GetTLSCert() *tls.Certificate {
@@ -675,12 +777,48 @@ type Config struct {
 	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
 	// Issuer name shown in authenticator apps (default: "Hulation")
 	TotpIssuer string `yaml:"totp_issuer,omitempty" default:"Hulation"`
+	// Auth providers (OIDC SSO + internal password). See pkg/server/
+	// authware/provider for the runtime. Use AuthConfig.Providers.
+	Auth *AuthConfig `yaml:"auth,omitempty"`
+	// Analytics — tunables for the visitor-analytics subsystem. All fields
+	// optional; sensible defaults applied by pkg/store/clickhouse.
+	Analytics *AnalyticsConfig `yaml:"analytics,omitempty"`
+	// Chat — tunables for the Phase-4b visitor chat subsystem. All
+	// fields optional; sensible defaults applied at boot. When the
+	// whole block is omitted, chat is still enabled (the public
+	// /chat/start endpoint exists) but with default retention,
+	// captcha provider, and email-verifier knobs.
+	Chat *ChatConfig `yaml:"chat,omitempty"`
+	// Mailer — SMTP config for the Phase-3 scheduled-report dispatcher.
+	// Optional; when unset the dispatcher logs reports without sending.
+	Mailer *MailerConfig `yaml:"mailer,omitempty"`
+	// APNS — Apple Push Notification creds for the Phase-5a push
+	// notifier backend. Optional; when unset APNs delivery returns
+	// ErrNotConfigured per recipient and the overall delivery still
+	// succeeds if email delivered.
+	APNS *APNSConfig `yaml:"apns,omitempty"`
+	// FCM — Firebase Cloud Messaging creds for Android push. Same
+	// optionality as APNS.
+	FCM *FCMConfig `yaml:"fcm,omitempty"`
+	// OPAQUE — PAKE configuration. Optional; when unset hula
+	// generates fresh seed + AKE keypair on first boot and logs
+	// them so the operator can pin them.
+	OPAQUE *OPAQUEConfig `yaml:"opaque,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
 	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
 	// See servers section.
 	HulaHost string `yaml:"hula_host,omitempty" env:"HULA_HOST" test:"~.+" default:"localhost"`
+	// Hostname is an alias for HulaHost retained for compatibility with
+	// adopted izcr code that reads config.GetConfig().Hostname. If empty,
+	// HulaHost is used.
+	Hostname string `yaml:"hostname,omitempty"`
+	// RegistryHostnames is a comma-separated list of hostnames that should
+	// be treated as "registry" hosts. Used by adopted izcr code (e.g., to
+	// pick a JWT issuer). Hula uses the first entry; fall back to Hostname
+	// / HulaHost when unset.
+	RegistryHostnames string `yaml:"registry_hostnames,omitempty"`
 	// Optional - other names the Host header can be to match this server
 	HulaAliases []string `yaml:"hula_aliases,omitempty"`
 	// Specifically configure the domain for Hula vs. it being derived automatically from hula_host.
@@ -719,6 +857,38 @@ type Config struct {
 	listenOn string
 	// Server struct for Hula server itself
 	hulaServer *Server
+	// Cloudflare IP ranges — populated when any server uses cloudflare_origin_ca
+	cloudflareIPs *CloudflareIPRanges
+	// true if any server has allow_non_cf_ips: true
+	allowNonCFIPs bool
+	// ACME manager for hula's own identity (when hula_ssl uses acme)
+	hulaACMEManager *autocert.Manager
+	hulaACMEHTTPPort int
+}
+
+// IsCloudflareMode returns true if any server uses Cloudflare Origin CA.
+func (cfg *Config) IsCloudflareMode() bool {
+	return cfg.cloudflareIPs != nil
+}
+
+// GetCloudflareIPs returns the loaded Cloudflare IP ranges, or nil if not in Cloudflare mode.
+func (cfg *Config) GetCloudflareIPs() *CloudflareIPRanges {
+	return cfg.cloudflareIPs
+}
+
+// AllowNonCFIPs returns true if non-Cloudflare IPs should be allowed through.
+func (cfg *Config) AllowNonCFIPs() bool {
+	return cfg.allowNonCFIPs
+}
+
+// GetHulaACMEManager returns the ACME manager for hula's own identity, or nil.
+func (cfg *Config) GetHulaACMEManager() *autocert.Manager {
+	return cfg.hulaACMEManager
+}
+
+// GetHulaACMEHTTPPort returns the HTTP port for hula ACME challenges.
+func (cfg *Config) GetHulaACMEHTTPPort() int {
+	return cfg.hulaACMEHTTPPort
 }
 
 type Proxy struct {
@@ -765,6 +935,19 @@ func (cfg *Config) GetServerByAnyAlias(host string) *Server {
 		return nil
 	}
 	return cfg.byAllAlias[host]
+}
+
+// GetServerByID returns the server with the given ID, or nil if not found.
+func (cfg *Config) GetServerByID(id string) *Server {
+	if cfg == nil {
+		return nil
+	}
+	for _, s := range cfg.Servers {
+		if s.ID == id {
+			return s
+		}
+	}
+	return nil
 }
 
 func LoadConfig(filename string) (*Config, error) {
@@ -815,10 +998,38 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// conftagz may create empty pointer structs from default tags.
-	// Reset HulaSSL if it was not explicitly configured.
-	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" && cfg.HulaSSL.ACME != nil && cfg.HulaSSL.ACME.Email == "" {
+	// Reset HulaSSL if it was not explicitly configured. An empty
+	// CloudflareOriginCA pointer (no API token, no zone ID, no env
+	// vars naming one) counts as "not configured" — conftagz auto-
+	// populates it from default tags even when the user's YAML
+	// didn't set it.
+	//
+	// Env-var lookup matters here because the YAML form
+	// `hula_ssl: { cloudflare_origin_ca: {} }` is a valid, intentional
+	// config that inherits api_token + zone_id from env vars further
+	// down in the processing pipeline (line ~1478). Resetting HulaSSL
+	// to nil here would make hula fall through to a self-signed cert
+	// at boot, breaking Cloudflare's origin pull.
+	cfaUsed := false
+	if cfg.HulaSSL != nil && cfg.HulaSSL.CloudflareOriginCA != nil {
+		cfca := cfg.HulaSSL.CloudflareOriginCA
+		cfaUsed = cfca.APIToken != "" || cfca.ZoneID != "" ||
+			os.Getenv("CLOUDFLARE_API_TOKEN_hula") != "" ||
+			os.Getenv("CLOUDFLARE_ZONE_ID_hula") != ""
+	}
+	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" &&
+		!cfaUsed &&
+		(cfg.HulaSSL.ACME == nil || cfg.HulaSSL.ACME.Email == "") {
 		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
 		cfg.HulaSSL = nil
+	}
+
+	// conftagz may create empty GitAutoDeploy pointer structs — nil them out.
+	// A GitAutoDeployConfig with no repo AND no ref is conftagz noise, not user intent.
+	for _, s := range cfg.Servers {
+		if s.GitAutoDeploy != nil && s.GitAutoDeploy.Repo == "" && s.GitAutoDeploy.Ref.Branch == "" && s.GitAutoDeploy.Ref.Tag == "" {
+			s.GitAutoDeploy = nil
+		}
 	}
 
 	if len(cfg.Servers) < 1 {
@@ -997,7 +1208,36 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		listenerforserver.CORS = &cfg.CORS
 		if s.SSL != nil && !s.SSL.NoConfig() {
-			if s.SSL.IsACME() {
+			// Resolve env vars in Cloudflare config before validation
+			// (ZoneID may come from env, and IsCloudflareOriginCA checks it)
+			if s.SSL.CloudflareOriginCA != nil {
+				SubstConfVarsForAllStrings(s.SSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
+				cfca := s.SSL.CloudflareOriginCA
+				if cfca.APIToken == "" && s.ID != "" {
+					envID := strings.ReplaceAll(s.ID, "-", "_")
+					cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_" + envID)
+				}
+				if cfca.ZoneID == "" && s.ID != "" {
+					envID := strings.ReplaceAll(s.ID, "-", "_")
+					cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_" + envID)
+				}
+			}
+			if err := s.SSL.Validate(); err != nil {
+				return nil, fmt.Errorf("server %s ssl: %w", s.Host, err)
+			}
+			if s.SSL.IsCloudflareOriginCA() {
+				// Cloudflare Origin CA: provision or load cached cert (env vars already resolved above)
+				// Include redirect aliases — they need TLS coverage too (for the 301 redirect to work over HTTPS)
+				hostnames := []string{s.Host}
+				hostnames = append(hostnames, s.Aliases...)
+				hostnames = append(hostnames, s.RedirectAliases...)
+				cert, cerr := s.SSL.CloudflareOriginCA.ProvisionOrLoadCert(hostnames)
+				if cerr != nil {
+					return nil, fmt.Errorf("cloudflare origin CA for server %s: %w", s.Host, cerr)
+				}
+				s.SSL.tlsCert = cert
+				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else if s.SSL.IsACME() {
 				// ACME / Let's Encrypt: collect domains and build manager on the listener
 				acmeCfg := s.SSL.ACME
 				cacheDir := acmeCfg.CacheDir
@@ -1046,12 +1286,15 @@ func LoadConfig(filename string) (*Config, error) {
 				}
 				// ACME servers still contribute to SSL presence so TLS path is taken
 				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
-			} else {
+			} else if s.SSL.hasStaticCert() {
+				// Static cert/key provided inline or as file paths
 				err = s.SSL.LoadSSLConfig()
 				if err != nil {
-					return nil, fmt.Errorf("bad ssl config for server %s: %s", s.Host, err.Error())
+					return nil, fmt.Errorf("ssl config for server %s: %s", s.Host, err.Error())
 				}
 				listenerforserver.SSL = append(listenerforserver.SSL, s.SSL)
+			} else {
+				log.Warnf("server %s: ssl block present but no TLS mode configured (need acme, cloudflare_origin_ca, or cert/key)", s.Host)
 			}
 		} else if len(listenerforserver.SSL) > 0 || listenerforserver.ACMEManager != nil {
 			log.Warnf("SSL config for server %s is missing but TLS will be used by other servers on same port.", s.Host)
@@ -1094,11 +1337,34 @@ func LoadConfig(filename string) (*Config, error) {
 				return nil, fmt.Errorf(`bad alias "%s" for server config: %s`, a, s.Host)
 			}
 		}
+		// process redirect aliases: validate, register in lookups, and merge into Aliases for ACME
+		if len(s.RedirectAliases) > 0 {
+			s.redirectAliasSet = make(map[string]bool, len(s.RedirectAliases))
+			for n, ra := range s.RedirectAliases {
+				ra = SubstConfVarsLogErrorf(ra, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].redirect_alias[%s]", s.Host, ra))
+				s.RedirectAliases[n] = ra
+				_, ok := cfg.byServer[ra]
+				if ok {
+					log.Errorf(`redirect_alias "%s" for server config %s already referenced`, ra, s.Host)
+					return nil, fmt.Errorf(`redirect_alias "%s" for server config %s already referenced`, ra, s.Host)
+				}
+				if validIpAddressRE.MatchString(ra) || validHostnameRE.MatchString(ra) {
+					log.Debugf(`server[%s] redirect_alias %s`, s.Host, ra)
+					cfg.byServer[ra] = s
+					s.redirectAliasSet[ra] = true
+					// merge into Aliases so ACME domain collection picks it up
+					s.Aliases = append(s.Aliases, ra)
+				} else {
+					log.Errorf(`bad redirect_alias "%s" for server config: %s`, ra, s.Host)
+					return nil, fmt.Errorf(`bad redirect_alias "%s" for server config: %s`, ra, s.Host)
+				}
+			}
+		}
 		// log.Debugf("server[%s].externalUrl = %s", s.Host, s.externalUrl)
 		// log.Debugf("cfg.byListener[%s].servers = %+v", s.listenOn, listenerforserver.servers)
 		// log.Debugf("cfg.byListener[%s].serverByHost[%s] = %+v", s.listenOn, s.Host, listenerforserver.serverByHost)
 		cfg.byListener[s.listenOn].serverByHost[s.Host] = s
-		// add aliases to listener's serverByHost and to byAllAlias
+		// add aliases (including redirect aliases) to listener's serverByHost and to byAllAlias
 		for _, a := range s.Aliases {
 			cfg.byListener[s.listenOn].serverByHost[a] = s
 			cfg.byAllAlias[a] = s
@@ -1157,6 +1423,40 @@ func LoadConfig(filename string) (*Config, error) {
 					s.Host, i, b.ContainerName, b.Image, b.VirtualPath, b.ContainerPath)
 			}
 		}
+
+		// Validate and finalize git autodeploy config
+		if s.GitAutoDeploy != nil {
+			gad := s.GitAutoDeploy
+			if gad.Repo == "" {
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy: 'repo' is required", s.Host)
+			}
+			if gad.Ref.Branch == "" && gad.Ref.Tag == "" {
+				return nil, fmt.Errorf("server[%s].root_git_autodeploy: ref must have at least one of 'branch' or 'tag'", s.Host)
+			}
+			if s.Root != "" {
+				return nil, fmt.Errorf("server[%s]: cannot have both 'root' and 'root_git_autodeploy' — use one or the other", s.Host)
+			}
+			gad.Repo = SubstConfVarsLogErrorf(gad.Repo, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.repo", s.Host))
+			if gad.Creds != nil {
+				gad.Creds.Username = SubstConfVarsLogErrorf(gad.Creds.Username, map[string]string{"confdir": confDir, "serverid": s.ID},
+					fmt.Sprintf("server[%s].root_git_autodeploy.creds.username", s.Host))
+				gad.Creds.Password = SubstConfVarsLogErrorf(gad.Creds.Password, map[string]string{"confdir": confDir, "serverid": s.ID},
+					fmt.Sprintf("server[%s].root_git_autodeploy.creds.password", s.Host))
+			}
+			gad.DataDir = SubstConfVarsLogErrorf(gad.DataDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
+			gad.DeployDir = SubstConfVarsLogErrorf(gad.DeployDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.deploy_dir", s.Host))
+			gad.StagingDir = SubstConfVarsLogErrorf(gad.StagingDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.staging_dir", s.Host))
+			gad.StagingSrcDir = SubstConfVarsLogErrorf(gad.StagingSrcDir, map[string]string{"confdir": confDir, "serverid": s.ID},
+				fmt.Sprintf("server[%s].root_git_autodeploy.staging_src_dir", s.Host))
+			// Set server Root from DeployDir so static file serving works
+			s.Root = gad.DeployDir
+			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s deploy_dir=%s",
+				s.Host, gad.Repo, gad.Ref.Branch, gad.Ref.Tag, gad.HulaBuild, gad.DataDir, gad.DeployDir)
+		}
 	}
 
 	// Check for duplicate container names across all servers
@@ -1184,9 +1484,8 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	if cfg.SSL != nil {
-		// skip if these are both entirely empty - it means the user
-		// did not want SSL, otherwise let the error handling work
-		if !cfg.SSL.NoConfig() && !cfg.SSL.IsACME() {
+		// Load global static cert if configured (skip ACME and Cloudflare — those are handled per-server)
+		if cfg.SSL.hasStaticCert() {
 			err = cfg.SSL.LoadSSLConfig()
 			if err != nil {
 				return nil, fmt.Errorf("bad ssl config: %s", err.Error())
@@ -1194,13 +1493,99 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}
 
-	// Load hula's own SSL cert if configured (static cert files)
-	if cfg.HulaSSL != nil && !cfg.HulaSSL.NoConfig() && !cfg.HulaSSL.IsACME() {
-		err = cfg.HulaSSL.LoadSSLConfig()
-		if err != nil {
-			return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
+	// Load hula's own SSL cert if configured
+	if cfg.HulaSSL != nil {
+		if cfg.HulaSSL.hasStaticCert() {
+			err = cfg.HulaSSL.LoadSSLConfig()
+			if err != nil {
+				return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
+			}
+		}
+		// Resolve Cloudflare Origin CA env vars for hula_ssl (uses "hula" as the ID).
+		// Skip this whole block if a static cert is configured — conftagz may have
+		// auto-populated an empty CloudflareOriginCA struct from default tags,
+		// and we don't want to validate it when it wasn't the user's intent.
+		if !cfg.HulaSSL.hasStaticCert() && cfg.HulaSSL.CloudflareOriginCA != nil {
+			SubstConfVarsForAllStrings(cfg.HulaSSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
+			cfca := cfg.HulaSSL.CloudflareOriginCA
+			if cfca.APIToken == "" {
+				cfca.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN_hula")
+			}
+			if cfca.ZoneID == "" {
+				cfca.ZoneID = os.Getenv("CLOUDFLARE_ZONE_ID_hula")
+			}
+			if cfg.HulaHost == "" || cfg.HulaHost == "localhost" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires hula_host to be set to an actual hostname (not localhost)")
+			}
+			if cfca.APIToken == "" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires api_token (set in YAML or env var CLOUDFLARE_API_TOKEN_hula)")
+			}
+			if cfca.ZoneID == "" {
+				return nil, fmt.Errorf("hula_ssl: cloudflare_origin_ca requires zone_id (set in YAML or env var CLOUDFLARE_ZONE_ID_hula)")
+			}
+			hostnames := []string{cfg.HulaHost}
+			hostnames = append(hostnames, cfg.HulaAliases...)
+			cert, cerr := cfca.ProvisionOrLoadCert(hostnames)
+			if cerr != nil {
+				return nil, fmt.Errorf("cloudflare origin CA for hula_ssl: %w", cerr)
+			}
+			cfg.HulaSSL.tlsCert = cert
+		}
+		// ACME / Let's Encrypt for hula_ssl
+		if cfg.HulaSSL.IsACME() {
+			if cfg.HulaHost == "" || cfg.HulaHost == "localhost" {
+				return nil, fmt.Errorf("hula_ssl: acme requires hula_host to be set to an actual hostname (not localhost)")
+			}
+			acmeCfg := cfg.HulaSSL.ACME
+			cacheDir := acmeCfg.CacheDir
+			if cacheDir == "" {
+				cacheDir = "certs"
+			}
+			cacheDir, _ = SubstConfVars(cacheDir, map[string]string{"confdir": confDir})
+			domains := acmeCfg.Domains
+			if len(domains) == 0 {
+				domains = []string{cfg.HulaHost}
+				domains = append(domains, cfg.HulaAliases...)
+			}
+			httpPort := acmeCfg.HTTPPort
+			if httpPort == 0 {
+				httpPort = 80
+			}
+			cfg.hulaACMEManager = &autocert.Manager{
+				Prompt:     autocert.AcceptTOS,
+				Email:      acmeCfg.Email,
+				Cache:      autocert.DirCache(cacheDir),
+				HostPolicy: autocert.HostWhitelist(domains...),
+			}
+			cfg.hulaACMEHTTPPort = httpPort
+			log.Infof("hula_ssl: ACME configured for %v (cache: %s, http_port: %d)", domains, cacheDir, httpPort)
 		}
 	}
+
+	// If any server uses Cloudflare Origin CA, load Cloudflare IP ranges
+	var cfCacheDir string
+	for _, s := range cfg.Servers {
+		if s.SSL != nil && s.SSL.IsCloudflareOriginCA() {
+			if s.SSL.CloudflareOriginCA.AllowNonCFIPs {
+				cfg.allowNonCFIPs = true
+			}
+			if cfCacheDir == "" {
+				cfCacheDir = s.SSL.CloudflareOriginCA.CacheDir
+			}
+		}
+	}
+	if cfCacheDir != "" {
+		cfCacheDir, _ = SubstConfVars(cfCacheDir, map[string]string{"confdir": confDir})
+		cfIPs, cfErr := LoadCloudflareIPs(cfCacheDir)
+		if cfErr != nil {
+			return nil, fmt.Errorf("cloudflare IP ranges: %w", cfErr)
+		}
+		cfg.cloudflareIPs = cfIPs
+	}
+
+	// Final pass: substitute {{env:*}} and other mustache vars in all string fields.
+	// This catches any config values that weren't explicitly handled above.
+	SubstConfVarsForAllStrings(&cfg, map[string]string{"confdir": confDir})
 
 	return &cfg, nil
 }
