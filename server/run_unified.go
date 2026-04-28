@@ -37,21 +37,9 @@ import (
 	"github.com/tlalocweb/hulation/utils"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/pkg/store/storage"
-	localstorage "github.com/tlalocweb/hulation/pkg/store/storage/local"
+	raftbackend "github.com/tlalocweb/hulation/pkg/store/storage/raft"
 	"github.com/tlalocweb/hulation/sitedeploy"
 )
-
-// storageDataPath returns the on-disk location for hula's
-// persistent state. Operators can override via HULA_BOLT_PATH.
-// Default lives under /var/hula/data so it survives container
-// restarts when the volume is mounted (typical Docker / k8s
-// pattern).
-func storageDataPath() string {
-	if p := os.Getenv("HULA_BOLT_PATH"); p != "" {
-		return p
-	}
-	return "/var/hula/data/hula.bolt"
-}
 
 // RunUnified initializes shared subsystems and boots the unified server.
 // Returns when ctx is cancelled or a termination signal is received.
@@ -114,18 +102,27 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	}
 
 	// Persistent store — identity/ACL/goals/reports data that
-	// doesn't belong in ClickHouse. Stage 1 of HA Plan: a
-	// bbolt-backed LocalStorage installed via storage.SetGlobal so
-	// every accessor in pkg/store/bolt sees it. Stage 2 swaps this
-	// constructor for the Raft-backed RaftStorage. Non-fatal when
-	// the path can't be created (e.g., running `hulactl`-style
-	// utilities that don't need persistence) — degrade gracefully.
-	if s, err := localstorage.Open(localstorage.Options{
-		Path: storageDataPath(),
-	}); err != nil {
+	// doesn't belong in ClickHouse. Stage 2 of HA Plan: a
+	// Raft-backed RaftStorage in single-node mode. Solo
+	// deployments (the most common shape) don't need a `team:`
+	// block in config — AutoConfig auto-generates a TeamID +
+	// NodeID and persists them under DataDir so subsequent
+	// boots pick up the same identity. Non-fatal when init
+	// fails (degrades to no-storage so hulactl-style utilities
+	// that don't touch persistence still work) — same posture
+	// as Stage 1.
+	if rcfg, err := raftbackend.AutoConfig(conf.Team); err != nil {
+		log.Warnf("storage: team config error (%s); ACL + goals + reports RPCs will 503", err.Error())
+	} else if rs, err := raftbackend.New(rcfg); err != nil {
 		log.Warnf("storage unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
 	} else {
-		storage.SetGlobal(s)
+		waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := rs.WaitLeader(waitCtx); err != nil {
+			log.Warnf("storage: solo bootstrap stalled (%s); ACL + goals + reports RPCs may 503", err.Error())
+		}
+		waitCancel()
+		storage.SetGlobal(rs)
+		log.Infof("Raft storage online (node=%s, data_dir=%s, mode=solo)", rcfg.NodeID, rcfg.DataDir)
 	}
 
 	// Scheduled-report dispatcher. Runs on a 1-minute ticker + an

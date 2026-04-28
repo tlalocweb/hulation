@@ -394,6 +394,17 @@ sibling file:
 - `HA_PLAN5.md` — Site build propagation + chat URL pinning
 - `HA_PLAN6.md` — CRDT visitor identity + WAN dedup
 
-Stage 1 plan is written. Subsequent plans get filled in as each
-stage starts (so we can incorporate learnings from the prior
+Stages 1, 2, and 3 plans are written. Stages 4–6 get filled in
+as each starts (so we can incorporate learnings from the prior
 stage without paper-baking the whole thing up front).
+
+### Status
+
+- Stage 1 — **shipped** on `ha/plan-1-storage-seam`. Storage
+  interface + LocalStorage + 17 contract tests + e2e suite 38.
+- Stage 2 — **shipped** on `ha/plan-2-raft-solo`. RaftStorage +
+  bootstrap + Watch + Snapshot/Restore + e2e suite 39.
+  Solo-as-Raft is now the production default. See
+  `HA_PHASE2_STATUS.md` for the close-out report.
+- Stage 3 — planned (with revisit-after-Stage-2 note at top of
+  `HA_PLAN3.md`).

@@ -849,6 +849,10 @@ type Config struct {
 	// generates fresh seed + AKE keypair on first boot and logs
 	// them so the operator can pin them.
 	OPAQUE *OPAQUEConfig `yaml:"opaque,omitempty"`
+	// Team — Raft cluster identity and membership. Optional;
+	// solo deployments can omit the whole block and hula
+	// auto-bootstraps a single-node cluster. See HA_PLAN2.md.
+	Team *TeamConfig `yaml:"team,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
