@@ -9,13 +9,14 @@
 # seam is wired correctly.
 
 # --- 1. Boot log shows storage online -----------------------------
+#
+# Stage 1 emitted "LocalStorage opened ..."; Stage 2 emits
+# "Raft storage online (node=…, data_dir=…, mode=solo)". Either
+# is acceptable while the rollout is in flight.
 
-if dc logs hula 2>&1 | grep -qE 'storage:.*opened|Opening BoltDB at:|local storage'; then
-    pass "boot log: LocalStorage opened the bbolt file"
+if dc logs hula 2>&1 | grep -qE 'Raft storage online|storage:.*opened|Opening BoltDB at:|local storage'; then
+    pass "boot log: storage initialised"
 else
-    # Less strict alternative: just check we DON'T see the old
-    # "Bolt store unavailable" warning that pre-Storage-seam boot
-    # would emit when something went wrong.
     if dc logs hula 2>&1 | grep -q 'storage unavailable\|Bolt store unavailable'; then
         fail "boot log: storage failed to initialise"
     else
@@ -56,11 +57,12 @@ sleep 3
 
 # --- 4. Inspect the bbolt file directly ---------------------------
 #
-# The hula container holds /var/hula/data/hula.bolt open while it
-# runs (single-writer constraint). We can't open it from outside
-# at the same time. Instead we check that the events row landed in
-# ClickHouse — that proves the consent path executed end-to-end
-# (consent_log write happens just before the event commit).
+# The hula container holds the FSM bbolt file (data.db under the
+# Raft data dir) open while it runs — single-writer constraint.
+# We can't open it from outside at the same time. Instead we
+# check that the events row landed in ClickHouse — that proves
+# the consent path executed end-to-end (consent_log write
+# happens just before the event commit).
 
 # This row should reflect the GPC=1 default-off-mode consent
 # resolution: analytics=1, marketing=0.
@@ -81,10 +83,18 @@ else
 fi
 
 # --- 5. Storage data dir layout ----------------------------------
+#
+# Stage 2 layout: /var/hula/data/raft/{data.db,raft-log.db,
+# raft-stable.db,snapshots/,team-id,node-id}. We accept either
+# the new layout OR the Stage-1 single hula.bolt while the
+# rollout is in flight.
 
-layout=$(dc exec -T hula sh -c 'ls /var/hula/data/ 2>/dev/null || true')
-if echo "$layout" | grep -q 'hula\.bolt'; then
-    pass "data dir contains hula.bolt"
+layout_raft=$(dc exec -T hula sh -c 'ls /var/hula/data/raft/ 2>/dev/null || true')
+layout_root=$(dc exec -T hula sh -c 'ls /var/hula/data/ 2>/dev/null || true')
+if echo "$layout_raft" | grep -q 'data\.db'; then
+    pass "raft data dir contains data.db (Stage 2 layout)"
+elif echo "$layout_root" | grep -q 'hula\.bolt'; then
+    pass "data dir contains hula.bolt (Stage 1 layout)"
 else
-    pass "data dir layout: $layout (hula.bolt not yet visible — may use HULA_BOLT_PATH override)"
+    pass "data dir layout: root=[${layout_root}], raft=[${layout_raft}]"
 fi

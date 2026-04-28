@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+// Raft FSM command format. Every Storage write proposed to the
+// Raft log is encoded as a Command. Followers re-evaluate
+// CompareAndSwap / CompareAndCreate locally during FSM.Apply, so
+// the encoding must be stable across versions — proto3 is used
+// (rather than gob) so that fields can be added without breaking
+// existing snapshots.
+
+package hulation.v1.raftcmd;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/store/storage/raft;raftbackend";
+
+// Op enumerates every mutation the FSM can apply. Read-only ops
+// (Get/List/Keys/Watch) never reach the Raft log.
+enum Op {
+    OP_UNSPECIFIED = 0;
+    OP_PUT = 1;
+    OP_DELETE = 2;
+    OP_CAS = 3;          // CompareAndSwap
+    OP_CAS_CREATE = 4;   // CompareAndCreate (expected = nil)
+    OP_BATCH = 5;
+}
+
+// Command is the on-the-wire payload Raft replicates. One Command
+// per Apply call. Fields are populated based on Op:
+//
+//   OP_PUT          → key, value
+//   OP_DELETE       → key
+//   OP_CAS          → key, expected, value (value can be empty for delete)
+//   OP_CAS_CREATE   → key, value
+//   OP_BATCH        → batch (key/value/expected ignored)
+//
+// Origin and proposed_at are debug-only — they let an operator
+// trace which node proposed which entry without affecting
+// determinism.
+message Command {
+    Op op = 1;
+    string key = 2;
+    bytes value = 3;
+    bytes expected = 4;          // CAS only
+    bool expected_nil = 5;       // CAS-Create encodes "expected = nil" via this flag
+    repeated BatchEntry batch = 6;
+    string origin = 7;           // node_id that proposed
+    int64 proposed_at_unix_ns = 8;
+    bool delete_on_apply = 9;    // CAS where the new value is "delete this key"
+}
+
+// BatchEntry is one operation inside an OP_BATCH command. Only
+// OP_PUT and OP_DELETE are valid here — nesting CAS/Mutate would
+// require multi-stage apply, which isn't worth the complexity.
+message BatchEntry {
+    Op op = 1;          // OP_PUT or OP_DELETE
+    string key = 2;
+    bytes value = 3;
+}
+
+// ApplyResult is what FSM.Apply returns on the future. Wrapped in
+// a proto so we can extend later (e.g., return the new value for
+// CAS so the proposer can avoid an extra Get round-trip).
+message ApplyResult {
+    string error = 1;       // empty on success
+    bool cas_failed = 2;    // true if error is ErrCASFailed (lets caller errors.Is)
+}

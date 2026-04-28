@@ -1,5 +1,7 @@
 package local
 
+import bolt "go.etcd.io/bbolt"
+
 // Bucket routing for the LocalStorage implementation.
 //
 // The storage.Storage interface has no notion of buckets — keys
@@ -53,6 +55,30 @@ var bucketSet = func() map[string]struct{} {
 	}
 	return m
 }()
+
+// IsKnownBucket reports whether name is one of the canonical
+// LocalStorage bucket names (i.e., would be returned by RouteKey
+// instead of routed to BucketUnrouted). Exported so the Raft FSM
+// can decide bucket-membership without re-importing the slice.
+func IsKnownBucket(name string) bool {
+	_, ok := bucketSet[name]
+	return ok
+}
+
+// RouteKey is the exported version of routeKey, intended for
+// reuse by the Raft FSM (which operates on a separate bbolt file
+// but wants the same key→bucket layout).
+func RouteKey(key string) (bucket, subKey string) { return routeKey(key) }
+
+// Recompose is the exported version of recompose, intended for
+// reuse by the Raft FSM's iteration helpers.
+func Recompose(bucket, subKey string) string { return recompose(bucket, subKey) }
+
+// EnsureBuckets pre-creates the canonical bucket set in the
+// supplied bbolt handle. Same logic LocalStorage runs at Open
+// time; exported so the Raft FSM (which owns its own bbolt) can
+// reuse it.
+func EnsureBuckets(db *bolt.DB) error { return ensureBuckets(db) }
 
 // routeKey returns (bucket, subKey) for a Storage key.
 //

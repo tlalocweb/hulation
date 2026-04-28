@@ -158,7 +158,8 @@ docker-local:
 PROTOBUF_FOLDERS = protoext/hula/auth \
                    pkg/server/authware/proto \
                    pkg/apiobjects/v1 \
-                   pkg/apispec/v1
+                   pkg/apispec/v1 \
+                   pkg/store/storage/raft
 PROTOBUF_SRCS = $(shell find $(PROTOBUF_FOLDERS) -name '*.proto' 2>/dev/null)
 PROTOBUF_OUTS = $(PROTOBUF_SRCS:.proto=.pb.go)
 
@@ -206,6 +207,13 @@ pkg/apispec/v1/%.pb.go: pkg/apispec/v1/%.proto | $(PROTOC)
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		--grpc-gateway_out=. --grpc-gateway_opt=paths=source_relative \
+		$<
+
+# pkg/store/storage/raft — internal Raft FSM command format. Messages only.
+pkg/store/storage/raft/%.pb.go: pkg/store/storage/raft/%.proto | $(PROTOC)
+	@echo "protoc (raftcmd): $<"
+	@PATH="$(BIN_DIR):$$PATH" $(PROTOC) $(PROTOC_INC) \
+		--go_out=. --go_opt=paths=source_relative \
 		$<
 
 $(PROTOC):
