@@ -293,9 +293,9 @@ Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ec
 
 This project is made available under a dual-license model: **AGPLv3** and **SSPL-1.0**.
 
-For ordinary self-hosted use, including use by an individual, an employer, a contractor on behalf of a client, or a non-profit organization, this project may be used under the terms of the **AGPLv3**.
+For ordinary self-hosted use, including use by an individual, an employer, a contractor on behalf of a client, or a non-profit organization, this project may be used under the terms of the **AGPLv3**. Running this software as a web server for your own organization, employer, client, or non-profit may be done under the **AGPLv3**. 
 
-However, if you provide this software, or substantially similar functionality derived from this software, to third parties as a hosted, managed, cloud, SaaS, or other network-accessible service, then the applicable license for that use is the **SSPL-1.0**, and not the AGPLv3.
+However, offering this software, or substantially similar functionality derived from it, as a web hosting, managed hosting, multi-tenant hosting, cloud hosting, SaaS, or similar service for third parties is licensed under the **SSPL-1.0**, and not the AGPLv3.
 
 Additionally, if you use this software as part of a high-availability, clustered, failover, replicated, load-balanced, or multi-node service environment, then your use is licensed under the **SSPL-1.0**, unless you have obtained a separate commercial license.
 
