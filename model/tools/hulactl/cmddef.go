@@ -73,6 +73,9 @@ const (
 	CMD_FORGETOPAQUE          = "forget-opaque-record"
 	CMD_FORGETOPAQUE_HELP     = "EMERGENCY: delete an OPAQUE record from a Bolt file (offline recovery)"
 	CMD_FORGETOPAQUE_USAGE    = "hulactl --bolt <path> forget-opaque-record <provider> <username>\nUse only when the live admin password is lost. hula MUST be stopped first\n(Bolt allows only one process to hold the file open). Caller is responsible\nfor copy-out / edit / copy-back; this binary does the edit step.\nNote: flags MUST come BEFORE the command name (Go flag-package convention)."
+	CMD_ROTATECOOKIELESS       = "rotate-cookieless-salt"
+	CMD_ROTATECOOKIELESS_HELP  = "Replace the cookieless visitor-id salt for a server (Phase 4c.3)"
+	CMD_ROTATECOOKIELESS_USAGE = "hulactl --bolt <path> rotate-cookieless-salt <server_id>\nGenerates 32 fresh random bytes and stores them in the cookieless_salts\nbucket for <server_id>. Yesterday's visitors become unrecognisable today —\nthis is the correct behaviour for 'wipe everyone'. hula MUST be stopped\nfirst (Bolt single-writer)."
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
@@ -121,6 +124,7 @@ func init() {
 		Command{CMD_SETPASSWORD, CMD_SETPASSWORD_HELP, CMD_SETPASSWORD_USAGE},
 		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},
 		Command{CMD_FORGETOPAQUE, CMD_FORGETOPAQUE_HELP, CMD_FORGETOPAQUE_USAGE},
+		Command{CMD_ROTATECOOKIELESS, CMD_ROTATECOOKIELESS_HELP, CMD_ROTATECOOKIELESS_USAGE},
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},

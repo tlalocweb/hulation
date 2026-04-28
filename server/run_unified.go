@@ -26,6 +26,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
 	"github.com/tlalocweb/hulation/pkg/auth/opaque"
+	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 	"github.com/tlalocweb/hulation/pkg/notifier/apns"
@@ -290,6 +291,15 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 			// without it.
 			go stagingMgr.StartupStaging(conf.Servers)
 		}
+	}
+
+	// Phase 4c.2: server-side forwarders. Each server with a non-empty
+	// `forwarders:` config gets a per-server Composite + Worker drain.
+	// Servers without forwarders are silent (no goroutines, no
+	// allocation). Build failures are logged and the bad adapter is
+	// dropped — does not block boot.
+	if n := forwarder.BuildAndRegisterAll(conf.Servers); n > 0 {
+		log.Infof("forwarders registered for %d server(s)", n)
 	}
 
 	return nil

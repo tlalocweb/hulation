@@ -94,7 +94,7 @@ runner_shell() {
         fi
         update-ca-certificates >/dev/null 2>&1
         HULA_IP=$(getent hosts hula | awk "{print \$1}")
-        echo "$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        echo "$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local" >> /etc/hosts
         '"$*"
 }
 

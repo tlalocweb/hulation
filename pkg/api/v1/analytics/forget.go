@@ -27,6 +27,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
@@ -91,6 +92,25 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 			"ALTER TABLE "+table+" DELETE WHERE server_id = ? AND visitor_id = ?",
 			req.GetServerId(), req.GetVisitorId(),
 		)
+	}
+
+	// Phase 4c.1: also purge the consent_log Bolt bucket. Same
+	// best-effort posture as the MV deletes — the legally-relevant
+	// erasure is the events DELETE; the consent log is a
+	// secondary record we'd rather not orphan.
+	_ = hulabolt.DeleteConsentForVisitor(req.GetServerId(), req.GetVisitorId())
+
+	// Phase 4c.2: fan out the right-to-be-forgotten to every
+	// configured forwarder. Adapters that don't implement deletion
+	// (Meta CAPI without hashed-PII index, GA4 MP without service
+	// account) silently no-op. Per-adapter errors are logged and do
+	// not fail the RPC — the events DELETE is the primary obligation.
+	if c := forwarder.GetForServer(req.GetServerId()); c != nil {
+		if errs := c.Delete(ctx, req.GetServerId(), req.GetVisitorId()); len(errs) > 0 {
+			for _, e := range errs {
+				_ = e // logged by adapter
+			}
+		}
 	}
 
 	// Audit trail in Bolt. Admin identity comes from the authware

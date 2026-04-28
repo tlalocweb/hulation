@@ -59,3 +59,36 @@ servers:
           ref:
               branch: main
           hula_build: staging
+
+    # --- Phase 4c.2 forwarder probe target (used by suite 36) ---
+    # Reuses the testsite-seed server from suite-01 onwards so we can
+    # land an event with consent and verify the forwarder dispatch
+    # against the http-recorder sidecar. The GA4 endpoint is overridden
+    # to the recorder's URL — production configs do not set the
+    # `endpoint:` field.
+    - host: seed.test.local
+      id: testsite-seed
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      consent_mode: opt_out
+      forwarders:
+          - kind: ga4_mp
+            measurement_id: "G-E2ETEST"
+            api_secret: "secret"
+            endpoint: "http://forwarder-recorder:9080/collect"
+            event_map:
+                page_view: "page_view"
+
+    # --- Phase 4c.3 cookieless probe target (used by suite 37) ---
+    # Same server with a different host alias and tracking_mode
+    # set to cookieless. Suite 37 verifies no Set-Cookie header is
+    # emitted and that within-day same-UA events stitch on a
+    # derived visitor_id.
+    - host: seed-cookieless.test.local
+      id: testsite-seed-cookieless
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      consent_mode: opt_out
+      tracking_mode: cookieless

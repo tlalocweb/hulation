@@ -40,6 +40,8 @@ const (
 	BucketNotificationPrefs = "notification_prefs"  // key = userID,   value = StoredNotificationPrefs
 	BucketOpaqueRecords     = "opaque_records"      // key = "provider|username", value = StoredOpaqueRecord
 	BucketChatACL           = "chat_acl"            // key = server_id, value = JSON StoredChatRoster
+	BucketConsentLog        = "consent_log"         // key = "server_id|visitor_id|ts", value = JSON StoredConsent
+	BucketCookielessSalts   = "cookieless_salts"    // key = server_id, value = 32-byte salt
 )
 
 var (
@@ -88,6 +90,8 @@ func Open(path string) (*bolt.DB, error) {
 			BucketNotificationPrefs,
 			BucketOpaqueRecords,
 			BucketChatACL,
+			BucketConsentLog,
+			BucketCookielessSalts,
 		} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(b)); e != nil {
 				return fmt.Errorf("bucket %s: %w", b, e)

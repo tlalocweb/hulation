@@ -4,6 +4,58 @@ Tracked items that aren't tied to an in-flight phase plan. Newest at top.
 
 ---
 
+## E2e harness: bootstrap OPAQUE admin record in setup.sh
+
+**Filed:** 2026-04-28 — surfaced verifying Phase 4c suites end-to-end.
+
+**Symptom.** `./test/e2e/run.sh` brings up hula and immediately runs
+suite 01 (`01-auth.sh`) which calls `hulactl auth`. The call fails:
+```
+HTTP 404: no OPAQUE record for this user — run set-admin-password
+(or the deploy bootstrap script) first
+```
+This cascades: suites 23–34 then all fail with "no admin token from
+hulactl.yaml — did suite 01 run?". Net effect on a clean run today is
+~30 false failures even when the underlying functionality is fine.
+
+**Root cause.** When OPAQUE landed (Phase 5a era — `OPAQUE_PLAN.md`),
+the auth flow shifted from "argon2 hash in YAML is enough" to "server
+needs an OPAQUE record in Bolt". The e2e setup still only renders the
+argon2 hash into `hula-config.yaml.tmpl` — it never registers the
+matching OPAQUE record, so the very first `hulactl auth` call has
+nothing to talk to.
+
+**Fix sketch.** In `test/e2e/lib/setup.sh`, between the "wait for
+/hulastatus" step and the suite loop, add:
+
+```bash
+# Phase 5a: register the OPAQUE record for the rendered admin
+# password. Without this, hulactl auth (suite 01) immediately
+# 404s and every admin-RPC suite cascades.
+dc run --rm -T \
+    -e HULACTL_PASSWORD="$ADMIN_PASS" \
+    -e HULACTL_NEW_PASSWORD="$ADMIN_PASS" \
+    --entrypoint /usr/local/bin/hulactl hulactl-runner \
+    --dangerous --no-opaque-current set-password \
+    --username admin --provider admin
+```
+
+(Exact flag set depends on whether the bootstrap path needs the
+"no current password" escape hatch — `set-password` may already
+have a "no prior record" mode. Verify by reading the
+`CMD_SETPASSWORD` case in `model/tools/hulactl/main.go`.)
+
+**Verification.** After the fix, `./test/e2e/run.sh` (no args) should
+go from 49 pass / 30 fail (~62%) to roughly 79 pass / 0 fail —
+suites 35/36/37 are already green, the regression was entirely
+upstream cascade.
+
+**Not 4c-blocking** — Phase 4c shipped against this state; the three
+new 4c suites pass independently because they don't need an admin
+token.
+
+---
+
 ## CSP violation in /v/hula_hello.html iframe (low priority — Cloudflare injection)
 
 **Filed:** 2026-04-28 — surfaced in browser console on www.tlaloc.us.

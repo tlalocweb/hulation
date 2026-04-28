@@ -188,7 +188,10 @@ start_stack() {
     }
     # Clean any stale stack first
     dc down -v --remove-orphans 2>/dev/null || true
-    dc up -d hula-clickhouse hula
+    # forwarder-recorder is the http-recorder sidecar used by suite 36
+    # (Phase 4c.2 forwarder e2e). Tiny python service; bringing it up
+    # unconditionally keeps the suite from pass-skipping silently.
+    dc up -d hula-clickhouse hula forwarder-recorder
 
     echo "--- Waiting for /hulastatus ---"
     # Use the test-runner profile to hit hulastatus with the self-signed cert trusted
