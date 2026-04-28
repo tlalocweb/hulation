@@ -547,11 +547,11 @@ func (s *Server) StartHTTPRedirect(ctx context.Context, httpAddr string) error {
 // based on the TLS handshake information (SNI ServerName)
 func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	serverName := clientHello.ServerName
-	s.logger.Debugf("Certificate selection for ServerName: '%s' (length: %d)", serverName, len(serverName))
+	s.logger.VDebugf(2, "Certificate selection for ServerName: '%s' (length: %d)", serverName, len(serverName))
 
 	// Check for per-host certificate (static sites)
 	if cert, ok := s.hostCerts[serverName]; ok {
-		s.logger.Debugf("Using per-host certificate for ServerName: %s", serverName)
+		s.logger.VDebugf(2, "Using per-host certificate for ServerName: %s", serverName)
 		return cert, nil
 	}
 
