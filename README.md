@@ -287,3 +287,18 @@ servers:
 ## API
 
 Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ecd70).
+
+
+## License and Terms of Use
+
+This project is made available under a dual-license model: **AGPLv3** and **SSPL-1.0**.
+
+For ordinary self-hosted use, including use by an individual, an employer, a contractor on behalf of a client, or a non-profit organization, this project may be used under the terms of the **AGPLv3**.
+
+However, if you provide this software, or substantially similar functionality derived from this software, to third parties as a hosted, managed, cloud, SaaS, or other network-accessible service, then the applicable license for that use is the **SSPL-1.0**, and not the AGPLv3.
+
+Additionally, if you use this software as part of a high-availability, clustered, failover, replicated, load-balanced, or multi-node service environment, then your use is licensed under the **SSPL-1.0**, unless you have obtained a separate commercial license.
+
+You may not use this software, its source code, documentation, examples, architecture, APIs, configuration files, tests, or other project materials as training data, prompts, examples, templates, reference material, retrieval-augmented context, or other input to an artificial intelligence or machine-learning system for the purpose of generating, deriving, reproducing, or developing software that is intended to replace, compete with, or avoid the licensing obligations of this project. Any such use is outside the scope of the AGPLv3 license grant and the SSPL-1.0 license grant and requires a separate commercial license.
+
+**Commercial licenses are also available**, including for high-availability deployments, managed-service use, proprietary integrations, OEM distribution, AI-assisted development rights, or other uses requiring different terms. Contact: `<licensing@tlaloc.us>`.
