@@ -28,6 +28,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/mobile/tokenbox"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 var evalLog = log.GetTaggedLogger("alerts-eval", "Alert rule evaluator")
@@ -103,7 +104,11 @@ func (e *Evaluator) loop(ctx context.Context) {
 // predicate holds + cooldown has elapsed, and caps total fires at
 // maxFiresPerTick.
 func (e *Evaluator) runDue(ctx context.Context) {
-	alerts, err := hulabolt.ListAlerts("")
+	s := storage.Global()
+	if s == nil {
+		return
+	}
+	alerts, err := hulabolt.ListAlerts(ctx, s, "")
 	if err != nil {
 		// Bolt not opened — degrade silently. Admin ops get told at
 		// boot when the store is unavailable, so no need to shout.
@@ -314,14 +319,18 @@ func (e *Evaluator) fire(a hulabolt.StoredAlert, observed float64) {
 		DeliveryStatus: status,
 		Error:          errText,
 	}
-	if err := hulabolt.PutAlertEvent(row); err != nil {
-		evalLog.Errorf("alert %s: persist event: %s", a.ID, err)
-	}
+	s := storage.Global()
+	if s != nil {
+		bgCtx := context.Background()
+		if err := hulabolt.PutAlertEvent(bgCtx, s, row); err != nil {
+			evalLog.Errorf("alert %s: persist event: %s", a.ID, err)
+		}
 
-	// Update LastFiredAt so cooldown kicks in.
-	a.LastFiredAt = row.FiredAt
-	if _, err := hulabolt.PutAlert(a); err != nil {
-		evalLog.Errorf("alert %s: update last_fired_at: %s", a.ID, err)
+		// Update LastFiredAt so cooldown kicks in.
+		a.LastFiredAt = row.FiredAt
+		if _, err := hulabolt.PutAlert(bgCtx, s, a); err != nil {
+			evalLog.Errorf("alert %s: update last_fired_at: %s", a.ID, err)
+		}
 	}
 	evalLog.Infof("alert %s (%s) fired: observed=%.2f threshold=%.2f status=%s", a.ID, a.Kind, observed, a.Threshold, status)
 }
@@ -366,14 +375,19 @@ func buildEnvelope(id string, a hulabolt.StoredAlert, observed float64, emails [
 		if tokenKey == nil {
 			continue
 		}
-		prefs, _ := hulabolt.GetNotificationPrefs(e)
+		s := storage.Global()
+		if s == nil {
+			continue
+		}
+		bgCtx := context.Background()
+		prefs, _ := hulabolt.GetNotificationPrefs(bgCtx, s, e)
 		if !prefs.PushEnabled {
 			continue
 		}
 		if quietNow(prefs) {
 			continue
 		}
-		devs, err := hulabolt.ListDevicesForUser(e)
+		devs, err := hulabolt.ListDevicesForUser(bgCtx, s, e)
 		if err != nil {
 			continue
 		}

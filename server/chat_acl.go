@@ -16,6 +16,7 @@ import (
 	chatimpl "github.com/tlalocweb/hulation/pkg/api/v1/chat"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 func chatACLLookup(cfg *config.Config) chatimpl.ACLLookup {
@@ -30,7 +31,7 @@ func chatACLLookup(cfg *config.Config) chatimpl.ACLLookup {
 				Superadmin: true,
 			}
 		}
-		allowed, err := hulabolt.AllowedServerIDsForUser(claims.Subject)
+		allowed, err := hulabolt.AllowedServerIDsForUser(ctx, storage.Global(), claims.Subject)
 		if err != nil {
 			return chatimpl.ACLResolution{}
 		}

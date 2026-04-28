@@ -35,10 +35,23 @@ import (
 	"github.com/tlalocweb/hulation/pkg/realtime"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	"github.com/tlalocweb/hulation/utils"
-	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
+	localstorage "github.com/tlalocweb/hulation/pkg/store/storage/local"
 	"github.com/tlalocweb/hulation/sitedeploy"
 )
+
+// storageDataPath returns the on-disk location for hula's
+// persistent state. Operators can override via HULA_BOLT_PATH.
+// Default lives under /var/hula/data so it survives container
+// restarts when the volume is mounted (typical Docker / k8s
+// pattern).
+func storageDataPath() string {
+	if p := os.Getenv("HULA_BOLT_PATH"); p != "" {
+		return p
+	}
+	return "/var/hula/data/hula.bolt"
+}
 
 // RunUnified initializes shared subsystems and boots the unified server.
 // Returns when ctx is cancelled or a termination signal is received.
@@ -100,13 +113,19 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		return fmt.Errorf("preload forms: %w", err)
 	}
 
-	// BoltDB store — identity/ACL/goals/reports data that doesn't
-	// belong in ClickHouse. Opened once; lives as a process global
-	// until Close(). Non-fatal when the path can't be created (e.g.,
-	// running `hulactl` style utilities that don't need persistence)
-	// so degrade gracefully.
-	if _, err := hulabolt.Open(""); err != nil {
-		log.Warnf("Bolt store unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
+	// Persistent store — identity/ACL/goals/reports data that
+	// doesn't belong in ClickHouse. Stage 1 of HA Plan: a
+	// bbolt-backed LocalStorage installed via storage.SetGlobal so
+	// every accessor in pkg/store/bolt sees it. Stage 2 swaps this
+	// constructor for the Raft-backed RaftStorage. Non-fatal when
+	// the path can't be created (e.g., running `hulactl`-style
+	// utilities that don't need persistence) — degrade gracefully.
+	if s, err := localstorage.Open(localstorage.Options{
+		Path: storageDataPath(),
+	}); err != nil {
+		log.Warnf("storage unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
+	} else {
+		storage.SetGlobal(s)
 	}
 
 	// Scheduled-report dispatcher. Runs on a 1-minute ticker + an

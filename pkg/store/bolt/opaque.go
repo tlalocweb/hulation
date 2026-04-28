@@ -5,16 +5,16 @@ package bolt
 // server's LoginInit needs to construct an AKE response.
 //
 // Layout: bucket `opaque_records`, key = "<provider>|<username>",
-// value = JSON-encoded StoredOpaqueRecord. The Envelope []byte
-// carries the OPAQUE wire-format bytes (~192 bytes for the default
-// suite); the rest is metadata.
+// value = JSON-encoded StoredOpaqueRecord.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // SuiteIDDefault names the cipher suite this row was registered
@@ -33,12 +33,12 @@ type StoredOpaqueRecord struct {
 	LastSuccessLogin time.Time `json:"last_success_login,omitempty"`
 }
 
-func opaqueKey(provider, username string) []byte {
-	return []byte(provider + "|" + username)
+func opaqueKey(provider, username string) string {
+	return "opaque_records/" + provider + "|" + username
 }
 
 // PutOpaqueRecord upserts. Preserves CreatedAt; refreshes UpdatedAt.
-func PutOpaqueRecord(rec StoredOpaqueRecord) (StoredOpaqueRecord, error) {
+func PutOpaqueRecord(ctx context.Context, s storage.Storage, rec StoredOpaqueRecord) (StoredOpaqueRecord, error) {
 	if rec.Username == "" || rec.Provider == "" {
 		return rec, fmt.Errorf("opaque record: username and provider required")
 	}
@@ -48,17 +48,11 @@ func PutOpaqueRecord(rec StoredOpaqueRecord) (StoredOpaqueRecord, error) {
 	if rec.SuiteID == "" {
 		rec.SuiteID = SuiteIDDefault
 	}
-	db := Get()
-	if db == nil {
-		return rec, ErrNotOpen
-	}
 	now := time.Now().UTC()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketOpaqueRecords))
-		key := opaqueKey(rec.Provider, rec.Username)
-		if existing := b.Get(key); existing != nil {
+	err := s.Mutate(ctx, opaqueKey(rec.Provider, rec.Username), func(current []byte) ([]byte, error) {
+		if len(current) > 0 {
 			var prev StoredOpaqueRecord
-			if uerr := json.Unmarshal(existing, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
+			if uerr := json.Unmarshal(current, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
 				rec.CreatedAt = prev.CreatedAt
 			}
 		}
@@ -66,58 +60,41 @@ func PutOpaqueRecord(rec StoredOpaqueRecord) (StoredOpaqueRecord, error) {
 			rec.CreatedAt = now
 		}
 		rec.UpdatedAt = now
-		data, merr := json.Marshal(&rec)
-		if merr != nil {
-			return merr
-		}
-		return b.Put(key, data)
+		return json.Marshal(&rec)
 	})
 	return rec, err
 }
 
 // GetOpaqueRecord loads the record. Returns nil when missing.
-func GetOpaqueRecord(provider, username string) (*StoredOpaqueRecord, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func GetOpaqueRecord(ctx context.Context, s storage.Storage, provider, username string) (*StoredOpaqueRecord, error) {
+	v, err := s.Get(ctx, opaqueKey(provider, username))
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
 	}
-	var out *StoredOpaqueRecord
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketOpaqueRecords)).Get(opaqueKey(provider, username))
-		if v == nil {
-			return nil
-		}
-		var rec StoredOpaqueRecord
-		if uerr := json.Unmarshal(v, &rec); uerr != nil {
-			return uerr
-		}
-		out = &rec
-		return nil
-	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	var rec StoredOpaqueRecord
+	if uerr := json.Unmarshal(v, &rec); uerr != nil {
+		return nil, uerr
+	}
+	return &rec, nil
 }
 
-// DeleteOpaqueRecord removes the record. Idempotent. Used for the
-// rollback path (operator wants to revert to legacy auth).
-func DeleteOpaqueRecord(provider, username string) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketOpaqueRecords)).Delete(opaqueKey(provider, username))
-	})
+// DeleteOpaqueRecord removes the record. Idempotent.
+func DeleteOpaqueRecord(ctx context.Context, s storage.Storage, provider, username string) error {
+	return s.Delete(ctx, opaqueKey(provider, username))
 }
 
 // MarkOpaqueLoginSuccess updates LastSuccessLogin on a successful
 // OPAQUE login. Best-effort — failures are not fatal to the login
 // flow itself.
-func MarkOpaqueLoginSuccess(provider, username string) error {
-	rec, err := GetOpaqueRecord(provider, username)
+func MarkOpaqueLoginSuccess(ctx context.Context, s storage.Storage, provider, username string) error {
+	rec, err := GetOpaqueRecord(ctx, s, provider, username)
 	if err != nil || rec == nil {
 		return err
 	}
 	rec.LastSuccessLogin = time.Now().UTC()
-	_, err = PutOpaqueRecord(*rec)
+	_, err = PutOpaqueRecord(ctx, s, *rec)
 	return err
 }

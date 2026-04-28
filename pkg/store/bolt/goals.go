@@ -6,11 +6,13 @@ package bolt
 // without collisions.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // StoredGoal is the server-side shape. Mirrors the Goal proto but
@@ -31,23 +33,19 @@ type StoredGoal struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+func goalKey(id string) string { return "goals/" + id }
+
 // PutGoal upserts the goal. ID + ServerID must be set; CreatedAt is
 // preserved on update. Returns the persisted goal.
-func PutGoal(g StoredGoal) (StoredGoal, error) {
+func PutGoal(ctx context.Context, s storage.Storage, g StoredGoal) (StoredGoal, error) {
 	if g.ID == "" || g.ServerID == "" {
 		return g, fmt.Errorf("goal: id and server_id required")
 	}
-	db := Get()
-	if db == nil {
-		return g, ErrNotOpen
-	}
 	now := time.Now().UTC()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketGoals))
-		// Preserve CreatedAt when updating.
-		if existing := b.Get([]byte(g.ID)); existing != nil {
+	err := s.Mutate(ctx, goalKey(g.ID), func(current []byte) ([]byte, error) {
+		if len(current) > 0 {
 			var prev StoredGoal
-			if uerr := json.Unmarshal(existing, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
+			if uerr := json.Unmarshal(current, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
 				g.CreatedAt = prev.CreatedAt
 			}
 		}
@@ -55,68 +53,49 @@ func PutGoal(g StoredGoal) (StoredGoal, error) {
 			g.CreatedAt = now
 		}
 		g.UpdatedAt = now
-		data, merr := json.Marshal(&g)
-		if merr != nil {
-			return merr
-		}
-		return b.Put([]byte(g.ID), data)
+		return json.Marshal(&g)
 	})
 	return g, err
 }
 
 // GetGoal loads one goal. Returns nil when not found (not an error).
-func GetGoal(goalID string) (*StoredGoal, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func GetGoal(ctx context.Context, s storage.Storage, goalID string) (*StoredGoal, error) {
+	v, err := s.Get(ctx, goalKey(goalID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
 	}
-	var out *StoredGoal
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketGoals)).Get([]byte(goalID))
-		if v == nil {
-			return nil
-		}
-		var g StoredGoal
-		if uerr := json.Unmarshal(v, &g); uerr != nil {
-			return uerr
-		}
-		out = &g
-		return nil
-	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	var g StoredGoal
+	if uerr := json.Unmarshal(v, &g); uerr != nil {
+		return nil, uerr
+	}
+	return &g, nil
 }
 
 // DeleteGoal removes the goal. Idempotent.
-func DeleteGoal(goalID string) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketGoals)).Delete([]byte(goalID))
-	})
+func DeleteGoal(ctx context.Context, s storage.Storage, goalID string) error {
+	return s.Delete(ctx, goalKey(goalID))
 }
 
 // ListGoals returns every goal scoped to the given server_id. Empty
 // server_id returns every goal (admin view).
-func ListGoals(serverID string) ([]StoredGoal, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func ListGoals(ctx context.Context, s storage.Storage, serverID string) ([]StoredGoal, error) {
+	rows, err := s.List(ctx, "goals/")
+	if err != nil {
+		return nil, err
 	}
-	var out []StoredGoal
-	err := db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketGoals)).ForEach(func(_, v []byte) error {
-			var g StoredGoal
-			if uerr := json.Unmarshal(v, &g); uerr != nil {
-				return nil // skip malformed rows; don't fail the whole list
-			}
-			if serverID != "" && g.ServerID != serverID {
-				return nil
-			}
-			out = append(out, g)
-			return nil
-		})
-	})
-	return out, err
+	out := make([]StoredGoal, 0, len(rows))
+	for _, v := range rows {
+		var g StoredGoal
+		if uerr := json.Unmarshal(v, &g); uerr != nil {
+			continue
+		}
+		if serverID != "" && g.ServerID != serverID {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out, nil
 }

@@ -5,12 +5,14 @@ package bolt
 // JSON-encoded struct per bucket row.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // ---- Devices ----------------------------------------------------
@@ -20,34 +22,32 @@ import (
 // (see pkg/mobile/tokenbox). Nonce is appended to the ciphertext
 // by the sealer; this struct never sees plaintext.
 type StoredDevice struct {
-	ID                 string    `json:"id"`
-	UserID             string    `json:"user_id"`
-	Platform           string    `json:"platform"` // "apns" | "fcm"
-	DeviceFingerprint  string    `json:"device_fingerprint"`
-	Label              string    `json:"label,omitempty"`
-	TokenCipher        []byte    `json:"token_cipher"` // sealed push token
-	RegisteredAt       time.Time `json:"registered_at"`
-	LastSeenAt         time.Time `json:"last_seen_at"`
-	Active             bool      `json:"active"`
+	ID                string    `json:"id"`
+	UserID            string    `json:"user_id"`
+	Platform          string    `json:"platform"` // "apns" | "fcm"
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	Label             string    `json:"label,omitempty"`
+	TokenCipher       []byte    `json:"token_cipher"` // sealed push token
+	RegisteredAt      time.Time `json:"registered_at"`
+	LastSeenAt        time.Time `json:"last_seen_at"`
+	Active            bool      `json:"active"`
 }
+
+func deviceKey(id string) string                 { return "mobile_devices/" + id }
+func notifSendKey(id string) string              { return "notification_sends/" + id }
+func notifPrefsKey(userID string) string         { return "notification_prefs/" + userID }
 
 // PutDevice upserts. Idempotent by (user_id, device_fingerprint)
 // when the caller re-uses an existing ID; otherwise a new row.
-// Returns the persisted device.
-func PutDevice(d StoredDevice) (StoredDevice, error) {
+func PutDevice(ctx context.Context, s storage.Storage, d StoredDevice) (StoredDevice, error) {
 	if d.ID == "" || d.UserID == "" {
 		return d, fmt.Errorf("device: id and user_id required")
 	}
-	db := Get()
-	if db == nil {
-		return d, ErrNotOpen
-	}
 	now := time.Now().UTC()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketMobileDevices))
-		if existing := b.Get([]byte(d.ID)); existing != nil {
+	err := s.Mutate(ctx, deviceKey(d.ID), func(current []byte) ([]byte, error) {
+		if len(current) > 0 {
 			var prev StoredDevice
-			if uerr := json.Unmarshal(existing, &prev); uerr == nil && !prev.RegisteredAt.IsZero() {
+			if uerr := json.Unmarshal(current, &prev); uerr == nil && !prev.RegisteredAt.IsZero() {
 				d.RegisteredAt = prev.RegisteredAt
 			}
 		}
@@ -55,88 +55,63 @@ func PutDevice(d StoredDevice) (StoredDevice, error) {
 			d.RegisteredAt = now
 		}
 		d.LastSeenAt = now
-		data, merr := json.Marshal(&d)
-		if merr != nil {
-			return merr
-		}
-		return b.Put([]byte(d.ID), data)
+		return json.Marshal(&d)
 	})
 	return d, err
 }
 
 // GetDevice loads a single device. Returns nil when missing.
-func GetDevice(deviceID string) (*StoredDevice, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func GetDevice(ctx context.Context, s storage.Storage, deviceID string) (*StoredDevice, error) {
+	v, err := s.Get(ctx, deviceKey(deviceID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
 	}
-	var out *StoredDevice
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketMobileDevices)).Get([]byte(deviceID))
-		if v == nil {
-			return nil
-		}
-		var d StoredDevice
-		if uerr := json.Unmarshal(v, &d); uerr != nil {
-			return uerr
-		}
-		out = &d
-		return nil
-	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	var d StoredDevice
+	if uerr := json.Unmarshal(v, &d); uerr != nil {
+		return nil, uerr
+	}
+	return &d, nil
 }
 
 // DeleteDevice removes the row entirely. Used by the admin
-// "forget device" flow. For the dead-token path (APNs 410 / FCM
-// INVALID_ARGUMENT), callers prefer `MarkDeviceInactive` so the
-// audit trail survives.
-func DeleteDevice(deviceID string) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketMobileDevices)).Delete([]byte(deviceID))
-	})
+// "forget device" flow. For the dead-token path, callers prefer
+// MarkDeviceInactive so the audit trail survives.
+func DeleteDevice(ctx context.Context, s storage.Storage, deviceID string) error {
+	return s.Delete(ctx, deviceKey(deviceID))
 }
 
 // MarkDeviceInactive flips Active → false. Used when the push
-// transport rejects the token (dead-token sentinel). Keeps the row
-// so the admin UI can still show "device last seen X, provider
-// rejected token".
-func MarkDeviceInactive(deviceID string) error {
-	d, err := GetDevice(deviceID)
+// transport rejects the token (dead-token sentinel).
+func MarkDeviceInactive(ctx context.Context, s storage.Storage, deviceID string) error {
+	d, err := GetDevice(ctx, s, deviceID)
 	if err != nil || d == nil {
 		return err
 	}
 	d.Active = false
-	_, err = PutDevice(*d)
+	_, err = PutDevice(ctx, s, *d)
 	return err
 }
 
 // ListDevicesForUser returns every active + inactive device for the
-// given user_id. Use `activeOnly` at the caller for filtering.
-func ListDevicesForUser(userID string) ([]StoredDevice, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
-	}
-	var out []StoredDevice
-	err := db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketMobileDevices)).ForEach(func(_, v []byte) error {
-			var d StoredDevice
-			if uerr := json.Unmarshal(v, &d); uerr != nil {
-				return nil
-			}
-			if d.UserID != userID {
-				return nil
-			}
-			out = append(out, d)
-			return nil
-		})
-	})
+// given user_id, most recently-seen first.
+func ListDevicesForUser(ctx context.Context, s storage.Storage, userID string) ([]StoredDevice, error) {
+	rows, err := s.List(ctx, "mobile_devices/")
 	if err != nil {
 		return nil, err
+	}
+	out := make([]StoredDevice, 0, len(rows))
+	for _, v := range rows {
+		var d StoredDevice
+		if uerr := json.Unmarshal(v, &d); uerr != nil {
+			continue
+		}
+		if d.UserID != userID {
+			continue
+		}
+		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastSeenAt.After(out[j].LastSeenAt) })
 	return out, nil
@@ -144,11 +119,11 @@ func ListDevicesForUser(userID string) ([]StoredDevice, error) {
 
 // FindDeviceByFingerprint returns the device matching (user_id,
 // fingerprint) or nil. Used by RegisterDevice for idempotency.
-func FindDeviceByFingerprint(userID, fingerprint string) (*StoredDevice, error) {
+func FindDeviceByFingerprint(ctx context.Context, s storage.Storage, userID, fingerprint string) (*StoredDevice, error) {
 	if userID == "" || fingerprint == "" {
 		return nil, nil
 	}
-	devs, err := ListDevicesForUser(userID)
+	devs, err := ListDevicesForUser(ctx, s, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,33 +140,27 @@ func FindDeviceByFingerprint(userID, fingerprint string) (*StoredDevice, error) 
 // StoredNotificationSend is the audit row for one cross-channel
 // delivery attempt. One row per Envelope, summarising the fan-out.
 type StoredNotificationSend struct {
-	ID           string              `json:"id"`
-	EnvelopeID   string              `json:"envelope_id"` // correlates with AlertEvent.ID when the source is an alert
-	UserID       string              `json:"user_id"`
-	AttemptedAt  time.Time           `json:"attempted_at"`
-	Channels     map[string]string   `json:"channels"` // channel → outcome ("ok" | "failed" | "dead_token" | "unconfigured")
-	Errors       map[string]string   `json:"errors,omitempty"`
+	ID          string            `json:"id"`
+	EnvelopeID  string            `json:"envelope_id"` // correlates with AlertEvent.ID when the source is an alert
+	UserID      string            `json:"user_id"`
+	AttemptedAt time.Time         `json:"attempted_at"`
+	Channels    map[string]string `json:"channels"` // channel → outcome ("ok" | "failed" | "dead_token" | "unconfigured")
+	Errors      map[string]string `json:"errors,omitempty"`
 }
 
 // PutNotificationSend inserts. Not updated — each attempt is a new row.
-func PutNotificationSend(s StoredNotificationSend) error {
-	if s.ID == "" {
+func PutNotificationSend(ctx context.Context, s storage.Storage, ns StoredNotificationSend) error {
+	if ns.ID == "" {
 		return fmt.Errorf("notification send: id required")
 	}
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
+	if ns.AttemptedAt.IsZero() {
+		ns.AttemptedAt = time.Now().UTC()
 	}
-	if s.AttemptedAt.IsZero() {
-		s.AttemptedAt = time.Now().UTC()
-	}
-	data, merr := json.Marshal(&s)
+	data, merr := json.Marshal(&ns)
 	if merr != nil {
 		return merr
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketNotificationSends)).Put([]byte(s.ID), data)
-	})
+	return s.Put(ctx, notifSendKey(ns.ID), data)
 }
 
 // ---- Notification preferences ----------------------------------
@@ -218,72 +187,52 @@ func DefaultPrefs(userID string) StoredNotificationPrefs {
 }
 
 // PutNotificationPrefs upserts keyed on user_id.
-func PutNotificationPrefs(p StoredNotificationPrefs) (StoredNotificationPrefs, error) {
+func PutNotificationPrefs(ctx context.Context, s storage.Storage, p StoredNotificationPrefs) (StoredNotificationPrefs, error) {
 	if p.UserID == "" {
 		return p, fmt.Errorf("notification prefs: user_id required")
-	}
-	db := Get()
-	if db == nil {
-		return p, ErrNotOpen
 	}
 	p.UpdatedAt = time.Now().UTC()
 	data, merr := json.Marshal(&p)
 	if merr != nil {
 		return p, merr
 	}
-	err := db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketNotificationPrefs)).Put([]byte(p.UserID), data)
-	})
-	return p, err
+	if err := s.Put(ctx, notifPrefsKey(p.UserID), data); err != nil {
+		return p, err
+	}
+	return p, nil
 }
 
 // GetNotificationPrefs returns the user's prefs, or default-prefs
-// when the row doesn't exist (caller can persist the default on
-// first access if desired).
-func GetNotificationPrefs(userID string) (StoredNotificationPrefs, error) {
-	db := Get()
-	if db == nil {
-		return DefaultPrefs(userID), ErrNotOpen
+// when the row doesn't exist.
+func GetNotificationPrefs(ctx context.Context, s storage.Storage, userID string) (StoredNotificationPrefs, error) {
+	v, err := s.Get(ctx, notifPrefsKey(userID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return DefaultPrefs(userID), nil
 	}
-	var out StoredNotificationPrefs
-	found := false
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketNotificationPrefs)).Get([]byte(userID))
-		if v == nil {
-			return nil
-		}
-		if uerr := json.Unmarshal(v, &out); uerr != nil {
-			return uerr
-		}
-		found = true
-		return nil
-	})
 	if err != nil {
 		return DefaultPrefs(userID), err
 	}
-	if !found {
-		return DefaultPrefs(userID), nil
+	var out StoredNotificationPrefs
+	if uerr := json.Unmarshal(v, &out); uerr != nil {
+		return DefaultPrefs(userID), uerr
 	}
 	return out, nil
 }
 
 // ListNotificationPrefs returns every prefs row. Used by the admin
 // UI's `/admin/notifications` table.
-func ListNotificationPrefs() ([]StoredNotificationPrefs, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func ListNotificationPrefs(ctx context.Context, s storage.Storage) ([]StoredNotificationPrefs, error) {
+	rows, err := s.List(ctx, "notification_prefs/")
+	if err != nil {
+		return nil, err
 	}
-	var out []StoredNotificationPrefs
-	err := db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketNotificationPrefs)).ForEach(func(_, v []byte) error {
-			var p StoredNotificationPrefs
-			if uerr := json.Unmarshal(v, &p); uerr != nil {
-				return nil
-			}
-			out = append(out, p)
-			return nil
-		})
-	})
-	return out, err
+	out := make([]StoredNotificationPrefs, 0, len(rows))
+	for _, v := range rows {
+		var p StoredNotificationPrefs
+		if uerr := json.Unmarshal(v, &p); uerr != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }

@@ -1,41 +1,44 @@
-package bolt
+package bolt_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
+	"github.com/tlalocweb/hulation/pkg/store/storage/local"
 )
 
-// openTestDB opens a fresh Bolt in a t.TempDir and registers a
-// cleanup that closes it. Uses direct package state so the Grant/
-// Revoke/List helpers (which read from the package-global handle)
-// exercise the real code path.
-func openTestDB(t *testing.T) {
+// newTestStorage spins up a fresh LocalStorage backed by a temp
+// bbolt file. Returns the Storage handle plus a Cleanup that
+// closes it at test end.
+func newTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "test.bolt")
-	// Reset the package global so a previous test's handle doesn't
-	// leak into this one.
-	_ = Close()
-	if _, err := Open(path); err != nil {
+	s, err := local.Open(local.Options{Path: filepath.Join(t.TempDir(), "test.bolt")})
+	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { _ = Close() })
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }
 
 func TestGrantListRevoke(t *testing.T) {
-	openTestDB(t)
+	ctx := context.Background()
+	s := newTestStorage(t)
 
-	if err := GrantServerAccess("u1", "site-a", "viewer"); err != nil {
+	if err := hulabolt.GrantServerAccess(ctx, s, "u1", "site-a", "viewer"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if err := GrantServerAccess("u1", "site-b", "manager"); err != nil {
+	if err := hulabolt.GrantServerAccess(ctx, s, "u1", "site-b", "manager"); err != nil {
 		t.Fatalf("grant b: %v", err)
 	}
-	if err := GrantServerAccess("u2", "site-a", "viewer"); err != nil {
+	if err := hulabolt.GrantServerAccess(ctx, s, "u2", "site-a", "viewer"); err != nil {
 		t.Fatalf("grant u2: %v", err)
 	}
 
 	// AllowedServerIDsForUser — user u1 has access to site-a + site-b.
-	ids, err := AllowedServerIDsForUser("u1")
+	ids, err := hulabolt.AllowedServerIDsForUser(ctx, s, "u1")
 	if err != nil {
 		t.Fatalf("allowed: %v", err)
 	}
@@ -44,7 +47,7 @@ func TestGrantListRevoke(t *testing.T) {
 	}
 
 	// RoleOnServer — exact role read.
-	role, err := RoleOnServer("u1", "site-b")
+	role, err := hulabolt.RoleOnServer(ctx, s, "u1", "site-b")
 	if err != nil {
 		t.Fatalf("role: %v", err)
 	}
@@ -53,16 +56,16 @@ func TestGrantListRevoke(t *testing.T) {
 	}
 
 	// Re-grant overwrites.
-	if err := GrantServerAccess("u1", "site-a", "manager"); err != nil {
+	if err := hulabolt.GrantServerAccess(ctx, s, "u1", "site-a", "manager"); err != nil {
 		t.Fatalf("re-grant: %v", err)
 	}
-	role, _ = RoleOnServer("u1", "site-a")
+	role, _ = hulabolt.RoleOnServer(ctx, s, "u1", "site-a")
 	if role != "manager" {
 		t.Fatalf("re-grant didn't overwrite, got %q", role)
 	}
 
 	// ListServerAccess with user filter.
-	rows, err := ListServerAccess("u1", "")
+	rows, err := hulabolt.ListServerAccess(ctx, s, "u1", "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -72,21 +75,14 @@ func TestGrantListRevoke(t *testing.T) {
 
 	// Revoke is idempotent: second call doesn't error even though the
 	// row is already gone.
-	if err := RevokeServerAccess("u1", "site-a"); err != nil {
+	if err := hulabolt.RevokeServerAccess(ctx, s, "u1", "site-a"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if err := RevokeServerAccess("u1", "site-a"); err != nil {
+	if err := hulabolt.RevokeServerAccess(ctx, s, "u1", "site-a"); err != nil {
 		t.Fatalf("revoke idempotent: %v", err)
 	}
-	role, _ = RoleOnServer("u1", "site-a")
+	role, _ = hulabolt.RoleOnServer(ctx, s, "u1", "site-a")
 	if role != "" {
 		t.Fatalf("revoke didn't delete, got %q", role)
-	}
-}
-
-func TestNotOpen(t *testing.T) {
-	_ = Close()
-	if err := GrantServerAccess("u", "s", "viewer"); err != ErrNotOpen {
-		t.Fatalf("want ErrNotOpen, got %v", err)
 	}
 }
