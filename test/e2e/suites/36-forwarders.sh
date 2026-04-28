@@ -27,10 +27,15 @@ fi
 pass "forwarder-recorder reachable"
 
 # --- 1. Boot log mentions registered forwarder ---------------------
+#
+# Buffer to a variable; under `set -o pipefail`, `grep -q`'s
+# short-circuit can SIGPIPE the docker compose process and the
+# pipeline returns 255 even on a successful match.
 
-if dc logs hula 2>&1 | grep -q "forwarder registered.*ga4_mp"; then
+hula_logs=$(dc logs hula 2>&1 || true)
+if echo "$hula_logs" | grep -q "forwarder registered.*ga4_mp"; then
     pass "boot log shows ga4_mp forwarder registered for testsite-seed"
-elif dc logs hula 2>&1 | grep -q "forwarders registered for"; then
+elif echo "$hula_logs" | grep -q "forwarders registered for"; then
     pass "boot log shows forwarders count line"
 else
     pass "no forwarder-registered log line yet (may have rolled out of buffer)"
