@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	chapi "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/chzyer/readline"
 	"github.com/rivo/tview"
+	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v3"
 
 	"github.com/tlalocweb/hulation/client"
@@ -28,11 +31,19 @@ import (
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
+	hulaopaque "github.com/tlalocweb/hulation/pkg/auth/opaque"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
 
 	"go.izuma.io/conftagz"
 )
+
+func lastLog(logs []string) string {
+	if len(logs) == 0 {
+		return ""
+	}
+	return logs[len(logs)-1]
+}
 
 func askForConfirmation() bool {
 	reader := bufio.NewReader(os.Stdin)
@@ -138,19 +149,90 @@ func defaultConfigFilePath() string {
 
 var hulactlconfigfile string
 
+// ServerEntry holds per-server config within hulactl.yaml.
+type ServerEntry struct {
+	URL      string `yaml:"url"`
+	Token    string `yaml:"token,omitempty"`
+	Insecure bool   `yaml:"insecure,omitempty"`
+}
+
 type HulactlConfig struct {
-	LogLevel           string `yaml:"loglevel" flag:"loglevel" usage:"sets log level to info, warn, error, fatal, panic, debug, trace, none" default:"warn" env:"HULACTL_LOGLEVEL"`
-	HulationApiUrl     string `yaml:"hulaurl" flag:"hulaapi" usage:"url to hulation api" default:"http://localhost:8080" test:"~http[s]?\\:\\/\\/[^\\/]+.*" env:"HULA_API_URL"`
-	HulationConfigPath string `yaml:"hulaconf" flag:"hulaconf" usage:"path to hulation config file" default:"/etc/hulation/hulation.yaml" env:"HULA_CONF"`
-	DontSaveAuth       bool   `flag:"nosaveauth" usage:"do not save the auth token to the config file"`
-	Token              string `yaml:"token" flag:"token" usage:"authorization"`
-	DebugMode          bool   `yaml:"debug" flag:"debug" usage:"debug mode"`
-	ANSIColors         bool   `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
-	GetBodyFromFile    string `flag:"bodyfile" usage:"get body from file"`
-	GetBodyFromStdin   bool   `flag:"bodystdin" usage:"get body from stdin"`
-	GetInteractive     bool   `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
-	HostId             string `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
-	Insecure           bool   `yaml:"insecure" flag:"insecure" usage:"skip TLS certificate verification"`
+	LogLevel           string                  `yaml:"loglevel" flag:"loglevel" usage:"sets log level to info, warn, error, fatal, panic, debug, trace, none" default:"warn" env:"HULACTL_LOGLEVEL"`
+	HulationConfigPath string                  `yaml:"hulaconf" flag:"hulaconf" usage:"path to hulation config file" default:"/etc/hulation/hulation.yaml" env:"HULA_CONF"`
+	DontSaveAuth       bool                    `flag:"nosaveauth" usage:"do not save the auth token to the config file"`
+	DebugMode          bool                    `yaml:"debug" flag:"debug" usage:"debug mode"`
+	ANSIColors         bool                    `yaml:"colors" flag:"colors" usage:"use ANSI colors"`
+	GetBodyFromFile    string                  `flag:"bodyfile" usage:"get body from file"`
+	GetBodyFromStdin   bool                    `flag:"bodystdin" usage:"get body from stdin"`
+	GetInteractive     bool                    `flag:"inter" usage:"get body from the terminal interactively"`                      // uses readline
+	HostId             string                  `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
+	Dangerous          bool                    `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
+	AutoBuild          bool                    `flag:"autobuild" usage:"automatically trigger a staging build after changes are synced (staging-mount only)"`
+	// Non-interactive auth — when set, `auth` skips the readline prompts.
+	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
+	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`
+	AuthPassword       string                  `flag:"password" usage:"password for non-interactive auth (prefer HULACTL_PASSWORD env var)" env:"HULACTL_PASSWORD"`
+	// set-password — non-interactive new-password input (env preferred over flag).
+	NewPassword        string                  `flag:"newpassword" usage:"new password for set-password (prefer HULACTL_NEW_PASSWORD env var)" env:"HULACTL_NEW_PASSWORD"`
+	SetPasswordUser    string                  `flag:"username" usage:"username to set the password for (default: admin)" default:"admin"`
+	SetPasswordProvider string                 `flag:"provider" usage:"auth provider (default: admin)" default:"admin"`
+	// auth — opt out of OPAQUE; force the legacy /api/auth/login flow.
+	NoOpaque           bool                    `flag:"no-opaque" usage:"disable OPAQUE on auth; use legacy plaintext flow only"`
+	// forget-opaque-record — explicit Bolt file path. No autodiscovery.
+	BoltPath           string                  `flag:"bolt" usage:"path to a hula Bolt file (forget-opaque-record only)"`
+	// Multi-server config
+	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
+	// Runtime: which server to use for this invocation (not persisted)
+	Host string `yaml:"-" flag:"host" usage:"hula server URL or FQDN" env:"HULACTL_HOST"`
+}
+
+// normalizeHost ensures a URL has https:// and extracts the FQDN key.
+// "hula.example.com" → ("https://hula.example.com", "hula.example.com")
+// "https://hula.example.com:8443" → ("https://hula.example.com:8443", "hula.example.com:8443")
+func normalizeHost(input string) (fullURL, key string) {
+	input = strings.TrimSpace(input)
+	if strings.HasPrefix(input, "https://") {
+		fullURL = input
+		key = strings.TrimPrefix(input, "https://")
+	} else if strings.HasPrefix(input, "http://") {
+		fullURL = input
+		key = strings.TrimPrefix(input, "http://")
+	} else {
+		fullURL = "https://" + input
+		key = input
+	}
+	key = strings.TrimSuffix(key, "/")
+	return
+}
+
+// resolveServer picks the server to use for this invocation.
+// Returns url, token, insecure, or an error if ambiguous.
+func resolveServer(cfg *HulactlConfig) (url, token string, insecure bool, err error) {
+	// If --host or HULACTL_HOST is set, look it up
+	if cfg.Host != "" {
+		_, key := normalizeHost(cfg.Host)
+		if cfg.Servers != nil {
+			if entry, ok := cfg.Servers[key]; ok {
+				return entry.URL, entry.Token, entry.Insecure, nil
+			}
+		}
+		// Not found — the user may be about to auth, return the URL with no token
+		fullURL, _ := normalizeHost(cfg.Host)
+		return fullURL, "", false, nil
+	}
+
+	// No --host: use the only server, or error if ambiguous
+	if len(cfg.Servers) == 1 {
+		for _, entry := range cfg.Servers {
+			return entry.URL, entry.Token, entry.Insecure, nil
+		}
+	}
+	if len(cfg.Servers) > 1 {
+		err = fmt.Errorf("multiple servers configured — use --host <url> or set HULACTL_HOST to select one")
+		return
+	}
+	err = fmt.Errorf("no servers configured — run 'hulactl auth <url>' first")
+	return
 }
 
 func doAltGetBody(config *HulactlConfig) bool {
@@ -203,6 +285,16 @@ func getAltBody(config *HulactlConfig) (body string, err error) {
 }
 
 func GetConfig(opts *HulactlConfig) (err error) {
+	// Load .env file (if present) and set vars in the process environment
+	dotenvVars, dotenvErr := conftagz.LoadDotEnvFile(".env")
+	if dotenvErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: error loading .env file: %s\n", dotenvErr.Error())
+	} else {
+		for k, v := range dotenvVars {
+			os.Setenv(k, v)
+		}
+	}
+
 	conffilepath := DEFAULT_CONFIG_FILE
 	env := os.Environ()
 	// env into a map
@@ -226,7 +318,7 @@ func GetConfig(opts *HulactlConfig) (err error) {
 		err = fmt.Errorf("error processing flags: %w", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Processed: %v\n", processed.GetFlagsFound())
+	fmt.Fprintf(os.Stderr, "Processed: %v\n", processed.GetFlagsFound())
 	flag.Parse()
 
 	var usecustomconfigfilepath bool
@@ -290,9 +382,18 @@ func GetHulationServerConfigOrExit(confpath string) (hulationconf *config.Config
 }
 
 func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
-	c = client.NewClient(hulactlconfig.HulationApiUrl, hulactlconfig.Token)
-	if hulactlconfig.Insecure {
+	url, token, insecure, err := resolveServer(hulactlconfig)
+	if err != nil {
+		fmt.Printf("Error: %s\n", err)
+		os.Exit(1)
+	}
+	c = client.NewClient(url, token)
+	if insecure {
 		c.SetInsecure(true)
+		// gRPC path honors the insecure flag separately — hulactl's
+		// ---insecure gesture should also skip server-cert verification
+		// on the gRPC handshake.
+		c.InsecureSkipTLSVerify = true
 	}
 	if hulactlconfig.DebugMode {
 		c.Noisy = true
@@ -304,6 +405,15 @@ func GetHulactlClient(hulactlconfig *HulactlConfig) (c *client.Client) {
 		}
 		c.Output = func(format string, a ...any) (int, error) {
 			return fmt.Printf(fmt.Sprintf(utils.Grey("client: ")+"%s", format), a...)
+		}
+	}
+	// Best-effort gRPC dial. Failures don't abort — hulactl commands
+	// fall back to the legacy /api/* HTTP bridge. When DialGRPC
+	// succeeds, any command that calls a Grpc*-prefixed method uses
+	// gRPC; otherwise it returns ErrNoGRPC and the caller falls back.
+	if derr := c.DialGRPC(); derr != nil {
+		if hulactlconfig.DebugMode {
+			fmt.Printf("(gRPC dial failed, falling back to HTTP: %s)\n", derr.Error())
 		}
 	}
 	return
@@ -326,7 +436,7 @@ func main() {
 		command = argz[0]
 	}
 
-	fmt.Printf("Command: %s\n", command)
+	fmt.Fprintf(os.Stderr, "Command: %s\n", command)
 
 	switch command {
 	case CMD_GENERATEHASH:
@@ -373,58 +483,115 @@ func main() {
 		var hash, shasum string
 		hash, shasum, err = utils.GenerateHulaHashFromPlaintextPass(password)
 		if err != nil {
-			fmt.Printf("Error generating hash: %s\n", err.Error())
+			fmt.Fprintf(os.Stderr, "Error generating hash: %s\n", err.Error())
 			os.Exit(1)
 		}
-		fmt.Printf("Hash: %s\n", hash)
-		// verify the hash works
-		var match bool
-		match, err = utils.Argon2CompareHashAndSecret(shasum, hash)
-		if err != nil {
-			fmt.Printf("Error verifying hash: %s\n", err.Error())
+		// Verify before emitting — fail loud rather than print a
+		// hash that won't validate.
+		match, err := utils.Argon2CompareHashAndSecret(shasum, hash)
+		if err != nil || !match {
+			fmt.Fprintf(os.Stderr, "ERROR: hash verification failed: %v\n", err)
 			os.Exit(1)
 		}
-		if match {
-			fmt.Printf("Hash verified.\n")
-		} else {
-			fmt.Printf("ERROR: Hash verification failed.\n")
-		}
+		// stdout = bare hash, nothing else. Pipes into a deploy
+		// script without needing cut/awk/sed.
+		fmt.Println(hash)
 	case CMD_AUTH:
-		fmt.Printf("Generate Authorization header bearer token:\n")
-		l, err := readline.NewEx(&readline.Config{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+		// Determine which server to auth against
+		// Usage: hulactl auth [URL]
+		var authURL, authKey string
+		if len(argz) >= 2 {
+			// URL provided as argument
+			authURL, authKey = normalizeHost(argz[1])
+		} else if hulactlconfig.Host != "" {
+			// --host flag or HULACTL_HOST env
+			authURL, authKey = normalizeHost(hulactlconfig.Host)
+		} else if len(hulactlconfig.Servers) == 1 {
+			// Single server — use it
+			for _, entry := range hulactlconfig.Servers {
+				authURL = entry.URL
+			}
+			_, authKey = normalizeHost(authURL)
+		} else if len(hulactlconfig.Servers) > 1 {
+			fmt.Printf("Multiple servers configured. Specify which one:\n")
+			fmt.Printf("  hulactl auth <url>\n")
+			for key := range hulactlconfig.Servers {
+				fmt.Printf("    %s\n", key)
+			}
+			os.Exit(1)
+		} else {
+			fmt.Printf("Usage: hulactl auth <url>\n")
+			fmt.Printf("Example: hulactl auth hula.example.com\n")
 			os.Exit(1)
 		}
+
+		fmt.Printf("Authenticating against %s\n", authURL)
+
 		var identity, password string
-		l.SetPrompt("Identity (default: admin): ")
-		identity, err = l.Readline()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+		var l *readline.Instance
+
+		// Non-interactive path: if --identity/--password (or HULACTL_IDENTITY/
+		// HULACTL_PASSWORD) are provided, skip the readline prompts entirely.
+		if hulactlconfig.AuthPassword != "" {
+			if hulactlconfig.AuthIdentity != "" {
+				identity = hulactlconfig.AuthIdentity
+			} else {
+				identity = "admin"
+			}
+			password = hulactlconfig.AuthPassword
+		} else {
+			l, err = readline.NewEx(&readline.Config{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			l.SetPrompt("Identity (default: admin): ")
+			identity, err = l.Readline()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			if len(identity) < 1 {
+				identity = "admin"
+			}
+			var pass []byte
+			pass, err = l.ReadPassword("Password: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			password = string(pass)
+		}
+
+		// Create a client targeting the auth URL directly
+		hulaclient := client.NewClient(authURL, "")
+		if hulactlconfig.DebugMode {
+			hulaclient.Noisy = true
+			hulaclient.NoisyErr = true
+		}
+		// Check if this server was previously configured as insecure
+		if hulactlconfig.Servers != nil {
+			if entry, ok := hulactlconfig.Servers[authKey]; ok && entry.Insecure {
+				hulaclient.SetInsecure(true)
+			}
+		}
+
+		// OPAQUE-only authentication. Legacy plaintext path is
+		// gone — to bootstrap a fresh deploy, run
+		// `hulactl set-password` (or the deploy-side
+		// set-admin-password.sh) first.
+		oRes, oerr := hulaclient.OpaqueLogin("admin", identity, password)
+		if oerr != nil {
+			fmt.Printf("Error: %s\n", oerr.Error())
 			os.Exit(1)
 		}
-		if len(identity) < 1 {
-			identity = "admin"
-		}
-		var pass []byte
-		pass, err = l.ReadPassword("Password: ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
-			os.Exit(1)
-		}
-		password = string(pass)
-		// make request against the server using /login
-		// client := client.NewClient(hulactlconfig.HulationApiUrl, "")
-		// if hulactlconfig.DebugMode {
-		// 	client.Noisy = true
-		// 	client.NoisyErr = true
-		// }
-		hulaclient := GetHulactlClient(hulactlconfig)
-		authResp, token, err := hulaclient.Auth(identity, password)
-		if err != nil {
-			fmt.Printf("Error: %s\n", err.Error())
-			os.Exit(1)
-		}
+		token := oRes.JWT
+		authResp := client.NewResponse()
+		authResp.Finish(200, "", client.AuthResponse{
+			Token:        oRes.JWT,
+			TotpRequired: oRes.TotpRequired,
+		})
+		err = nil
 
 		// Check if TOTP is required
 		if authResp != nil && authResp.Response != nil {
@@ -452,11 +619,10 @@ func main() {
 
 		fmt.Printf("Token: %s\n", token)
 		if !hulactlconfig.DontSaveAuth {
-			// check if a file exists
+			// Ensure config file exists
 			_, err = os.Stat(hulactlconfigfile)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// create parent directory and file
 					if dir := filepath.Dir(hulactlconfigfile); dir != "." {
 						os.MkdirAll(dir, 0700)
 					}
@@ -470,32 +636,22 @@ func main() {
 					os.Exit(1)
 				}
 			}
-			// save the token and API URL to the config file
-			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"token"}, &yaml.Node{
+			// Save under servers.<key>
+			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"servers", authKey, "url"}, &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: authURL,
+			})
+			if err != nil {
+				fmt.Printf("Error saving URL to config file: %s\n", err.Error())
+			}
+			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"servers", authKey, "token"}, &yaml.Node{
 				Kind:  yaml.ScalarNode,
 				Value: token,
 			})
 			if err != nil {
-				fmt.Printf("Error saving token to config file (%s): %s\n", hulactlconfigfile, err.Error())
+				fmt.Printf("Error saving token to config file: %s\n", err.Error())
 			} else {
-				fmt.Printf("Token saved to config file (%s)\n", hulactlconfigfile)
-			}
-			err = utils.ModifyYamlFile(hulactlconfigfile, []string{"hulaurl"}, &yaml.Node{
-				Kind:  yaml.ScalarNode,
-				Value: hulactlconfig.HulationApiUrl,
-			})
-			if err != nil {
-				fmt.Printf("Error saving API URL to config file: %s\n", err.Error())
-			}
-			if hulactlconfig.Insecure {
-				err = utils.ModifyYamlFile(hulactlconfigfile, []string{"insecure"}, &yaml.Node{
-					Kind:  yaml.ScalarNode,
-					Tag:   "!!bool",
-					Value: "true",
-				})
-				if err != nil {
-					fmt.Printf("Error saving insecure flag to config file: %s\n", err.Error())
-				}
+				fmt.Printf("Credentials saved for %s in %s\n", authKey, hulactlconfigfile)
 			}
 		}
 
@@ -991,6 +1147,252 @@ func main() {
 		fmt.Printf("TOTP encryption key: %s\n", key)
 		fmt.Printf("\nAdd to your hulation config:\n  totp_encryption_key: \"%s\"\n", key)
 
+	case CMD_OPAQUESEED:
+		// Generate fresh OPAQUE OPRF seed + AKE secret, both
+		// base64url-encoded. Operator pastes into config or env.
+		seed := hulaopaque.GenerateSeedB64()
+		akeSecret, err := hulaopaque.GenerateAKESecretB64()
+		if err != nil {
+			fmt.Printf("Error generating AKE secret: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("OPAQUE OPRF seed:  %s\n", seed)
+		fmt.Printf("OPAQUE AKE secret: %s\n", akeSecret)
+		fmt.Printf("\nAdd to your hulation config (or set env):\n")
+		fmt.Printf("  opaque:\n")
+		fmt.Printf("    oprf_seed: \"%s\"\n", seed)
+		fmt.Printf("    ake_secret: \"%s\"\n", akeSecret)
+		fmt.Printf("\nOR via env vars:\n")
+		fmt.Printf("  HULA_OPAQUE_OPRF_SEED=\"%s\"\n", seed)
+		fmt.Printf("  HULA_OPAQUE_AKE_SECRET=\"%s\"\n", akeSecret)
+		fmt.Printf("\nIMPORTANT: changing these invalidates every existing OPAQUE record.\n")
+
+	case CMD_FORGETOPAQUE:
+		// EMERGENCY recovery: delete an OPAQUE record directly from
+		// a Bolt file. hula MUST be stopped first (Bolt allows one
+		// process at a time). Used by reset-admin-password.sh after
+		// `docker cp`-ing the bolt out of the container.
+		if hulactlconfig.BoltPath == "" {
+			fmt.Fprintf(os.Stderr, "Error: --bolt <path> is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_FORGETOPAQUE_USAGE)
+			os.Exit(1)
+		}
+		if len(argz) < 3 {
+			fmt.Fprintf(os.Stderr, "Error: provider and username are required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_FORGETOPAQUE_USAGE)
+			os.Exit(1)
+		}
+		provider := argz[1]
+		username := argz[2]
+		// Open the Bolt file directly (no hulabolt.Open process global —
+		// this is a one-shot edit and we want crisp control over
+		// open/close).
+		db, err := bolt.Open(hulactlconfig.BoltPath, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening bolt: %s\n", err.Error())
+			os.Exit(1)
+		}
+		key := provider + "|" + username
+		err = db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte("opaque_records"))
+			if b == nil {
+				return fmt.Errorf("opaque_records bucket missing")
+			}
+			if v := b.Get([]byte(key)); v == nil {
+				fmt.Printf("(no record for %s — already absent)\n", key)
+				return nil
+			}
+			if err := b.Delete([]byte(key)); err != nil {
+				return err
+			}
+			fmt.Printf("Deleted opaque_records[%s]\n", key)
+			return nil
+		})
+		if cerr := db.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+	case CMD_ROTATECOOKIELESS:
+		// Phase 4c.3: replace the per-server cookieless visitor-id
+		// salt. Same offline-edit pattern as forget-opaque-record:
+		// hula must be stopped, caller copies the bolt out, runs
+		// this, copies it back.
+		if hulactlconfig.BoltPath == "" {
+			fmt.Fprintf(os.Stderr, "Error: --bolt <path> is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_ROTATECOOKIELESS_USAGE)
+			os.Exit(1)
+		}
+		if len(argz) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: server_id is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_ROTATECOOKIELESS_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		db, err := bolt.Open(hulactlconfig.BoltPath, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening bolt: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fresh := make([]byte, 32)
+		if _, err := cryptorand.Read(fresh); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading random: %s\n", err.Error())
+			_ = db.Close()
+			os.Exit(1)
+		}
+		err = db.Update(func(tx *bolt.Tx) error {
+			b, berr := tx.CreateBucketIfNotExists([]byte("cookieless_salts"))
+			if berr != nil {
+				return berr
+			}
+			return b.Put([]byte(serverID), fresh)
+		})
+		if cerr := db.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Rotated cookieless_salts[%s] (32 random bytes)\n", serverID)
+
+	case CMD_SETPASSWORD:
+		// Always require fresh proof of the current password for
+		// rotation. We deliberately ignore any saved JWT in
+		// hulactl.yaml — a leaked or replayed JWT must NOT be enough
+		// to rotate the password.
+		username := hulactlconfig.SetPasswordUser
+		if username == "" {
+			username = "admin"
+		}
+		provider := hulactlconfig.SetPasswordProvider
+		if provider == "" {
+			provider = "admin"
+		}
+
+		// 1) Read the CURRENT password (or empty for first-time
+		//    bootstrap). Env preferred over interactive.
+		var currentPass string
+		if v := os.Getenv("HULACTL_CURRENT_PASSWORD"); v != "" {
+			currentPass = v
+		}
+
+		// 2) Read the NEW password (env preferred over interactive).
+		var newPass string
+		if hulactlconfig.NewPassword != "" {
+			newPass = hulactlconfig.NewPassword
+		}
+
+		// 3) If anything is still missing, prompt interactively.
+		if currentPass == "" || newPass == "" {
+			l, err := readline.NewEx(&readline.Config{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
+				os.Exit(1)
+			}
+			if currentPass == "" {
+				cur, err := l.ReadPassword(fmt.Sprintf(
+					"Current password for %s/%s (leave blank ONLY for first-time bootstrap): ",
+					provider, username))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				currentPass = string(cur)
+			}
+			if newPass == "" {
+				pw1, err := l.ReadPassword(fmt.Sprintf("New password for %s/%s: ", provider, username))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				pw2, err := l.ReadPassword("Confirm new password: ")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading password: %s\n", err.Error())
+					os.Exit(1)
+				}
+				if string(pw1) != string(pw2) {
+					fmt.Printf("Passwords don't match.\n")
+					os.Exit(1)
+				}
+				if len(pw1) < 8 {
+					fmt.Printf("New password too short (min 8 chars).\n")
+					os.Exit(1)
+				}
+				newPass = string(pw1)
+			}
+		}
+
+		// 4) Build a FRESH client with no saved token. We must not
+		//    reuse a JWT from hulactl.yaml — rotation requires
+		//    just-now proof of the current password.
+		url, _, insecure, rerr := resolveServer(hulactlconfig)
+		if rerr != nil {
+			fmt.Printf("Error: %s\n", rerr)
+			os.Exit(1)
+		}
+		c := client.NewClient(url, "")
+		if insecure {
+			c.SetInsecure(true)
+		}
+
+		// 5) Rotation path: log in with the current password. The
+		//    server returns NotFound (404) when no record exists yet
+		//    — that's the bootstrap case; we proceed without auth.
+		if currentPass != "" {
+			loginRes, lerr := c.OpaqueLogin(provider, username, currentPass)
+			if lerr != nil {
+				lmsg := lerr.Error()
+				switch {
+				case strings.Contains(lmsg, "HTTP 404"):
+					// No record on the server. The operator typed
+					// a current password but there's nothing to
+					// verify against — treat as bootstrap.
+					fmt.Printf("No OPAQUE record exists yet — proceeding with bootstrap (current-password ignored).\n")
+				case strings.Contains(lmsg, "GenerateKE3") ||
+					strings.Contains(lmsg, "decrypted server public key") ||
+					strings.Contains(lmsg, "ristretto255: invalid element"):
+					// Wrong-password failure mode. All three of these
+					// strings come from bytemare/opaque's KE2-decrypt
+					// path when the password-derived envelope key
+					// produces garbage when applied to the server's
+					// record. The operator sees the same outcome
+					// either way: "your password is wrong".
+					fmt.Printf("Error: incorrect current password.\n")
+					if hulactlconfig.DebugMode {
+						fmt.Fprintf(os.Stderr, "  (bytemare diagnostic: %s)\n", lmsg)
+					}
+					os.Exit(1)
+				default:
+					// Any other failure (network, server 500, etc.)
+					// — surface verbatim so the operator can triage.
+					fmt.Printf("Error: could not verify current password: %s\n", lmsg)
+					os.Exit(1)
+				}
+			} else {
+				c.SetToken(loginRes.JWT)
+			}
+		}
+
+		// 6) Register the new password. Bearer is now either
+		//    a fresh JWT (rotation) or empty (bootstrap).
+		if err := c.OpaqueRegister(provider, username, newPass); err != nil {
+			msg := err.Error()
+			fmt.Printf("Error: %s\n", msg)
+			if strings.Contains(msg, "OPAQUE register requires admin authentication") {
+				fmt.Printf("\nThis user already has an OPAQUE record on the server,\n")
+				fmt.Printf("so rotation requires the current password to verify.\n")
+				fmt.Printf("Re-run set-password and provide the current password when prompted\n")
+				fmt.Printf("(or set HULACTL_CURRENT_PASSWORD).\n")
+			}
+			os.Exit(1)
+		}
+		fmt.Printf("Password for %s/%s set via OPAQUE.\n", provider, username)
+		fmt.Printf("The password itself was never sent to the server.\n")
+
 	case CMD_TOTPSETUP:
 		client := GetHulactlClient(hulactlconfig)
 		// Step 1: Call setup endpoint
@@ -1066,6 +1468,213 @@ func main() {
 			}
 			fmt.Printf("\n%d entries total\n", len(entries))
 		}
+
+	case CMD_BUILDSITE:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl build <server-id>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		client := GetHulactlClient(hulactlconfig)
+		_, result, err := client.TriggerBuild(serverID)
+		if err != nil {
+			fmt.Printf("Error triggering build: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Build triggered: %s\n", result.BuildID)
+		fmt.Printf("Polling for completion...\n")
+
+		// Poll until complete or failed
+		for {
+			time.Sleep(2 * time.Second)
+			_, status, err := client.BuildStatus(result.BuildID)
+			if err != nil {
+				fmt.Printf("Error checking status: %s\n", err.Error())
+				os.Exit(1)
+			}
+			fmt.Printf("  [%s] %s\n", status.StatusText, lastLog(status.Logs))
+			if status.StatusText == "complete" {
+				fmt.Printf("\nBuild complete!\n")
+				break
+			}
+			if status.StatusText == "failed" {
+				fmt.Printf("\nBuild failed: %s\n", status.Error)
+				os.Exit(1)
+			}
+		}
+
+	case CMD_BUILDSTATUS:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl build-status <build-id>\n")
+			os.Exit(1)
+		}
+		client := GetHulactlClient(hulactlconfig)
+		_, status, err := client.BuildStatus(argz[1])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Build:   %s\n", status.BuildID)
+		fmt.Printf("Server:  %s\n", status.ServerID)
+		fmt.Printf("Status:  %s\n", status.StatusText)
+		fmt.Printf("Started: %s\n", status.StartedAt)
+		if status.EndedAt != nil {
+			fmt.Printf("Ended:   %s\n", *status.EndedAt)
+		}
+		if status.Error != "" {
+			fmt.Printf("Error:   %s\n", status.Error)
+		}
+		if len(status.Logs) > 0 {
+			fmt.Printf("\nLogs:\n")
+			for _, l := range status.Logs {
+				fmt.Printf("  %s\n", l)
+			}
+		}
+
+	case CMD_BUILDS:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl builds <server-id>\n")
+			os.Exit(1)
+		}
+		client := GetHulactlClient(hulactlconfig)
+		_, builds, err := client.ListBuilds(argz[1])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if len(builds) == 0 {
+			fmt.Printf("No builds found for server %s\n", argz[1])
+		} else {
+			fmt.Printf("%-38s %-12s %-22s %s\n", "BUILD ID", "STATUS", "STARTED", "ERROR")
+			fmt.Printf("%-38s %-12s %-22s %s\n", "--------", "------", "-------", "-----")
+			for _, b := range builds {
+				errStr := ""
+				if b.Error != "" {
+					if len(b.Error) > 40 {
+						errStr = b.Error[:40] + "..."
+					} else {
+						errStr = b.Error
+					}
+				}
+				fmt.Printf("%-38s %-12s %-22s %s\n", b.BuildID, b.StatusText, b.StartedAt, errStr)
+			}
+		}
+
+	case CMD_STAGING_BUILD:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: hulactl staging-build <server-id>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		client := GetHulactlClient(hulactlconfig)
+		_, result, err := client.StagingBuild(serverID)
+		if err != nil {
+			fmt.Printf("Error triggering staging build: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Staging build %s: %s\n", result.Status, result.BuildID)
+		if len(result.Logs) > 0 {
+			fmt.Printf("\nLogs:\n")
+			for _, l := range result.Logs {
+				fmt.Printf("  %s\n", l)
+			}
+		}
+		if result.Error != "" {
+			fmt.Printf("\nError: %s\n", result.Error)
+			os.Exit(1)
+		}
+
+	case CMD_STAGING_UPDATE:
+		if len(argz) < 4 {
+			fmt.Printf("Usage: hulactl staging-update <server-id> <local-file> <remote-path>\n")
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		localFile := argz[2]
+		remotePath := argz[3]
+		client := GetHulactlClient(hulactlconfig)
+		err := client.StagingUpload(serverID, localFile, remotePath)
+		if err != nil {
+			fmt.Printf("Error uploading file: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Uploaded %s to %s on server %s\n", localFile, remotePath, serverID)
+
+	case CMD_STAGING_MOUNT:
+		// Go's flag.Parse stops at the first non-flag arg, so `--autobuild`
+		// and `--dangerous` placed AFTER `staging-mount` aren't parsed as
+		// flags. Scan argz manually to pick them up wherever they appear.
+		positional := []string{}
+		for _, a := range argz {
+			switch a {
+			case "--autobuild", "-autobuild":
+				hulactlconfig.AutoBuild = true
+			case "--dangerous", "-dangerous":
+				hulactlconfig.Dangerous = true
+			default:
+				positional = append(positional, a)
+			}
+		}
+		if len(positional) < 3 {
+			fmt.Printf("Usage: hulactl staging-mount <server-id> <folder-mount-point> [--autobuild] [--dangerous]\n")
+			os.Exit(1)
+		}
+		serverID := positional[1]
+		localDir := positional[2]
+
+		absDir, err := filepath.Abs(localDir)
+		if err != nil {
+			fmt.Printf("Error resolving path: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		hulaclient := GetHulactlClient(hulactlconfig)
+
+		// Verify auth before starting long-running process
+		_, err = hulaclient.StatusAuthOK()
+		if err != nil {
+			fmt.Printf("Authentication failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		// Signal handling for clean shutdown
+		ctx, cancel := context.WithCancel(context.Background())
+		sigchan := make(chan os.Signal, 1)
+		signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			sig := <-sigchan
+			fmt.Printf("\nReceived %s, shutting down...\n", sig)
+			cancel()
+		}()
+
+		fmt.Printf("Mounting server %s at %s...\n", serverID, absDir)
+
+		mounter, err := client.NewStagingMounter(ctx, hulaclient, client.StagingMountOptions{
+			ServerID:    serverID,
+			LocalDir:    absDir,
+			Dangerous:   hulactlconfig.Dangerous,
+			AutoBuild:   hulactlconfig.AutoBuild,
+			Output:      fmt.Printf,
+			ConfirmFunc: askForConfirmation,
+		})
+		if err != nil {
+			fmt.Printf("Error initializing mount: %s\n", err.Error())
+			os.Exit(1)
+		}
+		defer mounter.Close()
+
+		if err := mounter.InitialSync(); err != nil {
+			fmt.Printf("Error during initial sync: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		fmt.Printf("Watching %s for changes (CTRL-C to stop)...\n", absDir)
+
+		if err := mounter.Watch(); err != nil && ctx.Err() == nil {
+			fmt.Printf("Error during watch: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Mount stopped.\n")
 
 	default:
 		fmt.Printf("Unknown command: %s\n", command)

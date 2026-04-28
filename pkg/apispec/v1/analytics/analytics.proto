@@ -1,0 +1,247 @@
+syntax = "proto3";
+
+// AnalyticsService — Phase-0 SKELETON ONLY.
+//
+// Message types and RPC shapes are defined here so the Svelte UI can begin
+// design work against a stable contract, and so downstream code generation
+// keeps working. Implementations are empty stubs in Phase 0; Phase 1 fills
+// them in.
+
+package hulation.v1.analytics;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics;analyticsspec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+
+service AnalyticsService {
+  rpc Summary(SummaryRequest) returns (SummaryResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/summary" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Timeseries(TimeseriesRequest) returns (TimeseriesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/timeseries" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Pages(PagesRequest) returns (PagesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/pages" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Sources(SourcesRequest) returns (SourcesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/sources" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Geography(GeographyRequest) returns (GeographyResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/geography" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Devices(DevicesRequest) returns (DevicesResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/devices" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Events(EventsRequest) returns (EventsResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/events" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc FormsReport(FormsReportRequest) returns (FormsReportResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/forms" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Visitors(VisitorsRequest) returns (VisitorsResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/visitors" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Visitor(VisitorRequest) returns (VisitorResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/visitor/{visitor_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc Realtime(RealtimeRequest) returns (RealtimeResponse) {
+    option (google.api.http) = { get: "/api/v1/analytics/realtime" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // ForgetVisitor permanently deletes a visitor from events_v1 +
+  // aggregate MVs and writes a GDPR audit trail row. Admin only.
+  rpc ForgetVisitor(ForgetVisitorRequest) returns (ForgetVisitorResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/analytics/visitor/{visitor_id}/forget"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+}
+
+// Common filter parameters used across report queries. Every analytics RPC
+// takes these via query string (the grpc-gateway maps fields 1:1).
+message Filters {
+  // server_ids — intersected with user's allowed set by the backend.
+  repeated string server_ids = 1;
+  // from / to — ISO-8601 timestamps (e.g. "2026-04-14T00:00Z").
+  string from = 2;
+  string to = 3;
+  // granularity: "hour" | "day" | "week"
+  string granularity = 4;
+  // compare: "previous" | "previous_year" | ""
+  string compare = 5;
+  // drill-down chip filters
+  string country = 6;
+  string device = 7;     // "mobile" | "tablet" | "desktop"
+  string source = 8;     // referer host or channel name
+  string path = 9;
+  string event_code = 10;
+  string goal = 11;
+  // Additional drill-down chips (wired 1:1 to ClickHouse columns).
+  string browser = 12;
+  string os = 13;
+  string channel = 14;   // "direct" | "search" | "social" | "referral" | "email"
+  string utm_source = 15;
+  string utm_medium = 16;
+  string utm_campaign = 17;
+  string region = 18;    // geography sub-drill (admin region)
+  string city = 19;      // geography sub-drill (city)
+}
+
+message SummaryRequest { Filters filters = 1; string server_id = 2; }
+message SummaryResponse {
+  int64 visitors = 1;
+  int64 pageviews = 2;
+  double bounce_rate = 3;
+  double avg_session_duration_seconds = 4;
+  // deltas vs. comparison period (percent, -1 if no comparison requested).
+  double visitors_delta_pct = 5;
+  double pageviews_delta_pct = 6;
+  double bounce_rate_delta_pct = 7;
+  double avg_session_duration_delta_pct = 8;
+  repeated double sparkline = 9;
+}
+
+message TimeseriesBucket {
+  string ts = 1;
+  int64 visitors = 2;
+  int64 pageviews = 3;
+}
+
+message TimeseriesRequest { Filters filters = 1; string server_id = 2; }
+message TimeseriesResponse { repeated TimeseriesBucket buckets = 1; }
+
+// TableRow is the shared row shape across Pages, Sources, Geography,
+// Events, and FormsReport. Each report populates only the fields that
+// apply to its dimension; unset numeric fields serialise to zero, which
+// the UI tolerates.
+message TableRow {
+  string key = 1;
+  int64 visitors = 2;
+  int64 pageviews = 3;
+  double bounce_rate = 4;
+  // Pages report.
+  int64 unique_pageviews = 5;
+  double avg_time_on_page_seconds = 6;
+  int64 entrances = 7;
+  int64 exits = 8;
+  // Sources report.
+  double pages_per_visit = 9;
+  double goal_conv_rate = 10;
+  // Geography report.
+  double percent = 11;
+  // Events report.
+  int64 count = 12;
+  int64 unique_visitors = 13;
+  string first_seen = 14;
+  string last_seen = 15;
+  // FormsReport report.
+  int64 submits = 16;
+  double conversion_rate = 17;
+  double avg_time_to_submit_seconds = 18;
+}
+
+message PagesRequest { Filters filters = 1; string server_id = 2; string format = 3; int32 limit = 4; int32 offset = 5; }
+message PagesResponse { repeated TableRow rows = 1; }
+
+message SourcesRequest { Filters filters = 1; string server_id = 2; string format = 3; string group_by = 4; int32 limit = 5; int32 offset = 6; }
+message SourcesResponse { repeated TableRow rows = 1; }
+
+message GeographyRequest { Filters filters = 1; string server_id = 2; string format = 3; }
+message GeographyResponse { repeated TableRow rows = 1; }
+
+message DevicesRequest { Filters filters = 1; string server_id = 2; string format = 3; }
+message DevicesResponse {
+  repeated TableRow device_category = 1;
+  repeated TableRow browser = 2;
+  repeated TableRow os = 3;
+}
+
+message EventsRequest { Filters filters = 1; string server_id = 2; string format = 3; }
+message EventsResponse { repeated TableRow rows = 1; }
+
+message FormsReportRequest { Filters filters = 1; string server_id = 2; string format = 3; }
+message FormsReportResponse { repeated TableRow rows = 1; }
+
+message VisitorsRequest { Filters filters = 1; string server_id = 2; int32 limit = 3; int32 offset = 4; string format = 5; }
+message VisitorsResponse {
+  repeated VisitorSummary visitors = 1;
+  int32 total = 2;
+}
+
+message VisitorSummary {
+  string visitor_id = 1;
+  string email = 2;
+  string first_seen = 3;
+  string last_seen = 4;
+  int32 sessions = 5;
+  int32 pageviews = 6;
+  int32 events = 7;
+  string top_country = 8;
+  string top_device = 9;
+}
+
+message VisitorRequest { string server_id = 1; string visitor_id = 2; }
+message VisitorResponse {
+  VisitorSummary visitor = 1;
+  repeated VisitorEvent timeline = 2;
+  repeated string ips = 3;
+  repeated string cookies = 4;
+  repeated string aliases = 5;
+}
+
+message VisitorEvent {
+  string ts = 1;
+  string event_code = 2;
+  string url = 3;
+  string referrer = 4;
+  string country = 5;
+  string device = 6;
+  string ip = 7;
+}
+
+message RealtimeRequest { string server_id = 1; }
+message RealtimeResponse {
+  int32 active_visitors_5m = 1;
+  repeated VisitorEvent recent = 2;
+  repeated TableRow top_pages = 3;
+  repeated TableRow top_sources = 4;
+}
+
+message ForgetVisitorRequest {
+  string server_id = 1;
+  string visitor_id = 2;
+}
+
+message ForgetVisitorResponse {
+  // Best-effort count of events deleted. ClickHouse's ALTER TABLE
+  // DELETE is an async mutation; the number reflects the row count
+  // queued for the mutation, not a synchronous delete guarantee.
+  int64 rows_deleted = 1;
+  // Audit row id so the caller can correlate with the bolt
+  // audit_forget trail.
+  string audit_key = 2;
+}

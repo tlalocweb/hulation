@@ -138,9 +138,13 @@ else
     docker rm -f "${HULA_CONTAINER_NAME}" 2>/dev/null || true
 
     EXTRA_ARGS=""
-    # Mount docker.sock if config uses backends feature
-    if grep -q "backends:" "${HULA_CONFIG}" 2>/dev/null; then
+    # Mount docker.sock if config uses backends or site deployment features
+    if grep -q "backends:\|root_git_autodeploy:" "${HULA_CONFIG}" 2>/dev/null; then
         EXTRA_ARGS="-v /var/run/docker.sock:/var/run/docker.sock"
+    fi
+    # Mount sitedeploy data volume if git autodeploy is configured
+    if grep -q "root_git_autodeploy:" "${HULA_CONFIG}" 2>/dev/null; then
+        EXTRA_ARGS="${EXTRA_ARGS} -v hula-sitedeploy:/var/hula/sitedeploy"
     fi
 
     docker run -d \

@@ -1,0 +1,169 @@
+name: E2E Tests
+
+# Runs the full ./test/e2e/run.sh suite against a freshly-built
+# hula:local stack on a GitHub-hosted Ubuntu runner. Triggered on
+# every push and every pull request — same gate go.yml uses, but
+# end-to-end (compose-up + 30+ suites) instead of `go build`.
+#
+# Why GitHub-hosted (vs self-hosted): we already use self-hosted
+# runners for go.yml / release.yml / docker-publish.yml builds.
+# The e2e suite is more isolated — it brings up its own Docker
+# Compose stack — and we'd rather catch packaging-environment
+# regressions on a clean stock-Ubuntu image than only on the
+# self-hosted runners.
+#
+# Concurrency: rapid pushes to the same ref cancel the in-flight
+# run so a long-running e2e doesn't queue up multiple superseded
+# runs and chew through runner minutes.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to test'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e on ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      # The harness reads TEST_SITE_SRC at setup time. We check
+      # the test site out into ${{ github.workspace }}/test-site
+      # below and point the env var at it.
+      TEST_SITE_SRC: ${{ github.workspace }}/test-site
+      # Lets the chat suites (32/33/34) issue real chat tokens
+      # without a Turnstile site key. Production hula must NOT
+      # set this — boot logs a WARN when active.
+      HULA_CHAT_CAPTCHA_TEST_BYPASS: '1'
+
+    steps:
+      # --- Checkouts ---------------------------------------------------
+
+      - name: Checkout hulation
+        uses: actions/checkout@v4
+        with:
+          path: hulation
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      # The clickhouse fork is a sibling-checkout per the
+      # `replace gorm.io/driver/clickhouse => ../clickhouse`
+      # directive in hulation/go.mod. Same convention go.yml +
+      # release.yml use.
+      - name: Checkout clickhouse driver fork
+        uses: actions/checkout@v4
+        with:
+          repository: tlalocweb/clickhouse
+          path: clickhouse
+
+      # The test site is needed by suites 07/08/09/10/11 (build +
+      # staging-build/update/mount + webdav-patch). It has to be a
+      # real git working tree at TEST_SITE_SRC because hula's
+      # git-autodeploy clones from `file://${TEST_SITE_SRC}/.git`.
+      #
+      # The token is a repo-scope PAT stored as
+      # secrets.E2E_GITHUB_AUTH_TOKEN. If your test site is in the
+      # same org and is public, the default GITHUB_TOKEN is enough
+      # — drop the `token:` line then.
+      - name: Checkout test site
+        uses: actions/checkout@v4
+        with:
+          repository: tlalocweb/tlaloc-hula-test-site
+          path: test-site
+          token: ${{ secrets.E2E_GITHUB_AUTH_TOKEN || github.token }}
+
+      # --- Toolchain ---------------------------------------------------
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: hulation/go.sum
+
+      - name: Install OS deps (jq, openssl, mkcert)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            jq openssl libnss3-tools
+          # mkcert isn't in apt; install via the official release
+          # binary. The harness pass-skips when mkcert is missing
+          # (falls back to openssl-self-signed), but installing it
+          # gives more realistic curl trust behaviour for the
+          # in-network test-runner container.
+          MKCERT_VERSION="${MKCERT_VERSION:-v1.4.4}"
+          curl -fsSL -o /tmp/mkcert \
+            "https://github.com/FiloSottile/mkcert/releases/download/${MKCERT_VERSION}/mkcert-${MKCERT_VERSION}-linux-amd64"
+          sudo install -m 0755 /tmp/mkcert /usr/local/bin/mkcert
+          mkcert -version
+          mkcert -install
+
+      - name: Verify Docker + Compose
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker compose version
+
+      # --- Configure e2e .env ----------------------------------------
+
+      - name: Render test/e2e/.env
+        env:
+          # The token used by the e2e fixture for hula's
+          # GITHUB_AUTH_TOKEN env var (separately from the PAT we
+          # use to clone the test site above). For most public-
+          # repo configurations these can be the same value.
+          E2E_GITHUB_AUTH_TOKEN: ${{ secrets.E2E_GITHUB_AUTH_TOKEN }}
+        working-directory: hulation/test/e2e
+        run: |
+          cp .env.example .env
+          if [ -n "$E2E_GITHUB_AUTH_TOKEN" ]; then
+            sed -i "s|^GITHUB_AUTH_TOKEN=.*|GITHUB_AUTH_TOKEN=${E2E_GITHUB_AUTH_TOKEN}|" .env
+          fi
+          echo "TEST_SITE_SRC=${TEST_SITE_SRC}" >> .env
+
+      # --- Run -----------------------------------------------------
+
+      - name: Run E2E suite
+        working-directory: hulation
+        run: ./test/e2e/run.sh
+
+      # --- Diagnostics on failure ----------------------------------
+
+      - name: Capture compose logs on failure
+        if: failure()
+        working-directory: hulation
+        run: |
+          mkdir -p test/e2e/workdir/logs
+          docker compose -p hula-e2e \
+            -f test/e2e/fixtures/docker-compose.yaml \
+            logs --no-color --timestamps > test/e2e/workdir/logs/compose.log 2>&1 \
+            || true
+          docker ps -a --no-trunc > test/e2e/workdir/logs/docker-ps.log 2>&1 || true
+
+      - name: Upload e2e workdir on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-workdir-${{ github.ref_name }}
+          path: |
+            hulation/test/e2e/workdir/
+            !hulation/test/e2e/workdir/certs/*-key.pem
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear down compose stack
+        if: always()
+        working-directory: hulation
+        run: |
+          docker compose -p hula-e2e \
+            -f test/e2e/fixtures/docker-compose.yaml \
+            down -v --timeout 5 || true

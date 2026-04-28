@@ -1,0 +1,268 @@
+syntax = "proto3";
+
+// ChatService — Phase-4b admin-side chat RPCs.
+//
+// Visitor-facing chat endpoints (POST /api/v1/chat/start and
+// WS /api/v1/chat/ws) live as plain HTTP handlers, not RPCs —
+// gRPC doesn't speak WebSocket and the start handler has too many
+// non-RPC concerns (Turnstile verification, AfterShip email
+// validation, OpenAI moderation, rate limiting). Those are
+// modelled in pkg/chat/* + server/chat_*.go.
+//
+// What lives here is the admin REST surface:
+//
+//   ListSessions      — All-Chats / Live-Chats table on the SPA.
+//   GetSession        — Single-session detail (header chip).
+//   GetMessages       — Thread view scroll-back.
+//   PostAdminMessage  — Async write (REST fallback for the SPA).
+//   CloseSession      — End-of-conversation hook.
+//   TakeSession       — Claim a queued session (next-available
+//                       routing also calls it implicitly).
+//   ReleaseSession    — Give a session back to the queue.
+//   GetQueue          — Live-Chats page header: queue depth +
+//                       assigned-but-unclaimed list.
+//   GetLiveSessions   — Live-Chats body: hub-driven snapshot of
+//                       sessions with at least one open WS.
+//   SearchMessages    — FTS-backed search across persisted
+//                       chat_messages.
+//
+// Permissions:
+//   reads  → server.{server_id}.analytics.read
+//   writes → server.{server_id}.admin
+// (Same scopes the analytics + alerts RPCs use; no chat-specific
+// permission needed for v1.)
+
+package hulation.v1.chat;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/chat;chatspec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service ChatService {
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/sessions"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetSession(GetSessionRequest) returns (ChatSession) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/sessions/{session_id}"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/sessions/{session_id}/messages"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc PostAdminMessage(PostAdminMessageRequest) returns (ChatMessage) {
+    option (google.api.http) = {
+      post: "/api/v1/chat/admin/sessions/{session_id}/messages"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/chat/admin/sessions/{session_id}/close"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc TakeSession(TakeSessionRequest) returns (ChatSession) {
+    option (google.api.http) = {
+      post: "/api/v1/chat/admin/sessions/{session_id}/take"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc ReleaseSession(ReleaseSessionRequest) returns (ChatSession) {
+    option (google.api.http) = {
+      post: "/api/v1/chat/admin/sessions/{session_id}/release"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.admin"] };
+  }
+
+  rpc GetQueue(GetQueueRequest) returns (GetQueueResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/queue"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc GetLiveSessions(GetLiveSessionsRequest) returns (GetLiveSessionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/live-sessions"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/chat/admin/messages/search"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+}
+
+// ChatSessionStatus mirrors the LowCardinality(String) column on
+// chat_sessions. Keep the enum stable across phases.
+enum ChatSessionStatus {
+  CHAT_SESSION_STATUS_UNSPECIFIED = 0;
+  CHAT_SESSION_STATUS_QUEUED      = 1; // created, no agent assigned
+  CHAT_SESSION_STATUS_ASSIGNED    = 2; // agent picked, awaiting their per-session WS
+  CHAT_SESSION_STATUS_OPEN        = 3; // live conversation
+  CHAT_SESSION_STATUS_CLOSED      = 4; // explicitly closed
+  CHAT_SESSION_STATUS_EXPIRED     = 5; // stale-cleanup or token expiry
+}
+
+// ChatMessageDirection mirrors the LowCardinality(String) column
+// on chat_messages.direction.
+enum ChatMessageDirection {
+  CHAT_MESSAGE_DIRECTION_UNSPECIFIED = 0;
+  CHAT_MESSAGE_DIRECTION_VISITOR     = 1;
+  CHAT_MESSAGE_DIRECTION_AGENT       = 2;
+  CHAT_MESSAGE_DIRECTION_SYSTEM      = 3;
+  CHAT_MESSAGE_DIRECTION_BOT         = 4; // reserved
+}
+
+message ChatSession {
+  string id                          = 1;
+  string server_id                   = 2;
+  string visitor_id                  = 3;
+  string visitor_email               = 4;
+  // Denormalised at session-start.
+  string visitor_country             = 5;
+  string visitor_device              = 6;
+  string visitor_ip                  = 7;
+  string user_agent                  = 8;
+  google.protobuf.Timestamp started_at        = 10;
+  google.protobuf.Timestamp closed_at         = 11;
+  google.protobuf.Timestamp last_message_at   = 12;
+  uint32 message_count               = 13;
+  ChatSessionStatus status           = 14;
+  string assigned_agent_id           = 15;
+  google.protobuf.Timestamp assigned_at       = 16;
+  // Free-form JSON the visitor widget attached on /chat/start
+  // (page URL, referrer, …). Not parsed server-side.
+  string meta                        = 17;
+}
+
+message ChatMessage {
+  string id                          = 1;
+  string session_id                  = 2;
+  string server_id                   = 3;
+  string visitor_id                  = 4;
+  ChatMessageDirection direction     = 5;
+  string sender_id                   = 6;
+  string content                     = 7;
+  google.protobuf.Timestamp when     = 8;
+}
+
+// --- Requests / Responses ---
+
+message ListSessionsRequest {
+  string server_id = 1;
+  // Filter by status; empty = no filter. Multiple values OR'd.
+  repeated ChatSessionStatus status = 2;
+  google.protobuf.Timestamp from    = 3;
+  google.protobuf.Timestamp to      = 4;
+  // Substring match on visitor_email / visitor_id / assigned_agent_id.
+  string q                          = 5;
+  uint32 limit                      = 6;
+  uint32 offset                     = 7;
+}
+
+message ListSessionsResponse {
+  repeated ChatSession sessions = 1;
+  // Total matching the filter pre-paging. The SPA needs this for
+  // pagination — ClickHouse doesn't return it implicitly.
+  uint64 total_count = 2;
+}
+
+message GetSessionRequest  { string server_id = 1; string session_id = 2; }
+
+message GetMessagesRequest {
+  string server_id  = 1;
+  string session_id = 2;
+  uint32 limit      = 3;
+  uint32 offset     = 4;
+}
+message GetMessagesResponse {
+  repeated ChatMessage messages = 1;
+  uint64 total_count = 2;
+}
+
+message PostAdminMessageRequest {
+  string server_id  = 1;
+  string session_id = 2;
+  string content    = 3;
+}
+
+message CloseSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+  string reason     = 3;
+}
+message CloseSessionResponse { ChatSession session = 1; }
+
+message TakeSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+  // When true an admin-only override claims a session already
+  // assigned to a different agent. Surfaces in the SPA as a
+  // separate "Force take" affordance (warns first).
+  bool force        = 3;
+}
+
+message ReleaseSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+}
+
+message GetQueueRequest { string server_id = 1; }
+message GetQueueResponse {
+  // Sessions waiting for an agent (status=queued).
+  repeated ChatSession queued    = 1;
+  // Sessions assigned but the agent hasn't ack-ed their per-session
+  // WS yet (status=assigned).
+  repeated ChatSession assigned  = 2;
+}
+
+message GetLiveSessionsRequest { string server_id = 1; }
+message LiveSession {
+  string session_id              = 1;
+  string visitor_id              = 2;
+  string visitor_email           = 3;
+  bool   visitor_online          = 4;
+  // Agents currently subscribed to the per-session WS.
+  repeated string agents         = 5;
+  google.protobuf.Timestamp last_message_at = 6;
+}
+message GetLiveSessionsResponse {
+  repeated LiveSession sessions = 1;
+}
+
+message SearchMessagesRequest {
+  string server_id = 1;
+  string q         = 2;
+  google.protobuf.Timestamp from = 3;
+  google.protobuf.Timestamp to   = 4;
+  uint32 limit     = 5;
+  uint32 offset    = 6;
+}
+message SearchMessagesResponse {
+  repeated ChatMessage messages = 1;
+  uint64 total_count = 2;
+}

@@ -1,120 +1,65 @@
 package backend
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/tlalocweb/hulation/log"
-	"github.com/valyala/fasthttp"
 )
 
-// ProxyHandler handles reverse proxying requests to a backend container.
+// ProxyHandler reverse-proxies requests to a backend container.
+// Net/http implementation via httputil.ReverseProxy.
 type ProxyHandler struct {
-	backend    *BackendConfig
-	hostClient *fasthttp.HostClient
+	backend *BackendConfig
+	rp      *httputil.ReverseProxy
 }
 
 // NewProxyHandler creates a reverse proxy handler for a backend.
 func NewProxyHandler(b *BackendConfig) *ProxyHandler {
-	return &ProxyHandler{
-		backend: b,
-		hostClient: &fasthttp.HostClient{
-			Addr: b.GetResolvedAddr(),
+	targetHost := b.GetResolvedAddr()
+	targetURL, _ := url.Parse(fmt.Sprintf("http://%s", targetHost))
+	ph := &ProxyHandler{backend: b}
+	ph.rp = &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			originalPath := req.URL.Path
+			newPath := ph.rewritePath(originalPath)
+			req.URL.Scheme = targetURL.Scheme
+			req.URL.Host = targetURL.Host
+			req.URL.Path = newPath
+			req.Host = targetHost
+			req.Header.Set("X-Forwarded-For", clientIP(req))
+			req.Header.Set("X-Forwarded-Host", req.Host)
+			if req.TLS != nil {
+				req.Header.Set("X-Forwarded-Proto", "https")
+			} else {
+				req.Header.Set("X-Forwarded-Proto", "http")
+			}
+			req.Header.Set("X-Real-IP", clientIP(req))
+			log.Debugf("backend proxy: %s %s -> %s%s", req.Method, originalPath, b.GetProxyTarget(), newPath)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Errorf("backend proxy error for %s: %s", b.ContainerName, err)
+			http.Error(w, "Backend unavailable", http.StatusBadGateway)
 		},
 	}
+	return ph
 }
 
-// Handle proxies the request to the backend container with path rewriting.
-//
-// Path rewriting example:
-//
-//	VirtualPath="/api", ContainerPath="/api/v2"
-//	Incoming: GET /api/users -> Backend: GET /api/v2/users
-func (p *ProxyHandler) Handle(c *fiber.Ctx) error {
-	req := fasthttp.AcquireRequest()
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseRequest(req)
-	defer fasthttp.ReleaseResponse(resp)
-
-	// Rewrite path
-	originalPath := c.Path()
-	newPath := p.rewritePath(originalPath)
-
-	// Build the backend request URL
-	req.SetRequestURI(newPath)
-	if qs := c.Request().URI().QueryString(); len(qs) > 0 {
-		req.URI().SetQueryStringBytes(qs)
-	}
-
-	// Copy method
-	req.Header.SetMethodBytes(c.Request().Header.Method())
-
-	// Copy request headers
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		// Skip hop-by-hop headers
-		k := string(key)
-		switch strings.ToLower(k) {
-		case "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade":
-			return
-		}
-		req.Header.SetBytesKV(key, value)
-	})
-
-	// Set proxy headers
-	req.Header.Set("X-Forwarded-For", c.IP())
-	req.Header.Set("X-Forwarded-Host", c.Hostname())
-	if c.Protocol() != "" {
-		req.Header.Set("X-Forwarded-Proto", c.Protocol())
-	}
-	req.Header.Set("X-Real-IP", c.IP())
-
-	// Set the Host header to the backend address
-	req.SetHost(p.backend.GetResolvedAddr())
-
-	// Copy request body
-	if body := c.Body(); len(body) > 0 {
-		req.SetBody(body)
-	}
-
-	log.Debugf("backend proxy: %s %s -> %s%s", c.Method(), originalPath, p.backend.GetProxyTarget(), newPath)
-
-	// Perform the request
-	err := p.hostClient.Do(req, resp)
-	if err != nil {
-		log.Errorf("backend proxy error for %s: %s", p.backend.ContainerName, err)
-		return c.Status(fiber.StatusBadGateway).SendString("Backend unavailable")
-	}
-
-	// Copy response status
-	c.Status(resp.StatusCode())
-
-	// Copy response headers
-	resp.Header.VisitAll(func(key, value []byte) {
-		k := string(key)
-		switch strings.ToLower(k) {
-		case "connection", "keep-alive", "transfer-encoding", "te", "trailer":
-			return
-		}
-		c.Set(k, string(value))
-	})
-
-	// Copy response body
-	return c.Send(resp.Body())
+// ServeHTTP makes ProxyHandler implement http.Handler.
+func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.rp.ServeHTTP(w, r)
 }
 
-// rewritePath transforms the incoming request path.
-// Strips VirtualPath prefix and prepends ContainerPath.
+// rewritePath strips the VirtualPath prefix and prepends ContainerPath.
 func (p *ProxyHandler) rewritePath(originalPath string) string {
-	// Strip the virtual path prefix
 	path := strings.TrimPrefix(originalPath, p.backend.VirtualPath)
-
-	// Prepend the container path
 	containerPath := p.backend.ContainerPath
 	if containerPath == "" {
 		containerPath = p.backend.VirtualPath
 	}
-
-	// Ensure proper path joining
 	containerPath = strings.TrimSuffix(containerPath, "/")
 	if path == "" || path == "/" {
 		return containerPath + "/"
@@ -123,4 +68,20 @@ func (p *ProxyHandler) rewritePath(originalPath string) string {
 		path = "/" + path
 	}
 	return containerPath + path
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.Index(xff, ","); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if ra := r.RemoteAddr; ra != "" {
+		if i := strings.LastIndex(ra, ":"); i >= 0 {
+			return ra[:i]
+		}
+		return ra
+	}
+	return ""
 }

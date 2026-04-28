@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+// SiteService — production site build triggers and status queries.
+
+package hulation.v1.site;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/site;sitespec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service SiteService {
+  rpc TriggerBuild(TriggerBuildRequest) returns (TriggerBuildResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/site/{server_id}/build"
+      body: "*"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.trigger"] };
+  }
+
+  rpc GetBuildStatus(GetBuildStatusRequest) returns (GetBuildStatusResponse) {
+    option (google.api.http) = { get: "/api/v1/site/builds/{build_id}" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.read"] };
+  }
+
+  rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse) {
+    option (google.api.http) = { get: "/api/v1/site/{server_id}/builds" };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.build.list"] };
+  }
+}
+
+// BuildInfo captures the state of a single site build.
+message BuildInfo {
+  string build_id = 1;
+  string server_id = 2;
+  // status: queued, running, complete, failed, cancelled
+  string status = 3;
+  // git commit SHA being built
+  string commit = 4;
+  // branch being built
+  string branch = 5;
+  // build log or error tail (truncated).
+  string log_excerpt = 6;
+  google.protobuf.Timestamp queued_at = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp completed_at = 9;
+  // exit_code of the build process (zero when ok, populated only on terminal states).
+  int32 exit_code = 10;
+}
+
+message TriggerBuildRequest {
+  string server_id = 1;
+  // branch to build (empty uses server's default).
+  string branch = 2;
+  // commit to build (empty uses HEAD of branch).
+  string commit = 3;
+}
+
+message TriggerBuildResponse {
+  BuildInfo build = 1;
+}
+
+message GetBuildStatusRequest {
+  // server_id is required for permission scoping — resolved on the server
+  // by looking up the build's owning server.
+  string server_id = 1;
+  string build_id = 2;
+}
+
+message GetBuildStatusResponse {
+  BuildInfo build = 1;
+}
+
+message ListBuildsRequest {
+  string server_id = 1;
+  // limit results (0 → server default).
+  int32 limit = 2;
+}
+
+message ListBuildsResponse {
+  repeated BuildInfo builds = 1;
+}

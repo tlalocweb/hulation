@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+// MobileService — the compact, phone-sized projection of the
+// analytics surface. Endpoints deliberately return smaller payloads
+// than the web /summary + /timeseries endpoints: fewer fields,
+// bucketised to screen-sized timeseries (12 or 24 points), and with
+// device-registration helpers so the mobile app can opt into push
+// notifications.
+//
+// Versioned at `/api/mobile/v1/*` so future breaking changes can
+// ship as `v2` without disturbing installed apps.
+
+package hulation.v1.mobile;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile;mobilespec";
+
+import "google/api/annotations.proto";
+import "hula/auth/permission.proto";
+import "google/protobuf/timestamp.proto";
+
+service MobileService {
+  // RegisterDevice records an APNs / FCM token for the caller. The
+  // plaintext token is sealed in AES-GCM before persisting (see
+  // pkg/mobile/tokenbox). Idempotent: re-registering the same
+  // (platform, device_fingerprint) replaces the token.
+  rpc RegisterDevice(RegisterDeviceRequest) returns (Device) {
+    option (google.api.http) = {
+      post: "/api/mobile/v1/devices"
+      body: "*"
+    };
+    // Any authenticated user can register their own device.
+  }
+
+  rpc UnregisterDevice(UnregisterDeviceRequest) returns (UnregisterDeviceResponse) {
+    option (google.api.http) = {
+      delete: "/api/mobile/v1/devices/{device_id}"
+    };
+  }
+
+  // ListMyDevices — caller sees their own devices (no admin flag).
+  rpc ListMyDevices(ListMyDevicesRequest) returns (ListMyDevicesResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/devices"
+    };
+  }
+
+  // MobileSummary — compact KPI payload. Includes a 12-point
+  // sparkline so the app doesn't need a second round-trip for the
+  // dashboard card.
+  rpc MobileSummary(MobileSummaryRequest) returns (MobileSummaryResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/summary"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // MobileTimeseries — bucketised to 12 (hourly) or 24 (daily) points
+  // by default. Larger buckets → smaller payload; matches the
+  // phone's usable horizontal resolution.
+  rpc MobileTimeseries(MobileTimeseriesRequest) returns (MobileTimeseriesResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/timeseries"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+}
+
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_APNS        = 1;  // Apple Push Notification service (iOS)
+  PLATFORM_FCM         = 2;  // Firebase Cloud Messaging (Android)
+}
+
+message Device {
+  string id = 1;
+  string user_id = 2;
+  Platform platform = 3;
+  // Opaque client-generated string that uniquely identifies a
+  // physical device for re-registration idempotency.
+  string device_fingerprint = 4;
+  // Friendly label shown in the admin UI ("iPhone 14 Pro",
+  // "Pixel 7 work"). Optional.
+  string label = 5;
+  google.protobuf.Timestamp registered_at = 6;
+  google.protobuf.Timestamp last_seen_at = 7;
+  bool active = 8;  // false after dead-token unregister
+}
+
+message RegisterDeviceRequest {
+  Platform platform = 1;
+  // Raw push token — APNs device token (hex) or FCM registration
+  // token. The server encrypts before persisting.
+  string token = 2;
+  string device_fingerprint = 3;
+  string label = 4;
+}
+
+message UnregisterDeviceRequest {
+  string device_id = 1;
+}
+
+message UnregisterDeviceResponse {
+  bool ok = 1;
+}
+
+message ListMyDevicesRequest {}
+
+message ListMyDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message MobileSummaryRequest {
+  string server_id = 1;
+  // Window — accepts "24h" / "7d" / "30d". Defaults to "7d" when
+  // empty. Deliberately a preset rather than a from/to pair; the
+  // phone UI only exposes presets.
+  string preset = 2;
+}
+
+message MobileSummaryResponse {
+  int64 visitors = 1;
+  int64 pageviews = 2;
+  double bounce_rate = 3;
+  double avg_session_duration_seconds = 4;
+  // 12-point bucketised visitor sparkline — sized for a phone card.
+  repeated int64 sparkline_visitors = 5;
+}
+
+message MobileTimeseriesRequest {
+  string server_id = 1;
+  string preset = 2;
+  // Granularity: "hour" (→ 12 points) or "day" (→ 24 points).
+  // Defaults to the preset's natural grain.
+  string granularity = 3;
+}
+
+message MobileTimeseriesResponse {
+  // ts strings are RFC 3339 — keeps payload tiny compared to a
+  // nested Timestamp message.
+  repeated string ts = 1;
+  repeated int64 visitors = 2;
+  repeated int64 pageviews = 3;
+}

@@ -1,0 +1,32 @@
+# Hulation Docker build context exclusions
+# This file is copied to the build context root by build-docker.sh
+
+# Go toolchain and caches (large)
+hulation/.bin
+hulation/.gopath
+hulation/.cache
+hulation/.external
+
+# Git history (not needed for build)
+hulation/.git
+clickhouse/.git
+
+# IDE and editor files
+hulation/.vscode
+hulation/.idea
+hulation/.claude
+
+# Test and dev artifacts
+hulation/test
+hulation/builder-images
+hulation/*.sh
+hulation/.env
+hulation/.env.*
+
+# Frontend build artefacts. node_modules is regenerated inside the
+# ui-build stage from package.json + pnpm-lock.yaml; the build/
+# directory ships only via the Dockerfile COPY.
+hulation/web/analytics/node_modules
+hulation/web/analytics/.svelte-kit
+hulation/web/analytics/build
+hulation/web/analytics/dist

@@ -8,8 +8,46 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/visitorid"
 	"github.com/tlalocweb/hulation/utils"
 )
+
+// MintVisitor returns the visitor for this request, branching on
+// the per-server tracking_mode. In "cookieless" mode it skips the
+// cookie handshake entirely and derives a transient visitor id from
+// (per-server salt, day, IP, UA). In "cookie" mode it delegates to
+// GetOrSetVisitor which preserves the existing flow.
+//
+// Phase 4c.3.
+func MintVisitor(ctx RequestCtx, hostconf *config.Server, baton *VisitorCookiesBaton) (visitor *model.Visitor, newvisitor bool, err error) {
+	if hostconf == nil {
+		err = &ResponseError{StatusCode: 500, RootCause: fmt.Errorf("hostconf is nil")}
+		return
+	}
+	mode := hostconf.TrackingMode
+	if mode == "cookieless" {
+		// Derived id, no persistent visitor row.
+		salt, sErr := hulabolt.GetOrCreateCookielessSalt(hostconf.ID)
+		if sErr != nil {
+			log.Errorf("cookieless: GetOrCreateCookielessSalt(%s): %s", hostconf.ID, sErr.Error())
+			err = &ResponseError{StatusCode: 500, RootCause: sErr}
+			return
+		}
+		id, dErr := visitorid.DeriveNow(salt, ctx.IP(), ctx.Header("User-Agent"))
+		if dErr != nil {
+			err = &ResponseError{StatusCode: 500, RootCause: dErr}
+			return
+		}
+		visitor = model.NewVisitor()
+		visitor.ID = id
+		newvisitor = true
+		// No baton fill — there are no cookies in cookieless mode.
+		return
+	}
+	// Default: cookie path.
+	return GetOrSetVisitor(ctx, hostconf, baton)
+}
 
 // GetHostConfig resolves the server configuration for the current request
 // by examining the Host header, query params, and cached locals.
@@ -46,6 +84,11 @@ func GetHostConfig(ctx RequestCtx) (hostconf *config.Server, host string, httper
 	}
 	if hostconf == nil {
 		host = ctx.Header("Host")
+		// HTTP/2 uses the :authority pseudo-header which Go puts in r.Host,
+		// not in the Header map. Fall back to Hostname() for H2 requests.
+		if len(host) == 0 {
+			host = ctx.Hostname()
+		}
 		log.Debugf("GetHostConfig: host: %s", host)
 		hostonly = utils.GetHostOnlyFromHostPort(host)
 		hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
@@ -56,7 +99,7 @@ func GetHostConfig(ctx RequestCtx) (hostconf *config.Server, host string, httper
 			host = hostonly
 		}
 	} else {
-		log.Errorf("GetHostConfig: Unknown host: %s", host)
+		log.Securityf("GetHostConfig: unknown host %q from %s", host, ctx.IP())
 		httperror = 404
 		err = fmt.Errorf("unknown host: %s", host)
 		return

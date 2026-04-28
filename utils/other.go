@@ -199,7 +199,6 @@ func GenerateHulaNetworkPassHash(password string) (hash string) {
 func GenerateHulaHashFromPlaintextPass(password string) (argonhash string, stringsum string, err error) {
 	// we never actually should keep or know the real password - so first we hash it using sha256
 	stringsum = GenerateHulaNetworkPassHash(password)
-	fmt.Printf("sha256: %s\n", stringsum)
 	// then we hash it using argon2
 	argonhash, err = Argon2GenerateFromSecretDefaults(stringsum)
 	return

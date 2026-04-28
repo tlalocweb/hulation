@@ -3,7 +3,18 @@
 # Display trace of commands executed
 set -x
 
-# Function to load versions from external-versions.env
+# Function to extract Go version from go.mod (the authoritative source)
+get_go_version_from_mod() {
+    local gomod="${REPO_DIR}/go.mod"
+    if [ ! -f "${gomod}" ]; then
+        echo ""
+        return
+    fi
+    # Parse "go X.Y.Z" directive from go.mod
+    grep -m1 '^go ' "${gomod}" | awk '{print $2}'
+}
+
+# Function to load versions from external-versions.env, with go.mod as source of truth for Go
 load_versions() {
     local versions_file="${REPO_DIR}/external-versions.env"
     if [ ! -f "${versions_file}" ]; then
@@ -17,9 +28,22 @@ load_versions() {
     # Source the versions file
     source "${versions_file}"
 
+    # Use go.mod as the authoritative source for the Go version
+    local GOMOD_VERSION
+    GOMOD_VERSION=$(get_go_version_from_mod)
+    if [ -n "${GOMOD_VERSION}" ]; then
+        if [ "${GO_VERSION}" != "${GOMOD_VERSION}" ]; then
+            echo "Go version in external-versions.env (${GO_VERSION}) differs from go.mod (${GOMOD_VERSION})"
+            echo "Using go.mod version: ${GOMOD_VERSION}"
+            GO_VERSION="${GOMOD_VERSION}"
+            # Update external-versions.env to stay in sync
+            sed -i "s/^GO_VERSION=.*/GO_VERSION=${GOMOD_VERSION}/" "${versions_file}"
+        fi
+    fi
+
     # Validate required versions are set
     if [ -z "${GO_VERSION}" ]; then
-        echo "Missing required GO_VERSION in external-versions.env"
+        echo "Missing Go version — not found in go.mod or external-versions.env"
         exit 1
     fi
 }
@@ -545,13 +569,23 @@ REPO_DIR=${REPO_DIR:-"$(get_script_path)"}
 BIN_DIR=${BIN_DIR:-"${REPO_DIR}/.bin"}
 GOROOT=${GOROOT:-"${BIN_DIR}/go"}
 
-# Add local bin directory and Go to PATH
-export PATH="${BIN_DIR}:${GOROOT}/bin:${PATH}"
+# Add local bin directory and Go to PATH (deduplicate to avoid growing PATH on re-source)
+case ":${PATH}:" in
+    *":${GOROOT}/bin:"*) ;;
+    *) export PATH="${GOROOT}/bin:${PATH}" ;;
+esac
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*) ;;
+    *) export PATH="${BIN_DIR}:${PATH}" ;;
+esac
 
-# Set Go environment variables
+# Go environment variables
 export GOROOT="${GOROOT}"
 export GOPATH="${REPO_DIR}/.gopath"
 export GOBIN="${BIN_DIR}"
+export GOCACHE="${REPO_DIR}/.cache/go-build"
+export GOMODCACHE="${GOPATH}/pkg/mod"
+export GOTOOLDIR="${GOROOT}/pkg/tool/$(go env GOOS 2>/dev/null || echo linux)_$(go env GOARCH 2>/dev/null || echo amd64)"
 
 # CGO is needed for ClickHouse driver
 export CGO_ENABLED=1
@@ -560,11 +594,13 @@ export CGO_ENABLED=1
 export HULATION_REPO="${REPO_DIR}"
 
 echo "Hulation dev environment configured"
-echo "  GOROOT:  ${GOROOT}"
-echo "  GOPATH:  ${GOPATH}"
-echo "  GOBIN:   ${GOBIN}"
-echo "  BIN_DIR: ${BIN_DIR}"
-echo "  Go:      $(go version 2>/dev/null || echo 'not found')"
+echo "  GOROOT:      ${GOROOT}"
+echo "  GOPATH:      ${GOPATH}"
+echo "  GOBIN:       ${GOBIN}"
+echo "  GOCACHE:     ${GOCACHE}"
+echo "  GOMODCACHE:  ${GOMODCACHE}"
+echo "  BIN_DIR:     ${BIN_DIR}"
+echo "  Go:          $(go version 2>/dev/null || echo 'not installed — run setup-dev.sh')"
 ENVEOF
 
     chmod +x "${ENV_SCRIPT}"

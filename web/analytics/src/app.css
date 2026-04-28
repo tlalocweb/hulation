@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* shadcn-style CSS-variable theme.
+ * Light + dark mode swap at :root / :root.dark.
+ * Color values are Okabe-Ito adjacent — color-blind-safe.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --primary: 205 100% 30%;       /* Okabe-Ito "blue" */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 16% 93%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 16% 93%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 36 100% 48%;         /* Okabe-Ito "orange" */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 87%;
+    --input: 214 20% 87%;
+    --ring: 205 100% 30%;
+  }
+
+  :root.dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+
+    --primary: 200 100% 60%;
+    --primary-foreground: 222 47% 8%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 16% 65%;
+
+    --accent: 36 100% 55%;
+    --accent-foreground: 222 47% 8%;
+
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 210 40% 96%;
+
+    --border: 217 33% 22%;
+    --input: 217 33% 22%;
+    --ring: 200 100% 60%;
+  }
+
+  * {
+    @apply border-border;
+  }
+}

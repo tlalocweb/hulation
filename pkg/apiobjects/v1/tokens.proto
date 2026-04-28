@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+// Token storage types. Adapted from izcr's pkg/apiobjects/v1/tokens.proto.
+
+package hulation.v1.apiobjects;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apiobjects/v1;apiobjects";
+
+// StoredToken represents a JWT that has been stored in the database for a
+// user session.
+message StoredToken {
+    int64 created = 1;
+    int64 expires = 2;
+    string jwt = 3;
+}
+
+// StoredTokenKey is a signing key used to produce JWTs. When a key expires,
+// tokens signed with it are invalidated.
+message StoredTokenKey {
+    int64 created = 1;
+    int64 expires = 2;
+    string key = 3;
+}
+
+// Session represents an authenticated user session.
+message Session {
+    int64 created = 1;
+    int64 expires = 2;
+    // Token ID from the JWT "t" claim. One token per session for now.
+    string token_id = 3;
+    string session_id = 4;
+    string user_id = 5;
+}

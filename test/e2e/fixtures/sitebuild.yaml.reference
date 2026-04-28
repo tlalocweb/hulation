@@ -1,0 +1,24 @@
+# This file MUST be present at `.hula/sitebuild.yaml` in the
+# github.com/tlalocweb/tlaloc-hula-test-site repo for the e2e tests to work.
+#
+# Copy this file to .hula/sitebuild.yaml in the test site repo and commit/push.
+#
+# It defines both a production profile (ephemeral build, tarballed out) and a
+# staging profile (long-lived container, serves directly from a volume mount).
+
+defs:
+  WORKDIR: /builder
+
+configs:
+  production:
+    commands: |
+      WORKDIR {{WORKDIR}}
+      HUGO --minify
+      FINALIZE {{WORKDIR}}/site/public
+
+  staging:
+    servedir: "{{WORKDIR}}/site/public"
+    build_command: |
+      HUGO
+    commands: |
+      WORKDIR {{WORKDIR}}

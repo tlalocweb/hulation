@@ -32,7 +32,9 @@ var tagBlockFilter uint64
 
 func init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.TimeOnly, NoColor: false}
+	// Logs go to stderr so stdout is reserved for command output
+	// (e.g. hulactl generatehash → bare hash, scripts can pipe).
+	output := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly, NoColor: false}
 	log = zerolog.New(output).With().Timestamp().Logger()
 
 	tagRegistry = make(map[string]uint64)
@@ -45,11 +47,21 @@ func MaskSecret(s string) string {
 }
 
 func UseJsonLogs() {
-	log = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	log = zerolog.New(os.Stderr).With().Timestamp().Logger()
 }
 
 func SetLevel(level zerolog.Level) {
 	log = log.Level(level)
+	// Tagged loggers capture `log` by value at package-init time
+	// (most of them are package-level vars created before
+	// app.ParseFlags() runs), so reassigning `log` above does NOT
+	// propagate to existing tagged loggers. zerolog.SetGlobalLevel
+	// acts as a floor on every logger instance regardless of when
+	// it was constructed — events below this level are dropped at
+	// emit time. This is what actually silences DBG output in
+	// production (without it, every var-init tagged logger keeps
+	// emitting at zerolog's default DebugLevel).
+	zerolog.SetGlobalLevel(level)
 }
 
 func GetLogger() *zerolog.Logger {
@@ -96,6 +108,10 @@ func SetLevelByString(level string) (err error) {
 
 func SetDebugVerbosity(verbosity int) {
 	debugVerbosity = verbosity
+}
+
+func IsVerbose() bool {
+	return debugVerbosity > 0
 }
 
 func SetTagFilter(tag uint64) {
@@ -248,6 +264,16 @@ func (s *TaggedLogger) Infof(str string, args ...interface{}) {
 		if s.tag&tagBlockFilter == 0 {
 			caller := s.CodeCallString()
 			s.logger.Info().Msgf(s.prefix+caller+str, args...)
+		}
+	}
+}
+
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+func (s *TaggedLogger) Securityf(str string, args ...interface{}) {
+	if tagFilter > 0 && s.tag&tagFilter > 0 || tagFilter == 0 {
+		if s.tag&tagBlockFilter == 0 {
+			caller := s.CodeCallString()
+			s.logger.Info().Msgf("SECURITY: "+s.prefix+caller+str, args...)
 		}
 	}
 }
@@ -407,6 +433,14 @@ func (s *Sublogger) Infof(str string, args ...interface{}) {
 	}
 }
 
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+func (s *Sublogger) Securityf(str string, args ...interface{}) {
+	if tagFilter == 0 {
+		caller := s.CodeCallString()
+		s.logger.Info().Msgf("SECURITY: "+s.prefix+caller+str, args...)
+	}
+}
+
 func (s *Sublogger) Warnf(str string, args ...interface{}) {
 	if tagFilter == 0 {
 		caller := s.CodeCallString()
@@ -480,6 +514,15 @@ func Printf(str string, args ...interface{}) {
 func Infof(str string, args ...interface{}) {
 	if tagFilter == 0 {
 		log.Info().Msgf(str, args...)
+	}
+}
+
+// Securityf logs a security-relevant event at Info level with a "SECURITY: " prefix.
+// Use for scanner probes, unknown hosts, blocked requests, and similar events that
+// are not errors but are operationally significant.
+func Securityf(str string, args ...interface{}) {
+	if tagFilter == 0 {
+		log.Info().Msgf("SECURITY: "+str, args...)
 	}
 }
 
