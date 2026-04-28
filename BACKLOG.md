@@ -4,55 +4,92 @@ Tracked items that aren't tied to an in-flight phase plan. Newest at top.
 
 ---
 
-## E2e harness: bootstrap OPAQUE admin record in setup.sh
+## Admin-RPC e2e suites send wrong JSON body shape
 
-**Filed:** 2026-04-28 — surfaced verifying Phase 4c suites end-to-end.
+**Filed:** 2026-04-28 — surfaced after the OPAQUE-bootstrap and
+pipefail-grep fixes unblocked the previously-cascaded suites.
 
-**Symptom.** `./test/e2e/run.sh` brings up hula and immediately runs
-suite 01 (`01-auth.sh`) which calls `hulactl auth`. The call fails:
-```
-HTTP 404: no OPAQUE record for this user — run set-admin-password
-(or the deploy bootstrap script) first
-```
-This cascades: suites 23–34 then all fail with "no admin token from
-hulactl.yaml — did suite 01 run?". Net effect on a clean run today is
-~30 false failures even when the underlying functionality is fine.
+**Symptom.** With the cascade gone, suites 24/25/26/31 hit fresh
+asserts and fail. Pattern is identical: Create returns an `id`,
+the followup Get/List can't find the entity by name. Looking at
+the actual response, the entity *was* created — but with all
+body fields blank (`"name":""`, `"kind":"GOAL_KIND_UNSPECIFIED"`,
+etc).
 
-**Root cause.** When OPAQUE landed (Phase 5a era — `OPAQUE_PLAN.md`),
-the auth flow shifted from "argon2 hash in YAML is enough" to "server
-needs an OPAQUE record in Bolt". The e2e setup still only renders the
-argon2 hash into `hula-config.yaml.tmpl` — it never registers the
-matching OPAQUE record, so the very first `hulactl auth` call has
-nothing to talk to.
+**Root cause.** The proto annotates `body: "goal"` /
+`body: "alert"` / `body: "report"` / `body: "prefs"` — meaning
+the JSON body is the inner field directly, not the request
+envelope. The e2e suites POST `{"goal":{...}}` (the envelope
+shape), so grpc-gateway sets `req.Goal = &Goal{}` (empty) and
+the inner JSON is silently dropped. Verified directly: posting
+`{"name":"x", "kind":"GOAL_KIND_URL_VISIT"}` to
+`/api/v1/goals/{server_id}` round-trips cleanly through
+Create→Get→List.
 
-**Fix sketch.** In `test/e2e/lib/setup.sh`, between the "wait for
-/hulastatus" step and the suite loop, add:
-
+**Fix sketch.** Drop the envelope in the curl payloads:
 ```bash
-# Phase 5a: register the OPAQUE record for the rendered admin
-# password. Without this, hulactl auth (suite 01) immediately
-# 404s and every admin-RPC suite cascades.
-dc run --rm -T \
-    -e HULACTL_PASSWORD="$ADMIN_PASS" \
-    -e HULACTL_NEW_PASSWORD="$ADMIN_PASS" \
-    --entrypoint /usr/local/bin/hulactl hulactl-runner \
-    --dangerous --no-opaque-current set-password \
-    --username admin --provider admin
+# before
+--data "{\"goal\":{\"name\":\"$N\",\"kind\":\"...\"}}"
+# after
+--data "{\"name\":\"$N\",\"kind\":\"...\"}"
 ```
 
-(Exact flag set depends on whether the bootstrap path needs the
-"no current password" escape hatch — `set-password` may already
-have a "no prior record" mode. Verify by reading the
-`CMD_SETPASSWORD` case in `model/tools/hulactl/main.go`.)
+Apply to:
+- `test/e2e/suites/24-reports.sh` (CreateReport / UpdateReport)
+- `test/e2e/suites/25-goals.sh`   (CreateGoal / UpdateGoal / TestGoal)
+- `test/e2e/suites/26-alerts.sh`  (CreateAlert / UpdateAlert)
+- `test/e2e/suites/31-notify-prefs.sh` (SetNotificationPrefs)
 
-**Verification.** After the fix, `./test/e2e/run.sh` (no args) should
-go from 49 pass / 30 fail (~62%) to roughly 79 pass / 0 fail —
-suites 35/36/37 are already green, the regression was entirely
-upstream cascade.
+**Verification.** After the fix the run should land at roughly
+194 pass / 1 fail (only suite 17's ClickHouse-timing assert left,
+tracked separately).
 
-**Not 4c-blocking** — Phase 4c shipped against this state; the three
-new 4c suites pass independently because they don't need an admin
-token.
+**Not HA-related.** Verified against the Stage-2 RaftStorage —
+direct Storage round-trip works (read returns what was written).
+The bug is purely in how the test harness shapes its JSON.
+
+---
+
+## E2e suite 17: analytics-foundation event ingest timing
+
+**Filed:** 2026-04-28 — surfaced in the same post-cascade run.
+
+**Symptom.** Suite 17 GETs `/v/hula_hello.html`, sleeps 3s, and
+queries ClickHouse for the most recent event row. With the fresh
+testsite-seed virtual server the row hasn't landed yet, so the
+suite trips:
+```
+FAIL: analytics enrichment: no events row returned (ClickHouse reachable?)
+```
+
+**Root cause.** Hula's bounce-and-write cycle plus ClickHouse
+async commit can take longer than 3s on a cold system.
+
+**Fix sketch.** Either (a) replace the fixed sleep with a poll
+loop (up to ~30s) that waits for the row, OR (b) seed an event
+synchronously via `/v/hello` POST before issuing the query.
+
+**Not HA-related.** The Storage seam doesn't sit in the
+analytics ingest path — events go straight to ClickHouse.
+
+---
+
+## ✅ FIXED: E2e harness: bootstrap OPAQUE admin record in setup.sh
+
+**Filed:** 2026-04-28. **Closed:** 2026-04-28 (same day).
+
+`test/e2e/lib/setup.sh` now runs `hulactl set-password
+--username admin --provider admin` between the "wait for
+/hulastatus" step and the suites, with `HULACTL_NEW_PASSWORD`
+sourced from the rendered admin password. Empty stdin lines
+handle the readline prompt for the (absent) current password —
+the server's bootstrap path accepts an empty current password
+when no record exists yet for the configured admin user.
+
+Result: cascaded ~28 false failures across suites 01/04/16/21/
+23–34 are gone. Run went from 49 pass / 30 fail to 185 pass /
+10 fail (the 10 remaining are the body-shape and clickhouse-
+timing items above, unrelated to OPAQUE).
 
 ---
 

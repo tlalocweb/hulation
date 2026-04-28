@@ -18,8 +18,14 @@
 # under the new layout.
 
 # --- 1. Boot log shows Raft storage online ---------------------
+#
+# Buffer to a variable rather than piping `dc logs` into
+# `grep -q`. Under `set -o pipefail` the short-circuit in
+# grep -q causes dc to receive SIGPIPE and exit 255, which
+# pipefail then surfaces as a pipeline failure even on a match.
 
-if dc logs hula 2>&1 | grep -qE 'Raft storage online'; then
+hula_logs=$(dc logs hula 2>&1 || true)
+if echo "$hula_logs" | grep -qE 'Raft storage online'; then
     pass "boot log: Raft storage online"
 else
     fail "boot log: 'Raft storage online' not found"

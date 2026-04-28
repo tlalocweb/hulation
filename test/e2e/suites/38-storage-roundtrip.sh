@@ -13,15 +13,19 @@
 # Stage 1 emitted "LocalStorage opened ..."; Stage 2 emits
 # "Raft storage online (node=…, data_dir=…, mode=solo)". Either
 # is acceptable while the rollout is in flight.
+#
+# We buffer dc logs into a variable rather than piping into
+# `grep -q` directly. Under `set -o pipefail` the short-circuit
+# in grep -q causes dc to receive SIGPIPE and exit 255, which
+# pipefail then surfaces as a pipeline failure even on a match.
 
-if dc logs hula 2>&1 | grep -qE 'Raft storage online|storage:.*opened|Opening BoltDB at:|local storage'; then
+hula_logs=$(dc logs hula 2>&1 || true)
+if echo "$hula_logs" | grep -qE 'Raft storage online|storage:.*opened|Opening BoltDB at:|local storage'; then
     pass "boot log: storage initialised"
+elif echo "$hula_logs" | grep -qE 'storage unavailable|Bolt store unavailable'; then
+    fail "boot log: storage failed to initialise"
 else
-    if dc logs hula 2>&1 | grep -q 'storage unavailable\|Bolt store unavailable'; then
-        fail "boot log: storage failed to initialise"
-    else
-        pass "boot log: no storage failure detected (storage initialised quietly)"
-    fi
+    pass "boot log: no storage failure detected (storage initialised quietly)"
 fi
 
 # --- 2. hula process is healthy ----------------------------------
