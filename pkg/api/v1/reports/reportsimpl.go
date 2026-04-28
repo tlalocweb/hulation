@@ -14,6 +14,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	"github.com/tlalocweb/hulation/pkg/reports/render"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -196,7 +197,7 @@ func (s *Server) CreateReport(ctx context.Context, req *reportsspec.CreateReport
 		r.ID = newID()
 	}
 	r.CreatedAt = time.Time{}
-	saved, err := hulabolt.PutReport(r)
+	saved, err := hulabolt.PutReport(ctx, storage.Global(), r)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create report: %s", err)
 	}
@@ -207,7 +208,7 @@ func (s *Server) UpdateReport(ctx context.Context, req *reportsspec.UpdateReport
 	if req == nil || req.GetServerId() == "" || req.GetReportId() == "" || req.GetReport() == nil {
 		return nil, status.Error(codes.InvalidArgument, "server_id, report_id, report required")
 	}
-	existing, err := hulabolt.GetReport(req.GetReportId())
+	existing, err := hulabolt.GetReport(ctx, storage.Global(), req.GetReportId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get report: %s", err)
 	}
@@ -217,7 +218,7 @@ func (s *Server) UpdateReport(ctx context.Context, req *reportsspec.UpdateReport
 	r := protoToStored(req.GetReport())
 	r.ID = req.GetReportId()
 	r.ServerID = req.GetServerId()
-	saved, err := hulabolt.PutReport(r)
+	saved, err := hulabolt.PutReport(ctx, storage.Global(), r)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update report: %s", err)
 	}
@@ -228,7 +229,7 @@ func (s *Server) DeleteReport(ctx context.Context, req *reportsspec.DeleteReport
 	if req == nil || req.GetReportId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "report_id required")
 	}
-	if err := hulabolt.DeleteReport(req.GetReportId()); err != nil {
+	if err := hulabolt.DeleteReport(ctx, storage.Global(), req.GetReportId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete report: %s", err)
 	}
 	return &reportsspec.DeleteReportResponse{Ok: true}, nil
@@ -239,7 +240,7 @@ func (s *Server) ListReports(ctx context.Context, req *reportsspec.ListReportsRe
 	if req != nil {
 		serverID = req.GetServerId()
 	}
-	rows, err := hulabolt.ListReports(serverID)
+	rows, err := hulabolt.ListReports(ctx, storage.Global(), serverID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list reports: %s", err)
 	}
@@ -254,7 +255,7 @@ func (s *Server) GetReport(ctx context.Context, req *reportsspec.GetReportReques
 	if req == nil || req.GetReportId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "report_id required")
 	}
-	r, err := hulabolt.GetReport(req.GetReportId())
+	r, err := hulabolt.GetReport(ctx, storage.Global(), req.GetReportId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get report: %s", err)
 	}
@@ -272,7 +273,7 @@ func (s *Server) PreviewReport(ctx context.Context, req *reportsspec.PreviewRepo
 	if req == nil || req.GetReportId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "report_id required")
 	}
-	r, err := hulabolt.GetReport(req.GetReportId())
+	r, err := hulabolt.GetReport(ctx, storage.Global(), req.GetReportId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get report: %s", err)
 	}
@@ -308,7 +309,7 @@ func (s *Server) SendNow(ctx context.Context, req *reportsspec.SendNowRequest) (
 	if req == nil || req.GetReportId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "report_id required")
 	}
-	r, err := hulabolt.GetReport(req.GetReportId())
+	r, err := hulabolt.GetReport(ctx, storage.Global(), req.GetReportId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get report: %s", err)
 	}
@@ -332,7 +333,7 @@ func (s *Server) ListRuns(ctx context.Context, req *reportsspec.ListRunsRequest)
 	if req == nil || req.GetReportId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "report_id required")
 	}
-	r, err := hulabolt.GetReport(req.GetReportId())
+	r, err := hulabolt.GetReport(ctx, storage.Global(), req.GetReportId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get report: %s", err)
 	}
@@ -343,7 +344,7 @@ func (s *Server) ListRuns(ctx context.Context, req *reportsspec.ListRunsRequest)
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := hulabolt.ListReportRuns(req.GetReportId(), limit)
+	rows, err := hulabolt.ListReportRuns(ctx, storage.Global(), req.GetReportId(), limit)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list runs: %s", err)
 	}

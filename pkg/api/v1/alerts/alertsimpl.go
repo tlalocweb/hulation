@@ -15,6 +15,7 @@ import (
 
 	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -157,7 +158,7 @@ func (s *Server) CreateAlert(ctx context.Context, req *alertsspec.CreateAlertReq
 		a.ID = newID()
 	}
 	a.CreatedAt = time.Time{}
-	saved, err := hulabolt.PutAlert(a)
+	saved, err := hulabolt.PutAlert(ctx, storage.Global(), a)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create alert: %s", err)
 	}
@@ -168,7 +169,7 @@ func (s *Server) UpdateAlert(ctx context.Context, req *alertsspec.UpdateAlertReq
 	if req == nil || req.GetServerId() == "" || req.GetAlertId() == "" || req.GetAlert() == nil {
 		return nil, status.Error(codes.InvalidArgument, "server_id, alert_id, and alert required")
 	}
-	existing, err := hulabolt.GetAlert(req.GetAlertId())
+	existing, err := hulabolt.GetAlert(ctx, storage.Global(), req.GetAlertId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get alert: %s", err)
 	}
@@ -179,7 +180,7 @@ func (s *Server) UpdateAlert(ctx context.Context, req *alertsspec.UpdateAlertReq
 	a.ID = req.GetAlertId()
 	a.ServerID = req.GetServerId()
 	a.LastFiredAt = existing.LastFiredAt // preserve
-	saved, err := hulabolt.PutAlert(a)
+	saved, err := hulabolt.PutAlert(ctx, storage.Global(), a)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update alert: %s", err)
 	}
@@ -190,7 +191,7 @@ func (s *Server) DeleteAlert(ctx context.Context, req *alertsspec.DeleteAlertReq
 	if req == nil || req.GetAlertId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "alert_id required")
 	}
-	if err := hulabolt.DeleteAlert(req.GetAlertId()); err != nil {
+	if err := hulabolt.DeleteAlert(ctx, storage.Global(), req.GetAlertId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete alert: %s", err)
 	}
 	return &alertsspec.DeleteAlertResponse{Ok: true}, nil
@@ -201,7 +202,7 @@ func (s *Server) ListAlerts(ctx context.Context, req *alertsspec.ListAlertsReque
 	if req != nil {
 		serverID = req.GetServerId()
 	}
-	rows, err := hulabolt.ListAlerts(serverID)
+	rows, err := hulabolt.ListAlerts(ctx, storage.Global(), serverID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list alerts: %s", err)
 	}
@@ -216,7 +217,7 @@ func (s *Server) GetAlert(ctx context.Context, req *alertsspec.GetAlertRequest) 
 	if req == nil || req.GetAlertId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "alert_id required")
 	}
-	a, err := hulabolt.GetAlert(req.GetAlertId())
+	a, err := hulabolt.GetAlert(ctx, storage.Global(), req.GetAlertId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get alert: %s", err)
 	}
@@ -234,7 +235,7 @@ func (s *Server) ListAlertEvents(ctx context.Context, req *alertsspec.ListAlertE
 	if limit <= 0 {
 		limit = 25
 	}
-	rows, err := hulabolt.ListAlertEvents(req.GetAlertId(), limit)
+	rows, err := hulabolt.ListAlertEvents(ctx, storage.Global(), req.GetAlertId(), limit)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list alert events: %s", err)
 	}

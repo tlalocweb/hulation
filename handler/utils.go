@@ -1,6 +1,7 @@
 package handler
 
 import (
+	stdctx "context"
 	"fmt"
 	"net/url"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	"github.com/tlalocweb/hulation/pkg/visitorid"
 	"github.com/tlalocweb/hulation/utils"
 )
@@ -28,7 +30,12 @@ func MintVisitor(ctx RequestCtx, hostconf *config.Server, baton *VisitorCookiesB
 	mode := hostconf.TrackingMode
 	if mode == "cookieless" {
 		// Derived id, no persistent visitor row.
-		salt, sErr := hulabolt.GetOrCreateCookielessSalt(hostconf.ID)
+		s := storage.Global()
+		if s == nil {
+			err = &ResponseError{StatusCode: 500, RootCause: fmt.Errorf("storage not initialised")}
+			return
+		}
+		salt, sErr := hulabolt.GetOrCreateCookielessSalt(stdctx.Background(), s, hostconf.ID)
 		if sErr != nil {
 			log.Errorf("cookieless: GetOrCreateCookielessSalt(%s): %s", hostconf.ID, sErr.Error())
 			err = &ResponseError{StatusCode: 500, RootCause: sErr}

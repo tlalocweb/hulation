@@ -17,11 +17,12 @@ package bolt
 //   "default_optout"  — opt_out mode; everything was processed.
 
 import (
+	"context"
 	"encoding/json"
-	"strings"
+	"sort"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // StoredConsent is one consent-log row.
@@ -34,14 +35,20 @@ type StoredConsent struct {
 	Source    string    `json:"source"`
 }
 
-// PutConsent appends a row to the consent_log bucket. Key shape is
-// "<server_id>|<visitor_id>|<RFC3339Nano>" — ranged scans by visitor
-// don't need a join, and sorting is implicit (server, visitor, time).
-func PutConsent(c StoredConsent) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
+// consentKey builds the full Storage key for a consent row.
+// Layout: "consent_log/<server_id>|<visitor_id>|<ts>".
+func consentKey(serverID, visitorID, ts string) string {
+	return "consent_log/" + serverID + "|" + visitorID + "|" + ts
+}
+
+// consentVisitorPrefix is the Storage prefix that scopes a List/Keys
+// scan to one visitor on one server.
+func consentVisitorPrefix(serverID, visitorID string) string {
+	return "consent_log/" + serverID + "|" + visitorID + "|"
+}
+
+// PutConsent appends a row to the consent_log bucket.
+func PutConsent(ctx context.Context, s storage.Storage, c StoredConsent) error {
 	if c.At.IsZero() {
 		c.At = time.Now().UTC()
 	}
@@ -49,60 +56,50 @@ func PutConsent(c StoredConsent) error {
 	if err != nil {
 		return err
 	}
-	key := c.ServerID + "|" + c.VisitorID + "|" + c.At.UTC().Format(time.RFC3339Nano)
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketConsentLog)).Put([]byte(key), data)
-	})
+	key := consentKey(c.ServerID, c.VisitorID, c.At.UTC().Format(time.RFC3339Nano))
+	return s.Put(ctx, key, data)
 }
 
 // ListConsentForVisitor returns every recorded consent state for the
 // given (server_id, visitor_id), oldest-first. Bounded scan; consent
 // log isn't a high-volume bucket so unpaged lookup is fine.
-func ListConsentForVisitor(serverID, visitorID string) ([]StoredConsent, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
+func ListConsentForVisitor(ctx context.Context, s storage.Storage, serverID, visitorID string) ([]StoredConsent, error) {
+	rows, err := s.List(ctx, consentVisitorPrefix(serverID, visitorID))
+	if err != nil {
+		return nil, err
 	}
-	prefix := []byte(serverID + "|" + visitorID + "|")
-	var out []StoredConsent
-	err := db.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(BucketConsentLog)).Cursor()
-		for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
-			var sc StoredConsent
-			if err := json.Unmarshal(v, &sc); err != nil {
-				continue
-			}
-			out = append(out, sc)
+	out := make([]StoredConsent, 0, len(rows))
+	// Sort by key (which sorts by timestamp because the timestamp
+	// is the trailing segment).
+	keys := make([]string, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		var sc StoredConsent
+		if err := json.Unmarshal(rows[k], &sc); err != nil {
+			continue
 		}
-		return nil
-	})
-	return out, err
+		out = append(out, sc)
+	}
+	return out, nil
 }
 
 // DeleteConsentForVisitor removes every row keyed by
 // (server_id, visitor_id). Used by ForgetVisitor; idempotent.
-func DeleteConsentForVisitor(serverID, visitorID string) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
+func DeleteConsentForVisitor(ctx context.Context, s storage.Storage, serverID, visitorID string) error {
+	keys, err := s.Keys(ctx, consentVisitorPrefix(serverID, visitorID))
+	if err != nil {
+		return err
 	}
-	prefix := []byte(serverID + "|" + visitorID + "|")
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketConsentLog))
-		c := b.Cursor()
-		var keysToDelete [][]byte
-		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
-			keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-		}
-		for _, k := range keysToDelete {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
-		}
+	if len(keys) == 0 {
 		return nil
-	})
+	}
+	ops := make([]storage.BatchOp, 0, len(keys))
+	for _, k := range keys {
+		ops = append(ops, storage.BatchOp{Op: storage.OpDelete, Key: k})
+	}
+	return s.Batch(ctx, ops)
 }
 
-func hasPrefix(b, prefix []byte) bool {
-	return strings.HasPrefix(string(b), string(prefix))
-}

@@ -17,6 +17,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	goalsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/goals"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -119,7 +120,7 @@ func (s *Server) CreateGoal(ctx context.Context, req *goalsspec.CreateGoalReques
 		g.ID = newID()
 	}
 	g.CreatedAt = time.Time{} // let the store set it
-	saved, err := hulabolt.PutGoal(g)
+	saved, err := hulabolt.PutGoal(ctx, storage.Global(), g)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create goal: %s", err)
 	}
@@ -130,7 +131,7 @@ func (s *Server) UpdateGoal(ctx context.Context, req *goalsspec.UpdateGoalReques
 	if req == nil || req.GetServerId() == "" || req.GetGoalId() == "" || req.GetGoal() == nil {
 		return nil, status.Error(codes.InvalidArgument, "server_id, goal_id, and goal required")
 	}
-	existing, err := hulabolt.GetGoal(req.GetGoalId())
+	existing, err := hulabolt.GetGoal(ctx, storage.Global(), req.GetGoalId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get goal: %s", err)
 	}
@@ -140,7 +141,7 @@ func (s *Server) UpdateGoal(ctx context.Context, req *goalsspec.UpdateGoalReques
 	g := protoToStored(req.GetGoal())
 	g.ID = req.GetGoalId()
 	g.ServerID = req.GetServerId()
-	saved, err := hulabolt.PutGoal(g)
+	saved, err := hulabolt.PutGoal(ctx, storage.Global(), g)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update goal: %s", err)
 	}
@@ -151,7 +152,7 @@ func (s *Server) DeleteGoal(ctx context.Context, req *goalsspec.DeleteGoalReques
 	if req == nil || req.GetGoalId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "goal_id required")
 	}
-	if err := hulabolt.DeleteGoal(req.GetGoalId()); err != nil {
+	if err := hulabolt.DeleteGoal(ctx, storage.Global(), req.GetGoalId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete goal: %s", err)
 	}
 	return &goalsspec.DeleteGoalResponse{Ok: true}, nil
@@ -162,7 +163,7 @@ func (s *Server) ListGoals(ctx context.Context, req *goalsspec.ListGoalsRequest)
 	if req != nil {
 		serverID = req.GetServerId()
 	}
-	rows, err := hulabolt.ListGoals(serverID)
+	rows, err := hulabolt.ListGoals(ctx, storage.Global(), serverID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list goals: %s", err)
 	}
@@ -177,7 +178,7 @@ func (s *Server) GetGoal(ctx context.Context, req *goalsspec.GetGoalRequest) (*g
 	if req == nil || req.GetGoalId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "goal_id required")
 	}
-	g, err := hulabolt.GetGoal(req.GetGoalId())
+	g, err := hulabolt.GetGoal(ctx, storage.Global(), req.GetGoalId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get goal: %s", err)
 	}

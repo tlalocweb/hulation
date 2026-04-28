@@ -30,6 +30,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 
 	"google.golang.org/grpc/codes"
@@ -98,7 +99,9 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 	// best-effort posture as the MV deletes — the legally-relevant
 	// erasure is the events DELETE; the consent log is a
 	// secondary record we'd rather not orphan.
-	_ = hulabolt.DeleteConsentForVisitor(req.GetServerId(), req.GetVisitorId())
+	if s := storage.Global(); s != nil {
+		_ = hulabolt.DeleteConsentForVisitor(ctx, s, req.GetServerId(), req.GetVisitorId())
+	}
 
 	// Phase 4c.2: fan out the right-to-be-forgotten to every
 	// configured forwarder. Adapters that don't implement deletion
@@ -130,8 +133,11 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 		At:          at,
 		RowsDeleted: rowsDeleted,
 	}
-	if err := hulabolt.PutForgetAudit(audit); err != nil {
-		// Non-fatal — the delete still happened. Log-and-continue.
+	if s := storage.Global(); s != nil {
+		if err := hulabolt.PutForgetAudit(ctx, s, audit); err != nil {
+			// Non-fatal — the delete still happened. Log-and-continue.
+			_ = err
+		}
 	}
 
 	return &analyticsspec.ForgetVisitorResponse{

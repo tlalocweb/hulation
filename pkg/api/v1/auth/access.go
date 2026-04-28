@@ -9,6 +9,7 @@ import (
 	"context"
 
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,7 +46,7 @@ func (s *Server) GrantServerAccess(ctx context.Context, req *authspec.GrantServe
 	if role == "" {
 		return nil, status.Error(codes.InvalidArgument, "role must be viewer or manager")
 	}
-	if err := hulabolt.GrantServerAccess(req.UserId, req.ServerId, role); err != nil {
+	if err := hulabolt.GrantServerAccess(ctx, storage.Global(), req.UserId, req.ServerId, role); err != nil {
 		return nil, status.Errorf(codes.Internal, "grant: %s", err)
 	}
 	return &authspec.GrantServerAccessResponse{
@@ -64,7 +65,7 @@ func (s *Server) RevokeServerAccess(ctx context.Context, req *authspec.RevokeSer
 	if req == nil || req.UserId == "" || req.ServerId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id and server_id required")
 	}
-	if err := hulabolt.RevokeServerAccess(req.UserId, req.ServerId); err != nil {
+	if err := hulabolt.RevokeServerAccess(ctx, storage.Global(), req.UserId, req.ServerId); err != nil {
 		return nil, status.Errorf(codes.Internal, "revoke: %s", err)
 	}
 	return &authspec.RevokeServerAccessResponse{Status: "ok"}, nil
@@ -76,7 +77,7 @@ func (s *Server) ListServerAccess(ctx context.Context, req *authspec.ListServerA
 	if req == nil {
 		req = &authspec.ListServerAccessRequest{}
 	}
-	rows, err := hulabolt.ListServerAccess(req.UserId, req.ServerId)
+	rows, err := hulabolt.ListServerAccess(ctx, storage.Global(), req.UserId, req.ServerId)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list server access: %s", err)
 	}

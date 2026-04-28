@@ -18,6 +18,7 @@ import (
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // analyticsACLLookup returns a function the analytics service can call
@@ -42,7 +43,7 @@ func analyticsACLLookup(cfg *config.Config) func(ctx context.Context) analyticsi
 		// Until a given user has been granted something via the admin
 		// UI or hulactl, they see no servers — by design, matches the
 		// "silent empty result" contract from Phase 1.
-		allowed, err := hulabolt.AllowedServerIDsForUser(claims.Subject)
+		allowed, err := hulabolt.AllowedServerIDsForUser(ctx, storage.Global(), claims.Subject)
 		if err != nil {
 			// Bolt unavailable or read error: log via the query builder
 			// (it degrades to an empty ACL) but don't leak details.

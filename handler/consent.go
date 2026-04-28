@@ -15,11 +15,13 @@ package handler
 //                                >  per-server default
 
 import (
+	"context"
 	"strings"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 const (
@@ -120,7 +122,11 @@ func resolveConsent(hostconf *config.Server, bodyConsent *ConsentState, gpcHeade
 // event row is the GDPR-relevant primary record; the consent log is
 // supplementary.
 func recordConsent(serverID, visitorID string, st ConsentState) {
-	err := hulabolt.PutConsent(hulabolt.StoredConsent{
+	s := storage.Global()
+	if s == nil {
+		return
+	}
+	err := hulabolt.PutConsent(context.Background(), s, hulabolt.StoredConsent{
 		ServerID:  serverID,
 		VisitorID: visitorID,
 		Analytics: st.Analytics,

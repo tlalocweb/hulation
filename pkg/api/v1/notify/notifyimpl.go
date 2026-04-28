@@ -10,6 +10,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/notifier"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -98,7 +99,7 @@ func (s *Server) GetNotificationPrefs(ctx context.Context, req *notifyspec.GetNo
 	if !isAdmin(ctx) && caller != req.GetUserId() {
 		return nil, status.Error(codes.PermissionDenied, "cannot read another user's prefs")
 	}
-	p, err := hulabolt.GetNotificationPrefs(req.GetUserId())
+	p, err := hulabolt.GetNotificationPrefs(ctx, storage.Global(), req.GetUserId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get prefs: %s", err)
 	}
@@ -115,7 +116,7 @@ func (s *Server) SetNotificationPrefs(ctx context.Context, req *notifyspec.SetNo
 	}
 	p := protoToStored(req.GetPrefs())
 	p.UserID = req.GetUserId() // URL wins over body
-	saved, err := hulabolt.PutNotificationPrefs(p)
+	saved, err := hulabolt.PutNotificationPrefs(ctx, storage.Global(), p)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "put prefs: %s", err)
 	}
@@ -123,7 +124,7 @@ func (s *Server) SetNotificationPrefs(ctx context.Context, req *notifyspec.SetNo
 }
 
 func (s *Server) ListNotificationPrefs(ctx context.Context, req *notifyspec.ListNotificationPrefsRequest) (*notifyspec.ListNotificationPrefsResponse, error) {
-	rows, err := hulabolt.ListNotificationPrefs()
+	rows, err := hulabolt.ListNotificationPrefs(ctx, storage.Global())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list prefs: %s", err)
 	}
@@ -142,7 +143,7 @@ func (s *Server) TestNotification(ctx context.Context, req *notifyspec.TestNotif
 	if req == nil || req.GetUserId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id required")
 	}
-	prefs, err := hulabolt.GetNotificationPrefs(req.GetUserId())
+	prefs, err := hulabolt.GetNotificationPrefs(ctx, storage.Global(), req.GetUserId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get prefs: %s", err)
 	}
@@ -160,7 +161,7 @@ func (s *Server) TestNotification(ctx context.Context, req *notifyspec.TestNotif
 		})
 	}
 	if prefs.PushEnabled {
-		devs, err := hulabolt.ListDevicesForUser(req.GetUserId())
+		devs, err := hulabolt.ListDevicesForUser(ctx, storage.Global(), req.GetUserId())
 		if err == nil {
 			for _, d := range devs {
 				if !d.Active {

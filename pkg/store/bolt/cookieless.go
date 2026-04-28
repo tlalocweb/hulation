@@ -13,11 +13,12 @@ package bolt
 //     read
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // CookielessSaltLen mirrors visitorid.SaltLen. We don't import the
@@ -30,47 +31,34 @@ const CookielessSaltLen = 32
 // instead.
 var ErrSaltMissing = errors.New("cookieless salt: not yet generated")
 
-// GetCookielessSalt returns the 32-byte salt for the given server.
-// Returns ErrSaltMissing if not present. Callers in the visitor hot
-// path should prefer GetOrCreateCookielessSalt.
-func GetCookielessSalt(serverID string) ([]byte, error) {
-	db := Get()
-	if db == nil {
-		return nil, ErrNotOpen
-	}
-	var out []byte
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketCookielessSalts)).Get([]byte(serverID))
-		if v == nil {
-			return ErrSaltMissing
-		}
-		out = append([]byte(nil), v...)
-		return nil
-	})
-	return out, err
+func cookielessSaltKey(serverID string) string {
+	return "cookieless_salts/" + serverID
 }
 
-// PutCookielessSalt writes the salt for the given server. Used by
-// the rotate CLI command.
-func PutCookielessSalt(serverID string, salt []byte) error {
+// GetCookielessSalt returns the 32-byte salt for the given server.
+// Returns ErrSaltMissing if not present.
+func GetCookielessSalt(ctx context.Context, s storage.Storage, serverID string) ([]byte, error) {
+	v, err := s.Get(ctx, cookielessSaltKey(serverID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrSaltMissing
+	}
+	return v, err
+}
+
+// PutCookielessSalt writes the salt for the given server.
+func PutCookielessSalt(ctx context.Context, s storage.Storage, serverID string, salt []byte) error {
 	if len(salt) != CookielessSaltLen {
 		return fmt.Errorf("cookieless salt: must be %d bytes (got %d)", CookielessSaltLen, len(salt))
 	}
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketCookielessSalts)).Put([]byte(serverID), salt)
-	})
+	return s.Put(ctx, cookielessSaltKey(serverID), salt)
 }
 
 // GetOrCreateCookielessSalt returns the salt, lazily generating one
-// from crypto/rand if absent. Safe under concurrent access — the
-// Bolt update is atomic; if two goroutines race the loser sees the
-// winner's value on the next View.
-func GetOrCreateCookielessSalt(serverID string) ([]byte, error) {
-	salt, err := GetCookielessSalt(serverID)
+// from crypto/rand if absent. Race-safe: under concurrent first-read
+// pressure, the storage layer's CompareAndCreate ensures only one
+// salt is persisted; losers see the winner's value on retry.
+func GetOrCreateCookielessSalt(ctx context.Context, s storage.Storage, serverID string) ([]byte, error) {
+	salt, err := GetCookielessSalt(ctx, s, serverID)
 	if err == nil {
 		return salt, nil
 	}
@@ -81,34 +69,31 @@ func GetOrCreateCookielessSalt(serverID string) ([]byte, error) {
 	if _, err := rand.Read(fresh); err != nil {
 		return nil, fmt.Errorf("cookieless salt: rand.Read: %w", err)
 	}
-	if err := PutCookielessSalt(serverID, fresh); err != nil {
-		// Race: someone else may have just created one. Re-read.
-		if salt2, err2 := GetCookielessSalt(serverID); err2 == nil {
+	err = s.CompareAndCreate(ctx, cookielessSaltKey(serverID), fresh)
+	if err == nil {
+		return fresh, nil
+	}
+	if errors.Is(err, storage.ErrCASFailed) {
+		// Someone won the race. Re-read.
+		if salt2, err2 := GetCookielessSalt(ctx, s, serverID); err2 == nil {
 			return salt2, nil
 		}
-		return nil, err
 	}
-	return fresh, nil
+	return nil, err
 }
 
 // RotateCookielessSalt replaces the salt with a fresh 32 random
 // bytes. Yesterday's visitors become unrecognisable today.
-func RotateCookielessSalt(serverID string) error {
+func RotateCookielessSalt(ctx context.Context, s storage.Storage, serverID string) error {
 	fresh := make([]byte, CookielessSaltLen)
 	if _, err := rand.Read(fresh); err != nil {
 		return fmt.Errorf("cookieless salt: rand.Read: %w", err)
 	}
-	return PutCookielessSalt(serverID, fresh)
+	return PutCookielessSalt(ctx, s, serverID, fresh)
 }
 
 // DeleteCookielessSalt removes the salt entry. Useful for fixture
 // teardown. Callers shouldn't normally invoke this in production.
-func DeleteCookielessSalt(serverID string) error {
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketCookielessSalts)).Delete([]byte(serverID))
-	})
+func DeleteCookielessSalt(ctx context.Context, s storage.Storage, serverID string) error {
+	return s.Delete(ctx, cookielessSaltKey(serverID))
 }
