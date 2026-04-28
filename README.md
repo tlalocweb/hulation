@@ -291,7 +291,13 @@ Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ec
 
 ## License and Terms of Use
 
+Copyright © 2026 Tlaloc LLC
+
 This project is made available under a dual-license model: **AGPLv3** and **SSPL-1.0**.
+
+The full text of the SSPL-1.0 is provided in `SSPL1_0_LICENSE.md`.
+
+The full text of the AGPLv3 is provided in `LICENSE.md`.
 
 For ordinary self-hosted use, including use by an individual, an employer, a contractor on behalf of a client, or a non-profit organization, this project may be used under the terms of the **AGPLv3**. Running this software as a web server for your own organization, employer, client, or non-profit may be done under the **AGPLv3**. 
 
