@@ -188,7 +188,10 @@ start_stack() {
     }
     # Clean any stale stack first
     dc down -v --remove-orphans 2>/dev/null || true
-    dc up -d hula-clickhouse hula
+    # forwarder-recorder is the http-recorder sidecar used by suite 36
+    # (Phase 4c.2 forwarder e2e). Tiny python service; bringing it up
+    # unconditionally keeps the suite from pass-skipping silently.
+    dc up -d hula-clickhouse hula forwarder-recorder
 
     echo "--- Waiting for /hulastatus ---"
     # Use the test-runner profile to hit hulastatus with the self-signed cert trusted
@@ -209,6 +212,33 @@ start_stack() {
         echo "ERROR: hula did not become ready within $timeout seconds" >&2
         docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" logs hula >&2
         exit 1
+    fi
+
+    # Bootstrap the admin OPAQUE record. After Phase 5a, hulactl
+    # auth uses OPAQUE — the argon2 hash in config is no longer
+    # enough by itself. We need to register a matching OPAQUE
+    # record so the very first `hulactl auth` (suite 01) has
+    # something to talk to. The server's bootstrap path allows
+    # this without authentication when no record exists yet for
+    # the configured admin user (provider=admin, matching
+    # config.Admin.Username).
+    echo "--- Bootstrapping admin OPAQUE record ---"
+    # set-password's readline still prompts for the current
+    # password even when only --newpassword is set. We feed
+    # empty newlines on stdin to satisfy the prompt — the
+    # server's bootstrap path accepts an empty current password
+    # when no record exists yet.
+    local bootstrap_out
+    bootstrap_out=$(printf '\n\n\n' | docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
+        run --rm -T \
+        -e HULACTL_HOST="hula.test.local" \
+        -e HULACTL_NEW_PASSWORD="$ADMIN_PASS" \
+        hulactl-runner set-password --username admin --provider admin 2>&1 || true)
+    if echo "$bootstrap_out" | grep -q "Password for admin/admin set via OPAQUE"; then
+        echo "  OPAQUE record registered for admin"
+    else
+        echo "WARNING: OPAQUE bootstrap may have failed — suite 01 (auth) and dependents may cascade." >&2
+        echo "$bootstrap_out" | tail -5 >&2
     fi
 
     # Wait for the staging container to finish its initial build and enter

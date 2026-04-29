@@ -88,11 +88,57 @@ services:
         update-ca-certificates >/dev/null 2>&1
         # Map test hostnames to the hula service IP.
         HULA_IP=$$(getent hosts hula | awk '{print $$1}')
-        echo "$$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local" >> /etc/hosts
         exec hulactl "$$@"
       - "--"
     depends_on:
       - hula
+
+  # Phase 4c.2 — http-recorder sidecar. A tiny long-lived service that
+  # captures POSTs from the forwarder package's GA4 adapter so suite
+  # 36 can assert the dispatch shape without leaking real GA4
+  # credentials into CI. Receives requests at /collect on port 9080.
+  forwarder-recorder:
+    image: python:3.12-alpine
+    restart: on-failure:3
+    ports:
+      - "9080"
+    volumes:
+      - forwarder-recorder-log:/var/log/recorder
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        cat > /tmp/recorder.py <<'PYEOF'
+        import http.server, json, os, time
+        LOG = "/var/log/recorder/requests.jsonl"
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8", "replace")
+                rec = {
+                    "ts": time.time(),
+                    "path": self.path,
+                    "method": "POST",
+                    "ct": self.headers.get("Content-Type", ""),
+                    "body": body,
+                }
+                with open(LOG, "a") as f:
+                    f.write(json.dumps(rec) + "\n")
+                self.send_response(204)
+                self.end_headers()
+            def do_GET(self):
+                # Health probe.
+                self.send_response(200)
+                self.send_header("Content-Type","text/plain")
+                self.end_headers()
+                self.wfile.write(b"ok")
+            def log_message(self, *args, **kw): pass
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        http.server.HTTPServer(("0.0.0.0", 9080), H).serve_forever()
+        PYEOF
+        exec python3 /tmp/recorder.py
 
   # Same idea for curl-based tests (direct WebDAV, Hugo output verification).
   test-runner:
@@ -111,7 +157,7 @@ services:
         fi
         update-ca-certificates >/dev/null 2>&1
         HULA_IP=$$(getent hosts hula | awk '{print $$1}')
-        echo "$$HULA_IP hula.test.local site.test.local staging.test.local" >> /etc/hosts
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local" >> /etc/hosts
         exec "$$@"
       - "--"
     depends_on:
@@ -123,3 +169,4 @@ volumes:
   hula-sitedeploy:
   hula-staging-data:
   hulactl-config:
+  forwarder-recorder-log:

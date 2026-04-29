@@ -436,6 +436,51 @@ type Server struct {
 	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
 	Hooks    *VisitorHooks `yaml:"hooks,omitempty"`
+
+	// --- Phase 4c.1 consent surface ---
+	// ConsentMode controls how the visitor-tracking endpoints treat
+	// the visitor's consent state. Three values:
+	//
+	//   "off"     (default) — analytics events are always written;
+	//             marketing-tagged events respect Sec-GPC: 1 as a
+	//             binding opt-out. Backwards-compatible — existing
+	//             customers see no behavior change.
+	//   "opt_in"  — no event row is written until the client supplies
+	//             affirmative consent via the body's `consent` field.
+	//             /v/hello returns 204 with `Hula-Consent-Required: 1`
+	//             so the embedding CMP can react. Use for EU-default
+	//             traffic.
+	//   "opt_out" — events always written; consent flags reflect state
+	//             at write time without gating. Use when you want the
+	//             record but not the gating.
+	//
+	// See PLAN_4C.md §2 stage 4c.1 for the full precedence matrix.
+	ConsentMode string `yaml:"consent_mode,omitempty" default:"off"`
+
+	// --- Phase 4c.2 server-side forwarders ---
+	// Forwarders dispatch completed visitor events to outbound
+	// ad-platform / analytics endpoints (Meta CAPI, GA4 MP). Empty
+	// list (default) = no forwarders enabled = no outbound traffic.
+	// Each entry's consent gate is determined by the adapter's
+	// declared purpose; events whose consent flag is false are
+	// silently skipped by the corresponding adapter.
+	Forwarders []*ForwarderConfig `yaml:"forwarders,omitempty"`
+
+	// --- Phase 4c.3 cookieless mode ---
+	// TrackingMode picks the visitor-identity strategy:
+	//
+	//   "cookie"     (default) — first-party cookie + persistent
+	//                visitor record. Existing behavior, no change.
+	//   "cookieless" — no cookies set; visitor id derived per-request
+	//                via HMAC(per-server salt || YYYYMMDD, IP||UA).
+	//                Cross-day stitching is impossible by design;
+	//                same-day same-visitor still recognisable.
+	//
+	// CNIL-cleared Matomo cookieless uses the same shape; switching
+	// to cookieless is the documented answer to "I want analytics
+	// without a cookie banner in jurisdictions that won't accept
+	// even a consented cookie".
+	TrackingMode string `yaml:"tracking_mode,omitempty" default:"cookie"`
 	Backends      []*backend.BackendConfig `yaml:"backends,omitempty"`
 	GitAutoDeploy *GitAutoDeployConfig    `yaml:"root_git_autodeploy,omitempty"`
 	externalUrl      string
@@ -804,6 +849,10 @@ type Config struct {
 	// generates fresh seed + AKE keypair on first boot and logs
 	// them so the operator can pin them.
 	OPAQUE *OPAQUEConfig `yaml:"opaque,omitempty"`
+	// Team — Raft cluster identity and membership. Optional;
+	// solo deployments can omit the whole block and hula
+	// auto-bootstraps a single-node cluster. See HA_PLAN2.md.
+	Team *TeamConfig `yaml:"team,omitempty"`
 	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.

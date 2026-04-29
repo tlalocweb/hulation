@@ -4,23 +4,26 @@ package bolt
 // runID respectively. Values are JSON-marshalled structs.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // StoredReport mirrors the ScheduledReport proto but decouples the
 // store from the generated proto types.
 type StoredReport struct {
-	ID              string            `json:"id"`
-	ServerID        string            `json:"server_id"`
-	Name            string            `json:"name"`
-	Cron            string            `json:"cron"`
-	Timezone        string            `json:"timezone"`
-	Recipients      []string          `json:"recipients"`
-	TemplateVariant string            `json:"template_variant"` // "summary" | "detailed"
+	ID              string `json:"id"`
+	ServerID        string `json:"server_id"`
+	Name            string `json:"name"`
+	Cron            string `json:"cron"`
+	Timezone        string `json:"timezone"`
+	Recipients      []string `json:"recipients"`
+	TemplateVariant string `json:"template_variant"` // "summary" | "detailed"
 	// Filters are stored as a flat map<string,string> for cheap
 	// round-tripping. The dispatcher + preview path translate back
 	// into analyticsspec.Filters.
@@ -43,20 +46,21 @@ type StoredReportRun struct {
 	Recipients []string  `json:"recipients,omitempty"`
 }
 
-func PutReport(r StoredReport) (StoredReport, error) {
+func reportKey(id string) string    { return "reports/" + id }
+func reportRunKey(id string) string { return "report_runs/" + id }
+
+func PutReport(ctx context.Context, s storage.Storage, r StoredReport) (StoredReport, error) {
+	if s == nil {
+		return r, ErrNotOpen
+	}
 	if r.ID == "" || r.ServerID == "" {
 		return r, fmt.Errorf("report: id and server_id required")
 	}
-	db := Get()
-	if db == nil {
-		return r, ErrNotOpen
-	}
 	now := time.Now().UTC()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketReports))
-		if existing := b.Get([]byte(r.ID)); existing != nil {
+	err := s.Mutate(ctx, reportKey(r.ID), func(current []byte) ([]byte, error) {
+		if len(current) > 0 {
 			var prev StoredReport
-			if uerr := json.Unmarshal(existing, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
+			if uerr := json.Unmarshal(current, &prev); uerr == nil && !prev.CreatedAt.IsZero() {
 				r.CreatedAt = prev.CreatedAt
 			}
 		}
@@ -64,122 +68,98 @@ func PutReport(r StoredReport) (StoredReport, error) {
 			r.CreatedAt = now
 		}
 		r.UpdatedAt = now
-		data, merr := json.Marshal(&r)
-		if merr != nil {
-			return merr
-		}
-		return b.Put([]byte(r.ID), data)
+		return json.Marshal(&r)
 	})
 	return r, err
 }
 
-func GetReport(reportID string) (*StoredReport, error) {
-	db := Get()
-	if db == nil {
+func GetReport(ctx context.Context, s storage.Storage, reportID string) (*StoredReport, error) {
+	if s == nil {
 		return nil, ErrNotOpen
 	}
-	var out *StoredReport
-	err := db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket([]byte(BucketReports)).Get([]byte(reportID))
-		if v == nil {
-			return nil
-		}
-		var r StoredReport
-		if uerr := json.Unmarshal(v, &r); uerr != nil {
-			return uerr
-		}
-		out = &r
-		return nil
-	})
-	return out, err
+	v, err := s.Get(ctx, reportKey(reportID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var r StoredReport
+	if uerr := json.Unmarshal(v, &r); uerr != nil {
+		return nil, uerr
+	}
+	return &r, nil
 }
 
-func DeleteReport(reportID string) error {
-	db := Get()
-	if db == nil {
+func DeleteReport(ctx context.Context, s storage.Storage, reportID string) error {
+	if s == nil {
 		return ErrNotOpen
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketReports)).Delete([]byte(reportID))
-	})
+	return s.Delete(ctx, reportKey(reportID))
 }
 
-func ListReports(serverID string) ([]StoredReport, error) {
-	db := Get()
-	if db == nil {
+func ListReports(ctx context.Context, s storage.Storage, serverID string) ([]StoredReport, error) {
+	if s == nil {
 		return nil, ErrNotOpen
 	}
-	var out []StoredReport
-	err := db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketReports)).ForEach(func(_, v []byte) error {
-			var r StoredReport
-			if uerr := json.Unmarshal(v, &r); uerr != nil {
-				return nil
-			}
-			if serverID != "" && r.ServerID != serverID {
-				return nil
-			}
-			out = append(out, r)
-			return nil
-		})
-	})
-	return out, err
+	rows, err := s.List(ctx, "reports/")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StoredReport, 0, len(rows))
+	for _, v := range rows {
+		var r StoredReport
+		if uerr := json.Unmarshal(v, &r); uerr != nil {
+			continue
+		}
+		if serverID != "" && r.ServerID != serverID {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // AppendReportRun stores a dispatch-attempt row. Rows are append-
 // only; the dispatcher never updates an existing run (retries write
 // a new row with incremented attempt).
-func AppendReportRun(run StoredReportRun) error {
+func AppendReportRun(ctx context.Context, s storage.Storage, run StoredReportRun) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if run.ID == "" || run.ReportID == "" {
 		return fmt.Errorf("run: id and report_id required")
 	}
-	db := Get()
-	if db == nil {
-		return ErrNotOpen
+	data, err := json.Marshal(&run)
+	if err != nil {
+		return err
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(BucketReportRuns))
-		data, err := json.Marshal(&run)
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(run.ID), data)
-	})
+	return s.Put(ctx, reportRunKey(run.ID), data)
 }
 
 // ListReportRuns returns runs for a given report_id, most recent
 // first. limit=0 returns all rows (expect small — each report
 // typically has tens of runs at most).
-func ListReportRuns(reportID string, limit int) ([]StoredReportRun, error) {
-	db := Get()
-	if db == nil {
+func ListReportRuns(ctx context.Context, s storage.Storage, reportID string, limit int) ([]StoredReportRun, error) {
+	if s == nil {
 		return nil, ErrNotOpen
 	}
-	var out []StoredReportRun
-	err := db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(BucketReportRuns)).ForEach(func(_, v []byte) error {
-			var r StoredReportRun
-			if uerr := json.Unmarshal(v, &r); uerr != nil {
-				return nil
-			}
-			if reportID != "" && r.ReportID != reportID {
-				return nil
-			}
-			out = append(out, r)
-			return nil
-		})
-	})
+	rows, err := s.List(ctx, "report_runs/")
 	if err != nil {
 		return nil, err
 	}
-	// Sort descending by StartedAt. Small N, bubble-sort is fine.
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[i].StartedAt.Before(out[j].StartedAt) {
-				out[i], out[j] = out[j], out[i]
-			}
+	out := make([]StoredReportRun, 0, len(rows))
+	for _, v := range rows {
+		var r StoredReportRun
+		if uerr := json.Unmarshal(v, &r); uerr != nil {
+			continue
 		}
+		if reportID != "" && r.ReportID != reportID {
+			continue
+		}
+		out = append(out, r)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

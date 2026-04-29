@@ -23,6 +23,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/reports/render"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 // dispatchLog is the tagged logger for every line from this
@@ -125,7 +126,12 @@ func (d *Dispatcher) loop(ctx context.Context) {
 }
 
 func (d *Dispatcher) runDueReports() {
-	reports, err := hulabolt.ListReports("")
+	s := storage.Global()
+	if s == nil {
+		return
+	}
+	ctx := context.Background()
+	reports, err := hulabolt.ListReports(ctx, s, "")
 	if err != nil {
 		dispatchLog.Warnf("list reports: %s", err)
 		return
@@ -143,7 +149,12 @@ func (d *Dispatcher) runDueReports() {
 }
 
 func (d *Dispatcher) sendOne(reportID string, force bool) {
-	r, err := hulabolt.GetReport(reportID)
+	s := storage.Global()
+	if s == nil {
+		return
+	}
+	ctx := context.Background()
+	r, err := hulabolt.GetReport(ctx, s, reportID)
 	if err != nil || r == nil {
 		dispatchLog.Warnf("sendOne: missing report %s: %v", reportID, err)
 		return
@@ -222,8 +233,10 @@ func (d *Dispatcher) advanceNextFire(r *hulabolt.StoredReport) {
 	}
 	now := time.Now().In(tz)
 	r.NextFireAt = sched.Next(now).UTC()
-	if _, err := hulabolt.PutReport(*r); err != nil {
-		dispatchLog.Warnf("persist next_fire_at for %s: %s", r.ID, err)
+	if s := storage.Global(); s != nil {
+		if _, err := hulabolt.PutReport(context.Background(), s, *r); err != nil {
+			dispatchLog.Warnf("persist next_fire_at for %s: %s", r.ID, err)
+		}
 	}
 }
 
@@ -238,8 +251,10 @@ func writeRun(reportID, status string, attempt int32, errText string, recipients
 		Error:      errText,
 		Recipients: append([]string(nil), recipients...),
 	}
-	if err := hulabolt.AppendReportRun(run); err != nil {
-		dispatchLog.Warnf("append run: %s", err)
+	if s := storage.Global(); s != nil {
+		if err := hulabolt.AppendReportRun(context.Background(), s, run); err != nil {
+			dispatchLog.Warnf("append run: %s", err)
+		}
 	}
 }
 

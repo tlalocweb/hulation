@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS events_v1
     when             DateTime64(3),
     from_ip          String,
     browser_ua       String,
+    -- Phase 4c.1 — consent state at write time. 0 = no consent, 1 = consent.
+    -- Migration 0004 also runs ALTER TABLE ADD COLUMN IF NOT EXISTS so
+    -- existing deployments pick up the columns without recreating the table.
+    consent_analytics UInt8 DEFAULT 0,
+    consent_marketing UInt8 DEFAULT 0,
     created_at       DateTime64(3),
     updated_at       DateTime64(3)
 )

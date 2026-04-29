@@ -42,15 +42,18 @@ assert_contains "$default_body" '"email_enabled":true' "default prefs have email
 
 # --- 2. Patch: enable push + set quiet hours -------------------------
 
+# Body is the NotificationPrefs message directly — proto
+# annotates `body: "prefs"`, so the gateway expects a flat
+# object (not a wrapped envelope).
 patch_body=$(cat <<JSON
-{"prefs":{
+{
   "user_id":"${USER_ID}",
   "email_enabled":true,
   "push_enabled":true,
   "timezone":"UTC",
   "quiet_hours_start":"22:00",
   "quiet_hours_end":"07:00"
-}}
+}
 JSON
 )
 patch_resp=$(curl_test -s \

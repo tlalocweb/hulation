@@ -19,6 +19,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/mobile/tokenbox"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -185,7 +186,7 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 
 	// Idempotency: replace an existing (user_id, fingerprint) row
 	// rather than creating a second.
-	existing, _ := hulabolt.FindDeviceByFingerprint(userID, req.GetDeviceFingerprint())
+	existing, _ := hulabolt.FindDeviceByFingerprint(ctx, storage.Global(), userID, req.GetDeviceFingerprint())
 	id := ""
 	if existing != nil {
 		id = existing.ID
@@ -202,7 +203,7 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 		TokenCipher:       sealed,
 		Active:            true,
 	}
-	saved, err := hulabolt.PutDevice(d)
+	saved, err := hulabolt.PutDevice(ctx, storage.Global(), d)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "put device: %s", err)
 	}
@@ -214,7 +215,7 @@ func (s *Server) UnregisterDevice(ctx context.Context, req *mobilespec.Unregiste
 		return nil, status.Error(codes.InvalidArgument, "device_id required")
 	}
 	// Only the owner can unregister.
-	existing, err := hulabolt.GetDevice(req.GetDeviceId())
+	existing, err := hulabolt.GetDevice(ctx, storage.Global(), req.GetDeviceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get device: %s", err)
 	}
@@ -224,7 +225,7 @@ func (s *Server) UnregisterDevice(ctx context.Context, req *mobilespec.Unregiste
 	if existing.UserID != currentUserID(ctx) {
 		return nil, status.Error(codes.PermissionDenied, "not your device")
 	}
-	if err := hulabolt.DeleteDevice(req.GetDeviceId()); err != nil {
+	if err := hulabolt.DeleteDevice(ctx, storage.Global(), req.GetDeviceId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete device: %s", err)
 	}
 	return &mobilespec.UnregisterDeviceResponse{Ok: true}, nil
@@ -235,7 +236,7 @@ func (s *Server) ListMyDevices(ctx context.Context, req *mobilespec.ListMyDevice
 	if userID == "" {
 		return nil, status.Error(codes.Unauthenticated, "caller has no identity")
 	}
-	rows, err := hulabolt.ListDevicesForUser(userID)
+	rows, err := hulabolt.ListDevicesForUser(ctx, storage.Global(), userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list devices: %s", err)
 	}

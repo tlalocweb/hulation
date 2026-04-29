@@ -94,6 +94,37 @@
 //    topwindow.Hula.FindForm = HulaFindForm
     topwindow.Hula.FormData = {}
 
+    // --- Phase 4c.1 consent surface ---
+    //
+    // Visitor's consent state for this page. Three sources merge into
+    // _hulaConsent (highest precedence first):
+    //   1. window.Hula.setConsent({analytics, marketing}) — called by
+    //      the host page's CMP after the user picks a preference.
+    //   2. navigator.globalPrivacyControl — W3C GPC. true = binding
+    //      marketing opt-out (analytics still proceeds under
+    //      legitimate-interest unless the server is in opt_in mode).
+    //   3. server-default applied at /v/hello when no consent payload
+    //      arrives (set via per-server consent_mode).
+    //
+    // The state shipped to /v/hello is whatever the page told us +
+    // the GPC reading at request time. The server runs the final
+    // resolution; this script only reports.
+    var _hulaConsent = null;
+    if (typeof navigator !== "undefined" && navigator.globalPrivacyControl === true) {
+        _hulaConsent = { analytics: true, marketing: false, source: "gpc" };
+    }
+    topwindow.Hula.setConsent = function (s) {
+        if (typeof s !== "object" || s === null) return;
+        _hulaConsent = {
+            analytics: !!s.analytics,
+            marketing: !!s.marketing,
+            source: "cmp"
+        };
+        // Optional: re-fire /v/hello on consent change so the server
+        // can land a delayed event. Out of scope for stage 4c.1.
+    };
+    topwindow.Hula.getConsent = function () { return _hulaConsent; };
+
     // var hula_prefix = "{{cookieprefix}}";
     // var hulahost = "{{hulahost}}";
 
@@ -132,14 +163,19 @@
     xhr.open("POST", GetAPIUrl("/hello"), true);
 //    xhr.withCredentials = true;
     xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
-    xhr.send(JSON.stringify(
-        { 
-            hello: "world", 
-            b: "{{b}}",
-            e: 1,
-            url: url,
-        }
-    ));
+    var helloPayload = {
+        hello: "world",
+        b: "{{b}}",
+        e: 1,
+        url: url,
+    };
+    if (_hulaConsent) {
+        helloPayload.consent = {
+            analytics: _hulaConsent.analytics,
+            marketing: _hulaConsent.marketing,
+        };
+    }
+    xhr.send(JSON.stringify(helloPayload));
     xhr.onload = function() {
         console.log("hello.js: in onload() xhr")
         if (xhr.readyState == 4 && xhr.status == 200) {

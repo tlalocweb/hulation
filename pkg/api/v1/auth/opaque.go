@@ -31,6 +31,7 @@ import (
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 )
 
 const (
@@ -82,7 +83,7 @@ func validProvider(p string) error {
 // The "bootstrap window" closes the moment a record exists; from
 // then on, password rotation requires admin auth.
 func canRegister(ctx context.Context, provider, username string) error {
-	existing, err := hulabolt.GetOpaqueRecord(provider, username)
+	existing, err := hulabolt.GetOpaqueRecord(ctx, storage.Global(), provider, username)
 	if err != nil {
 		return status.Errorf(codes.Internal, "check existing record: %v", err)
 	}
@@ -172,7 +173,7 @@ func (s *Server) OpaqueRegisterFinish(ctx context.Context, req *authspec.OpaqueR
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "opaque register finish: %v", err)
 	}
-	if _, err := hulabolt.PutOpaqueRecord(hulabolt.StoredOpaqueRecord{
+	if _, err := hulabolt.PutOpaqueRecord(ctx, storage.Global(), hulabolt.StoredOpaqueRecord{
 		Username: req.GetUsername(),
 		Provider: req.GetProvider(),
 		Envelope: envelope,
@@ -201,7 +202,7 @@ func (s *Server) OpaqueLoginInit(ctx context.Context, req *authspec.OpaqueLoginI
 	if srv == nil {
 		return nil, status.Error(codes.FailedPrecondition, "OPAQUE server not initialized")
 	}
-	rec, err := hulabolt.GetOpaqueRecord(req.GetProvider(), req.GetUsername())
+	rec, err := hulabolt.GetOpaqueRecord(ctx, storage.Global(), req.GetProvider(), req.GetUsername())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load opaque record: %v", err)
 	}
@@ -247,7 +248,7 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	}
 
 	// Best-effort: bump LastSuccessLogin on the record.
-	_ = hulabolt.MarkOpaqueLoginSuccess(finish.Provider, finish.Username)
+	_ = hulabolt.MarkOpaqueLoginSuccess(ctx, storage.Global(), finish.Provider, finish.Username)
 
 	// Issue JWT — same path as LoginAdmin / LoginWithSecret today.
 	isAdmin := finish.Provider == providerAdmin

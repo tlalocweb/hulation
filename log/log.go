@@ -52,6 +52,16 @@ func UseJsonLogs() {
 
 func SetLevel(level zerolog.Level) {
 	log = log.Level(level)
+	// Tagged loggers capture `log` by value at package-init time
+	// (most of them are package-level vars created before
+	// app.ParseFlags() runs), so reassigning `log` above does NOT
+	// propagate to existing tagged loggers. zerolog.SetGlobalLevel
+	// acts as a floor on every logger instance regardless of when
+	// it was constructed — events below this level are dropped at
+	// emit time. This is what actually silences DBG output in
+	// production (without it, every var-init tagged logger keeps
+	// emitting at zerolog's default DebugLevel).
+	zerolog.SetGlobalLevel(level)
 }
 
 func GetLogger() *zerolog.Logger {

@@ -26,6 +26,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
 	"github.com/tlalocweb/hulation/pkg/auth/opaque"
+	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 	"github.com/tlalocweb/hulation/pkg/notifier/apns"
@@ -34,8 +35,9 @@ import (
 	"github.com/tlalocweb/hulation/pkg/realtime"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	"github.com/tlalocweb/hulation/utils"
-	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
+	raftbackend "github.com/tlalocweb/hulation/pkg/store/storage/raft"
 	"github.com/tlalocweb/hulation/sitedeploy"
 )
 
@@ -99,13 +101,28 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		return fmt.Errorf("preload forms: %w", err)
 	}
 
-	// BoltDB store — identity/ACL/goals/reports data that doesn't
-	// belong in ClickHouse. Opened once; lives as a process global
-	// until Close(). Non-fatal when the path can't be created (e.g.,
-	// running `hulactl` style utilities that don't need persistence)
-	// so degrade gracefully.
-	if _, err := hulabolt.Open(""); err != nil {
-		log.Warnf("Bolt store unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
+	// Persistent store — identity/ACL/goals/reports data that
+	// doesn't belong in ClickHouse. Stage 2 of HA Plan: a
+	// Raft-backed RaftStorage in single-node mode. Solo
+	// deployments (the most common shape) don't need a `team:`
+	// block in config — AutoConfig auto-generates a TeamID +
+	// NodeID and persists them under DataDir so subsequent
+	// boots pick up the same identity. Non-fatal when init
+	// fails (degrades to no-storage so hulactl-style utilities
+	// that don't touch persistence still work) — same posture
+	// as Stage 1.
+	if rcfg, err := raftbackend.AutoConfig(conf.Team); err != nil {
+		log.Warnf("storage: team config error (%s); ACL + goals + reports RPCs will 503", err.Error())
+	} else if rs, err := raftbackend.New(rcfg); err != nil {
+		log.Warnf("storage unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
+	} else {
+		waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := rs.WaitLeader(waitCtx); err != nil {
+			log.Warnf("storage: solo bootstrap stalled (%s); ACL + goals + reports RPCs may 503", err.Error())
+		}
+		waitCancel()
+		storage.SetGlobal(rs)
+		log.Infof("Raft storage online (node=%s, data_dir=%s, mode=solo)", rcfg.NodeID, rcfg.DataDir)
 	}
 
 	// Scheduled-report dispatcher. Runs on a 1-minute ticker + an
@@ -290,6 +307,15 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 			// without it.
 			go stagingMgr.StartupStaging(conf.Servers)
 		}
+	}
+
+	// Phase 4c.2: server-side forwarders. Each server with a non-empty
+	// `forwarders:` config gets a per-server Composite + Worker drain.
+	// Servers without forwarders are silent (no goroutines, no
+	// allocation). Build failures are logged and the bad adapter is
+	// dropped — does not block boot.
+	if n := forwarder.BuildAndRegisterAll(conf.Servers); n > 0 {
+		log.Infof("forwarders registered for %d server(s)", n)
 	}
 
 	return nil

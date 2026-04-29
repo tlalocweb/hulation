@@ -73,6 +73,13 @@ type Event struct {
 	CountryCode string `json:"country_code" gorm:"column:country_code"`
 	Region      string `json:"region" gorm:"column:region"`
 	City        string `json:"city" gorm:"column:city"`
+
+	// --- Phase 4c.1 consent state ---
+	// ConsentAnalytics — visitor consents to analytics processing.
+	// ConsentMarketing — visitor consents to marketing/advertising
+	// processing (gates server-side forwarders to ad platforms).
+	ConsentAnalytics bool `json:"consent_analytics" gorm:"column:consent_analytics"`
+	ConsentMarketing bool `json:"consent_marketing" gorm:"column:consent_marketing"`
 }
 
 func NewEvent(code uint64) (ret *Event) {

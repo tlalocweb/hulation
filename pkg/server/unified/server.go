@@ -582,17 +582,17 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 	if s.dynamicGetCert != nil {
 		cert, err := s.dynamicGetCert(clientHello)
 		if err == nil && cert != nil {
-			s.logger.Debugf("Using caller-supplied dynamic certificate for ServerName: %s", serverName)
+			s.logger.VDebugf(2, "Using caller-supplied dynamic certificate for ServerName: %s", serverName)
 			return cert, nil
 		}
 		if err != nil {
-			s.logger.Debugf("dynamicGetCert rejected ServerName %q: %v", serverName, err)
+			s.logger.VDebugf(2, "dynamicGetCert rejected ServerName %q: %v", serverName, err)
 		}
 	}
 
 	// Default to external certificate for hostname-based connections
 	if s.externalCert != nil {
-		s.logger.Debugf("Using external certificate for hostname ServerName: %s", serverName)
+		s.logger.VDebugf(2, "Using external certificate for hostname ServerName: %s", serverName)
 		return s.externalCert, nil
 	}
 	return nil, fmt.Errorf("no certificate available for ServerName %q", serverName)

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -1215,6 +1216,49 @@ func main() {
 			os.Exit(1)
 		}
 
+	case CMD_ROTATECOOKIELESS:
+		// Phase 4c.3: replace the per-server cookieless visitor-id
+		// salt. Same offline-edit pattern as forget-opaque-record:
+		// hula must be stopped, caller copies the bolt out, runs
+		// this, copies it back.
+		if hulactlconfig.BoltPath == "" {
+			fmt.Fprintf(os.Stderr, "Error: --bolt <path> is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_ROTATECOOKIELESS_USAGE)
+			os.Exit(1)
+		}
+		if len(argz) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: server_id is required\n")
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", CMD_ROTATECOOKIELESS_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		db, err := bolt.Open(hulactlconfig.BoltPath, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening bolt: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fresh := make([]byte, 32)
+		if _, err := cryptorand.Read(fresh); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading random: %s\n", err.Error())
+			_ = db.Close()
+			os.Exit(1)
+		}
+		err = db.Update(func(tx *bolt.Tx) error {
+			b, berr := tx.CreateBucketIfNotExists([]byte("cookieless_salts"))
+			if berr != nil {
+				return berr
+			}
+			return b.Put([]byte(serverID), fresh)
+		})
+		if cerr := db.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Rotated cookieless_salts[%s] (32 random bytes)\n", serverID)
+
 	case CMD_SETPASSWORD:
 		// Always require fresh proof of the current password for
 		// rotation. We deliberately ignore any saved JWT in
@@ -1230,10 +1274,15 @@ func main() {
 		}
 
 		// 1) Read the CURRENT password (or empty for first-time
-		//    bootstrap). Env preferred over interactive.
+		//    bootstrap). Env preferred over interactive. We must
+		//    distinguish "env unset" (prompt) from "env set to
+		//    empty string" (intentional bootstrap, do NOT prompt) —
+		//    the latter is how wrapper scripts signal bootstrap mode.
 		var currentPass string
-		if v := os.Getenv("HULACTL_CURRENT_PASSWORD"); v != "" {
+		curFromEnv := false
+		if v, ok := os.LookupEnv("HULACTL_CURRENT_PASSWORD"); ok {
 			currentPass = v
+			curFromEnv = true
 		}
 
 		// 2) Read the NEW password (env preferred over interactive).
@@ -1243,13 +1292,13 @@ func main() {
 		}
 
 		// 3) If anything is still missing, prompt interactively.
-		if currentPass == "" || newPass == "" {
+		if !curFromEnv || newPass == "" {
 			l, err := readline.NewEx(&readline.Config{})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
 				os.Exit(1)
 			}
-			if currentPass == "" {
+			if !curFromEnv {
 				cur, err := l.ReadPassword(fmt.Sprintf(
 					"Current password for %s/%s (leave blank ONLY for first-time bootstrap): ",
 					provider, username))
