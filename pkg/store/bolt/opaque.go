@@ -39,6 +39,9 @@ func opaqueKey(provider, username string) string {
 
 // PutOpaqueRecord upserts. Preserves CreatedAt; refreshes UpdatedAt.
 func PutOpaqueRecord(ctx context.Context, s storage.Storage, rec StoredOpaqueRecord) (StoredOpaqueRecord, error) {
+	if s == nil {
+		return rec, ErrNotOpen
+	}
 	if rec.Username == "" || rec.Provider == "" {
 		return rec, fmt.Errorf("opaque record: username and provider required")
 	}
@@ -67,6 +70,9 @@ func PutOpaqueRecord(ctx context.Context, s storage.Storage, rec StoredOpaqueRec
 
 // GetOpaqueRecord loads the record. Returns nil when missing.
 func GetOpaqueRecord(ctx context.Context, s storage.Storage, provider, username string) (*StoredOpaqueRecord, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, opaqueKey(provider, username))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
@@ -83,6 +89,9 @@ func GetOpaqueRecord(ctx context.Context, s storage.Storage, provider, username 
 
 // DeleteOpaqueRecord removes the record. Idempotent.
 func DeleteOpaqueRecord(ctx context.Context, s storage.Storage, provider, username string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, opaqueKey(provider, username))
 }
 
@@ -90,6 +99,9 @@ func DeleteOpaqueRecord(ctx context.Context, s storage.Storage, provider, userna
 // OPAQUE login. Best-effort — failures are not fatal to the login
 // flow itself.
 func MarkOpaqueLoginSuccess(ctx context.Context, s storage.Storage, provider, username string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	rec, err := GetOpaqueRecord(ctx, s, provider, username)
 	if err != nil || rec == nil {
 		return err

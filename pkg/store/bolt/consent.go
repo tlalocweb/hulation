@@ -49,6 +49,9 @@ func consentVisitorPrefix(serverID, visitorID string) string {
 
 // PutConsent appends a row to the consent_log bucket.
 func PutConsent(ctx context.Context, s storage.Storage, c StoredConsent) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if c.At.IsZero() {
 		c.At = time.Now().UTC()
 	}
@@ -64,6 +67,9 @@ func PutConsent(ctx context.Context, s storage.Storage, c StoredConsent) error {
 // given (server_id, visitor_id), oldest-first. Bounded scan; consent
 // log isn't a high-volume bucket so unpaged lookup is fine.
 func ListConsentForVisitor(ctx context.Context, s storage.Storage, serverID, visitorID string) ([]StoredConsent, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, consentVisitorPrefix(serverID, visitorID))
 	if err != nil {
 		return nil, err
@@ -89,6 +95,9 @@ func ListConsentForVisitor(ctx context.Context, s storage.Storage, serverID, vis
 // DeleteConsentForVisitor removes every row keyed by
 // (server_id, visitor_id). Used by ForgetVisitor; idempotent.
 func DeleteConsentForVisitor(ctx context.Context, s storage.Storage, serverID, visitorID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	keys, err := s.Keys(ctx, consentVisitorPrefix(serverID, visitorID))
 	if err != nil {
 		return err

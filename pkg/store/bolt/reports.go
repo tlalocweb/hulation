@@ -50,6 +50,9 @@ func reportKey(id string) string    { return "reports/" + id }
 func reportRunKey(id string) string { return "report_runs/" + id }
 
 func PutReport(ctx context.Context, s storage.Storage, r StoredReport) (StoredReport, error) {
+	if s == nil {
+		return r, ErrNotOpen
+	}
 	if r.ID == "" || r.ServerID == "" {
 		return r, fmt.Errorf("report: id and server_id required")
 	}
@@ -71,6 +74,9 @@ func PutReport(ctx context.Context, s storage.Storage, r StoredReport) (StoredRe
 }
 
 func GetReport(ctx context.Context, s storage.Storage, reportID string) (*StoredReport, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, reportKey(reportID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
@@ -86,10 +92,16 @@ func GetReport(ctx context.Context, s storage.Storage, reportID string) (*Stored
 }
 
 func DeleteReport(ctx context.Context, s storage.Storage, reportID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, reportKey(reportID))
 }
 
 func ListReports(ctx context.Context, s storage.Storage, serverID string) ([]StoredReport, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "reports/")
 	if err != nil {
 		return nil, err
@@ -112,6 +124,9 @@ func ListReports(ctx context.Context, s storage.Storage, serverID string) ([]Sto
 // only; the dispatcher never updates an existing run (retries write
 // a new row with incremented attempt).
 func AppendReportRun(ctx context.Context, s storage.Storage, run StoredReportRun) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if run.ID == "" || run.ReportID == "" {
 		return fmt.Errorf("run: id and report_id required")
 	}
@@ -126,6 +141,9 @@ func AppendReportRun(ctx context.Context, s storage.Storage, run StoredReportRun
 // first. limit=0 returns all rows (expect small — each report
 // typically has tens of runs at most).
 func ListReportRuns(ctx context.Context, s storage.Storage, reportID string, limit int) ([]StoredReportRun, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "report_runs/")
 	if err != nil {
 		return nil, err

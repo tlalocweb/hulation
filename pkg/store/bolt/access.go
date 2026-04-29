@@ -38,6 +38,9 @@ func splitAccessSubKey(subKey string) (userID, serverID string, ok bool) {
 
 // GrantServerAccess upserts a (user, server, role) row.
 func GrantServerAccess(ctx context.Context, s storage.Storage, userID, serverID, role string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if userID == "" || serverID == "" || role == "" {
 		return fmt.Errorf("grant: userID, serverID, role required")
 	}
@@ -47,6 +50,9 @@ func GrantServerAccess(ctx context.Context, s storage.Storage, userID, serverID,
 // RevokeServerAccess removes a (user, server) row. Missing rows are
 // not an error.
 func RevokeServerAccess(ctx context.Context, s storage.Storage, userID, serverID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if userID == "" || serverID == "" {
 		return fmt.Errorf("revoke: userID and serverID required")
 	}
@@ -59,6 +65,9 @@ func RevokeServerAccess(ctx context.Context, s storage.Storage, userID, serverID
 //
 // Optional user / server filters — empty string matches all.
 func ListServerAccess(ctx context.Context, s storage.Storage, userIDFilter, serverIDFilter string) ([]ServerAccessEntry, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "server_access/")
 	if err != nil {
 		return nil, err
@@ -89,6 +98,9 @@ func ListServerAccess(ctx context.Context, s storage.Storage, userIDFilter, serv
 // AllowedServerIDsForUser returns the set of server IDs the user has
 // any role on. Used by the analytics ACL hook for non-admin callers.
 func AllowedServerIDsForUser(ctx context.Context, s storage.Storage, userID string) ([]string, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	if userID == "" {
 		return nil, nil
 	}
@@ -106,6 +118,9 @@ func AllowedServerIDsForUser(ctx context.Context, s storage.Storage, userID stri
 // RoleOnServer returns the user's role on a single server, or empty
 // when the user has no grant.
 func RoleOnServer(ctx context.Context, s storage.Storage, userID, serverID string) (string, error) {
+	if s == nil {
+		return "", ErrNotOpen
+	}
 	if userID == "" || serverID == "" {
 		return "", nil
 	}

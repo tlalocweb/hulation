@@ -40,6 +40,9 @@ func notifPrefsKey(userID string) string         { return "notification_prefs/" 
 // PutDevice upserts. Idempotent by (user_id, device_fingerprint)
 // when the caller re-uses an existing ID; otherwise a new row.
 func PutDevice(ctx context.Context, s storage.Storage, d StoredDevice) (StoredDevice, error) {
+	if s == nil {
+		return d, ErrNotOpen
+	}
 	if d.ID == "" || d.UserID == "" {
 		return d, fmt.Errorf("device: id and user_id required")
 	}
@@ -62,6 +65,9 @@ func PutDevice(ctx context.Context, s storage.Storage, d StoredDevice) (StoredDe
 
 // GetDevice loads a single device. Returns nil when missing.
 func GetDevice(ctx context.Context, s storage.Storage, deviceID string) (*StoredDevice, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, deviceKey(deviceID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
@@ -80,12 +86,18 @@ func GetDevice(ctx context.Context, s storage.Storage, deviceID string) (*Stored
 // "forget device" flow. For the dead-token path, callers prefer
 // MarkDeviceInactive so the audit trail survives.
 func DeleteDevice(ctx context.Context, s storage.Storage, deviceID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, deviceKey(deviceID))
 }
 
 // MarkDeviceInactive flips Active → false. Used when the push
 // transport rejects the token (dead-token sentinel).
 func MarkDeviceInactive(ctx context.Context, s storage.Storage, deviceID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	d, err := GetDevice(ctx, s, deviceID)
 	if err != nil || d == nil {
 		return err
@@ -98,6 +110,9 @@ func MarkDeviceInactive(ctx context.Context, s storage.Storage, deviceID string)
 // ListDevicesForUser returns every active + inactive device for the
 // given user_id, most recently-seen first.
 func ListDevicesForUser(ctx context.Context, s storage.Storage, userID string) ([]StoredDevice, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "mobile_devices/")
 	if err != nil {
 		return nil, err
@@ -120,6 +135,9 @@ func ListDevicesForUser(ctx context.Context, s storage.Storage, userID string) (
 // FindDeviceByFingerprint returns the device matching (user_id,
 // fingerprint) or nil. Used by RegisterDevice for idempotency.
 func FindDeviceByFingerprint(ctx context.Context, s storage.Storage, userID, fingerprint string) (*StoredDevice, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	if userID == "" || fingerprint == "" {
 		return nil, nil
 	}
@@ -150,6 +168,9 @@ type StoredNotificationSend struct {
 
 // PutNotificationSend inserts. Not updated — each attempt is a new row.
 func PutNotificationSend(ctx context.Context, s storage.Storage, ns StoredNotificationSend) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if ns.ID == "" {
 		return fmt.Errorf("notification send: id required")
 	}
@@ -188,6 +209,9 @@ func DefaultPrefs(userID string) StoredNotificationPrefs {
 
 // PutNotificationPrefs upserts keyed on user_id.
 func PutNotificationPrefs(ctx context.Context, s storage.Storage, p StoredNotificationPrefs) (StoredNotificationPrefs, error) {
+	if s == nil {
+		return p, ErrNotOpen
+	}
 	if p.UserID == "" {
 		return p, fmt.Errorf("notification prefs: user_id required")
 	}
@@ -205,6 +229,9 @@ func PutNotificationPrefs(ctx context.Context, s storage.Storage, p StoredNotifi
 // GetNotificationPrefs returns the user's prefs, or default-prefs
 // when the row doesn't exist.
 func GetNotificationPrefs(ctx context.Context, s storage.Storage, userID string) (StoredNotificationPrefs, error) {
+	if s == nil {
+		return DefaultPrefs(userID), ErrNotOpen
+	}
 	v, err := s.Get(ctx, notifPrefsKey(userID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return DefaultPrefs(userID), nil
@@ -222,6 +249,9 @@ func GetNotificationPrefs(ctx context.Context, s storage.Storage, userID string)
 // ListNotificationPrefs returns every prefs row. Used by the admin
 // UI's `/admin/notifications` table.
 func ListNotificationPrefs(ctx context.Context, s storage.Storage) ([]StoredNotificationPrefs, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "notification_prefs/")
 	if err != nil {
 		return nil, err

@@ -38,6 +38,9 @@ func cookielessSaltKey(serverID string) string {
 // GetCookielessSalt returns the 32-byte salt for the given server.
 // Returns ErrSaltMissing if not present.
 func GetCookielessSalt(ctx context.Context, s storage.Storage, serverID string) ([]byte, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, cookielessSaltKey(serverID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrSaltMissing
@@ -47,6 +50,9 @@ func GetCookielessSalt(ctx context.Context, s storage.Storage, serverID string) 
 
 // PutCookielessSalt writes the salt for the given server.
 func PutCookielessSalt(ctx context.Context, s storage.Storage, serverID string, salt []byte) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if len(salt) != CookielessSaltLen {
 		return fmt.Errorf("cookieless salt: must be %d bytes (got %d)", CookielessSaltLen, len(salt))
 	}
@@ -58,6 +64,9 @@ func PutCookielessSalt(ctx context.Context, s storage.Storage, serverID string, 
 // pressure, the storage layer's CompareAndCreate ensures only one
 // salt is persisted; losers see the winner's value on retry.
 func GetOrCreateCookielessSalt(ctx context.Context, s storage.Storage, serverID string) ([]byte, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	salt, err := GetCookielessSalt(ctx, s, serverID)
 	if err == nil {
 		return salt, nil
@@ -85,6 +94,9 @@ func GetOrCreateCookielessSalt(ctx context.Context, s storage.Storage, serverID 
 // RotateCookielessSalt replaces the salt with a fresh 32 random
 // bytes. Yesterday's visitors become unrecognisable today.
 func RotateCookielessSalt(ctx context.Context, s storage.Storage, serverID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	fresh := make([]byte, CookielessSaltLen)
 	if _, err := rand.Read(fresh); err != nil {
 		return fmt.Errorf("cookieless salt: rand.Read: %w", err)
@@ -95,5 +107,8 @@ func RotateCookielessSalt(ctx context.Context, s storage.Storage, serverID strin
 // DeleteCookielessSalt removes the salt entry. Useful for fixture
 // teardown. Callers shouldn't normally invoke this in production.
 func DeleteCookielessSalt(ctx context.Context, s storage.Storage, serverID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, cookielessSaltKey(serverID))
 }
