@@ -81,7 +81,9 @@ func testDeleteIdempotent(t *testing.T, f Factory) {
 		t.Errorf("delete missing: %v", err)
 	}
 	// Delete on present key — no error, key gone.
-	_ = s.Put(ctx(), "goals/g1", []byte("x"))
+	if err := s.Put(ctx(), "goals/g1", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Delete(ctx(), "goals/g1"); err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +100,16 @@ func testDeleteIdempotent(t *testing.T, f Factory) {
 func testOverwritePut(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "alerts/a1", []byte("v1"))
-	_ = s.Put(ctx(), "alerts/a1", []byte("v2"))
-	got, _ := s.Get(ctx(), "alerts/a1")
+	if err := s.Put(ctx(), "alerts/a1", []byte("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx(), "alerts/a1", []byte("v2")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx(), "alerts/a1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "v2" {
 		t.Errorf("overwrite: got %q want v2", got)
 	}
@@ -109,9 +118,15 @@ func testOverwritePut(t *testing.T, f Factory) {
 func testListPrefix(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "reports/r1", []byte("1"))
-	_ = s.Put(ctx(), "reports/r2", []byte("2"))
-	_ = s.Put(ctx(), "alerts/a1", []byte("3"))
+	for _, kv := range []struct{ k, v string }{
+		{"reports/r1", "1"},
+		{"reports/r2", "2"},
+		{"alerts/a1", "3"},
+	} {
+		if err := s.Put(ctx(), kv.k, []byte(kv.v)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	rep, err := s.List(ctx(), "reports/")
 	if err != nil {
@@ -125,11 +140,17 @@ func testListPrefix(t *testing.T, f Factory) {
 	}
 
 	// Prefix that matches the entire bucket boundary.
-	rep2, _ := s.List(ctx(), "reports/r")
+	rep2, err := s.List(ctx(), "reports/r")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rep2) != 2 {
 		t.Errorf("reports/r prefix: got %d want 2", len(rep2))
 	}
-	rep3, _ := s.List(ctx(), "reports/r1")
+	rep3, err := s.List(ctx(), "reports/r1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rep3) != 1 {
 		t.Errorf("reports/r1 prefix: got %d want 1", len(rep3))
 	}
@@ -138,9 +159,15 @@ func testListPrefix(t *testing.T, f Factory) {
 func testKeysPrefix(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "report_runs/run-c", []byte("3"))
-	_ = s.Put(ctx(), "report_runs/run-a", []byte("1"))
-	_ = s.Put(ctx(), "report_runs/run-b", []byte("2"))
+	for _, kv := range []struct{ k, v string }{
+		{"report_runs/run-c", "3"},
+		{"report_runs/run-a", "1"},
+		{"report_runs/run-b", "2"},
+	} {
+		if err := s.Put(ctx(), kv.k, []byte(kv.v)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	keys, err := s.Keys(ctx(), "report_runs/")
 	if err != nil {
@@ -163,7 +190,9 @@ func testCompareAndSwap(t *testing.T, f Factory) {
 		t.Errorf("CAS missing key: got %v want ErrCASFailed", err)
 	}
 	// Seed.
-	_ = s.Put(ctx(), "opaque_records/k", []byte("v0"))
+	if err := s.Put(ctx(), "opaque_records/k", []byte("v0")); err != nil {
+		t.Fatal(err)
+	}
 	// Wrong expected.
 	err = s.CompareAndSwap(ctx(), "opaque_records/k", []byte("wrong"), []byte("v1"))
 	if !errors.Is(err, storage.ErrCASFailed) {
@@ -173,7 +202,10 @@ func testCompareAndSwap(t *testing.T, f Factory) {
 	if err := s.CompareAndSwap(ctx(), "opaque_records/k", []byte("v0"), []byte("v1")); err != nil {
 		t.Fatalf("CAS right expected: %v", err)
 	}
-	got, _ := s.Get(ctx(), "opaque_records/k")
+	got, err := s.Get(ctx(), "opaque_records/k")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "v1" {
 		t.Errorf("after CAS: got %q want v1", got)
 	}
@@ -195,7 +227,9 @@ func testCompareAndCreate(t *testing.T, f Factory) {
 func testMutateWrite(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "goals/g1", []byte("0"))
+	if err := s.Put(ctx(), "goals/g1", []byte("0")); err != nil {
+		t.Fatal(err)
+	}
 	err := s.Mutate(ctx(), "goals/g1", func(cur []byte) ([]byte, error) {
 		if string(cur) != "0" {
 			t.Errorf("mutate fn saw current %q want 0", cur)
@@ -205,7 +239,10 @@ func testMutateWrite(t *testing.T, f Factory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Get(ctx(), "goals/g1")
+	got, err := s.Get(ctx(), "goals/g1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "1" {
 		t.Errorf("after mutate: got %q want 1", got)
 	}
@@ -214,14 +251,19 @@ func testMutateWrite(t *testing.T, f Factory) {
 func testMutateSkip(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "goals/g1", []byte("seed"))
+	if err := s.Put(ctx(), "goals/g1", []byte("seed")); err != nil {
+		t.Fatal(err)
+	}
 	err := s.Mutate(ctx(), "goals/g1", func(cur []byte) ([]byte, error) {
 		return nil, storage.ErrSkip
 	})
 	if err != nil {
 		t.Errorf("mutate skip: got err %v want nil", err)
 	}
-	got, _ := s.Get(ctx(), "goals/g1")
+	got, err := s.Get(ctx(), "goals/g1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "seed" {
 		t.Errorf("after skip: got %q want seed (unchanged)", got)
 	}
@@ -230,7 +272,9 @@ func testMutateSkip(t *testing.T, f Factory) {
 func testMutateDelete(t *testing.T, f Factory) {
 	s, cleanup := f(t)
 	defer cleanup()
-	_ = s.Put(ctx(), "goals/g1", []byte("seed"))
+	if err := s.Put(ctx(), "goals/g1", []byte("seed")); err != nil {
+		t.Fatal(err)
+	}
 	err := s.Mutate(ctx(), "goals/g1", func(cur []byte) ([]byte, error) {
 		return nil, nil
 	})
@@ -290,12 +334,20 @@ func testWatchPrefix(t *testing.T, f Factory) {
 		t.Fatal(err)
 	}
 
-	// Put two matching, one non-matching.
+	// Put two matching, one non-matching. t.Errorf (not Fatal)
+	// because we're in a goroutine and Fatal must run on the test
+	// goroutine.
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		_ = s.Put(ctx(), "alerts/a1", []byte("1"))
-		_ = s.Put(ctx(), "goals/g1", []byte("ignored"))
-		_ = s.Put(ctx(), "alerts/a2", []byte("2"))
+		if err := s.Put(ctx(), "alerts/a1", []byte("1")); err != nil {
+			t.Errorf("put alerts/a1: %v", err)
+		}
+		if err := s.Put(ctx(), "goals/g1", []byte("ignored")); err != nil {
+			t.Errorf("put goals/g1: %v", err)
+		}
+		if err := s.Put(ctx(), "alerts/a2", []byte("2")); err != nil {
+			t.Errorf("put alerts/a2: %v", err)
+		}
 	}()
 
 	got := collectEvents(ch, 2, 1*time.Second)
@@ -322,7 +374,9 @@ func testWatchOutsidePrefix(t *testing.T, f Factory) {
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		_ = s.Put(ctx(), "alerts/a1", []byte("1"))
+		if err := s.Put(ctx(), "alerts/a1", []byte("1")); err != nil {
+			t.Errorf("put alerts/a1: %v", err)
+		}
 	}()
 
 	// Should NOT see any event.
@@ -396,11 +450,16 @@ func testConcurrentPuts(t *testing.T, f Factory) {
 		go func(i int) {
 			defer wg.Done()
 			key := "alerts/" + string(rune('a'+(i%26))) + string(rune('0'+(i/26)))
-			_ = s.Put(ctx(), key, []byte("v"))
+			if err := s.Put(ctx(), key, []byte("v")); err != nil {
+				t.Errorf("concurrent put %d: %v", i, err)
+			}
 		}(i)
 	}
 	wg.Wait()
-	keys, _ := s.Keys(ctx(), "alerts/")
+	keys, err := s.Keys(ctx(), "alerts/")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(keys) == 0 {
 		t.Errorf("expected some keys after concurrent puts; got 0")
 	}
