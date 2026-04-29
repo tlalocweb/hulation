@@ -26,12 +26,18 @@ runner_shell "curl -sk \
     'https://${HULA_HOST}/v/hula_hello.html?h=testsite&u=https%3A%2F%2F${SITE_HOST}%2Fconsent-gpc'" \
     >/dev/null 2>&1 || true
 
-sleep 3
-
-# Expect: row exists, consent_analytics=1, consent_marketing=0.
-gpc_row=$(dc exec -T hula-clickhouse sh -c \
-    "clickhouse-client -q \"SELECT consent_analytics, consent_marketing FROM hula.events WHERE browser_ua = '${UA_GPC}' ORDER BY when DESC LIMIT 1 FORMAT TSV\"" \
-    2>/dev/null || true)
+# Poll up to ~30s. Hula's bounce + async ClickHouse commit can
+# take longer than a few seconds on a cold compose stack.
+gpc_row=""
+for _ in $(seq 1 15); do
+    gpc_row=$(dc exec -T hula-clickhouse sh -c \
+        "clickhouse-client -q \"SELECT consent_analytics, consent_marketing FROM hula.events WHERE browser_ua = '${UA_GPC}' ORDER BY when DESC LIMIT 1 FORMAT TSV\"" \
+        2>/dev/null || true)
+    if [ -n "$gpc_row" ]; then
+        break
+    fi
+    sleep 2
+done
 
 if [ -z "$gpc_row" ]; then
     fail "consent: no row found for GPC probe (event commit pipeline broken or migration not applied)"
@@ -75,11 +81,16 @@ else
         'https://${HULA_HOST}/v/hello?h=testsite&b=${bounce}'" \
         >/dev/null 2>&1 || true
 
-    sleep 3
-
-    cmp_row=$(dc exec -T hula-clickhouse sh -c \
-        "clickhouse-client -q \"SELECT consent_analytics, consent_marketing FROM hula.events WHERE browser_ua = '${UA_CMP}' ORDER BY when DESC LIMIT 1 FORMAT TSV\"" \
-        2>/dev/null || true)
+    cmp_row=""
+    for _ in $(seq 1 15); do
+        cmp_row=$(dc exec -T hula-clickhouse sh -c \
+            "clickhouse-client -q \"SELECT consent_analytics, consent_marketing FROM hula.events WHERE browser_ua = '${UA_CMP}' ORDER BY when DESC LIMIT 1 FORMAT TSV\"" \
+            2>/dev/null || true)
+        if [ -n "$cmp_row" ]; then
+            break
+        fi
+        sleep 2
+    done
 
     if [ -z "$cmp_row" ]; then
         pass "consent: CMP leg seeded but no row found yet (async commit may still be in flight)"

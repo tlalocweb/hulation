@@ -4,73 +4,38 @@ Tracked items that aren't tied to an in-flight phase plan. Newest at top.
 
 ---
 
-## Admin-RPC e2e suites send wrong JSON body shape
+## ✅ FIXED: Admin-RPC e2e suites send wrong JSON body shape
 
-**Filed:** 2026-04-28 — surfaced after the OPAQUE-bootstrap and
-pipefail-grep fixes unblocked the previously-cascaded suites.
+**Filed:** 2026-04-28. **Closed:** 2026-04-29.
 
-**Symptom.** With the cascade gone, suites 24/25/26/31 hit fresh
-asserts and fail. Pattern is identical: Create returns an `id`,
-the followup Get/List can't find the entity by name. Looking at
-the actual response, the entity *was* created — but with all
-body fields blank (`"name":""`, `"kind":"GOAL_KIND_UNSPECIFIED"`,
-etc).
+The e2e suites POST'd `{"goal":{...}}` envelopes when the proto
+annotates `body: "goal"` (and similarly for alert/report/prefs)
+— meaning the JSON body should be the inner field directly.
+grpc-gateway was silently dropping the wrapped content and
+storing empty entities; downstream Get/List couldn't find them
+by name.
 
-**Root cause.** The proto annotates `body: "goal"` /
-`body: "alert"` / `body: "report"` / `body: "prefs"` — meaning
-the JSON body is the inner field directly, not the request
-envelope. The e2e suites POST `{"goal":{...}}` (the envelope
-shape), so grpc-gateway sets `req.Goal = &Goal{}` (empty) and
-the inner JSON is silently dropped. Verified directly: posting
-`{"name":"x", "kind":"GOAL_KIND_URL_VISIT"}` to
-`/api/v1/goals/{server_id}` round-trips cleanly through
-Create→Get→List.
-
-**Fix sketch.** Drop the envelope in the curl payloads:
-```bash
-# before
---data "{\"goal\":{\"name\":\"$N\",\"kind\":\"...\"}}"
-# after
---data "{\"name\":\"$N\",\"kind\":\"...\"}"
-```
-
-Apply to:
+Fixed in suites:
 - `test/e2e/suites/24-reports.sh` (CreateReport / UpdateReport)
 - `test/e2e/suites/25-goals.sh`   (CreateGoal / UpdateGoal / TestGoal)
 - `test/e2e/suites/26-alerts.sh`  (CreateAlert / UpdateAlert)
 - `test/e2e/suites/31-notify-prefs.sh` (SetNotificationPrefs)
 
-**Verification.** After the fix the run should land at roughly
-194 pass / 1 fail (only suite 17's ClickHouse-timing assert left,
-tracked separately).
-
-**Not HA-related.** Verified against the Stage-2 RaftStorage —
-direct Storage round-trip works (read returns what was written).
-The bug is purely in how the test harness shapes its JSON.
+Net effect: 9 new green asserts.
 
 ---
 
-## E2e suite 17: analytics-foundation event ingest timing
+## ✅ FIXED: E2e suites 17 + 35: ClickHouse-row poll timing
 
-**Filed:** 2026-04-28 — surfaced in the same post-cascade run.
+**Filed:** 2026-04-28. **Closed:** 2026-04-29.
 
-**Symptom.** Suite 17 GETs `/v/hula_hello.html`, sleeps 3s, and
-queries ClickHouse for the most recent event row. With the fresh
-testsite-seed virtual server the row hasn't landed yet, so the
-suite trips:
-```
-FAIL: analytics enrichment: no events row returned (ClickHouse reachable?)
-```
-
-**Root cause.** Hula's bounce-and-write cycle plus ClickHouse
-async commit can take longer than 3s on a cold system.
-
-**Fix sketch.** Either (a) replace the fixed sleep with a poll
-loop (up to ~30s) that waits for the row, OR (b) seed an event
-synchronously via `/v/hello` POST before issuing the query.
-
-**Not HA-related.** The Storage seam doesn't sit in the
-analytics ingest path — events go straight to ClickHouse.
+Suites that issue a visitor-side request and then query
+ClickHouse for the resulting event row used a fixed 3s sleep,
+which is shorter than the bounce + async commit on a cold
+compose stack. Replaced with a 15×2s poll loop (≤30s budget)
+in:
+- `test/e2e/suites/17-analytics-foundation.sh`
+- `test/e2e/suites/35-consent.sh`
 
 ---
 

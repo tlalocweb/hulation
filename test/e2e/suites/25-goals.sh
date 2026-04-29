@@ -35,10 +35,12 @@ fi
 # --- 2. CreateGoal --------------------------------------------------
 
 goal_name="e2e-$(date +%s)"
+# Body is the Goal message directly — proto annotates
+# `body: "goal"`, so the gateway maps the flat JSON to req.Goal.
 create_resp=$(curl_test -s \
     -H "$auth_hdr" -H 'Content-Type: application/json' \
     -X POST \
-    --data "{\"goal\":{\"name\":\"${goal_name}\",\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/thank-you\",\"enabled\":true}}" \
+    --data "{\"name\":\"${goal_name}\",\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/thank-you\",\"enabled\":true}" \
     "https://${HULA_HOST}/api/v1/goals/${SERVER_ID}" || true)
 
 goal_id=$(echo "$create_resp" | grep -oE '"id":"[^"]+"' | head -1 | sed 's/"id":"//; s/"$//')
@@ -60,7 +62,7 @@ assert_contains "$get_resp" "$goal_name" "GetGoal returns the same goal"
 upd_resp=$(curl_test -s \
     -H "$auth_hdr" -H 'Content-Type: application/json' \
     -X PATCH \
-    --data "{\"goal\":{\"name\":\"${goal_name}\",\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/thank-you\",\"enabled\":false}}" \
+    --data "{\"name\":\"${goal_name}\",\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/thank-you\",\"enabled\":false}" \
     "https://${HULA_HOST}/api/v1/goals/${SERVER_ID}/${goal_id}" || true)
 assert_contains "$upd_resp" '"enabled":false' "UpdateGoal flips enabled off"
 
@@ -72,10 +74,12 @@ assert_contains "$list_after" "$goal_name" "ListGoals includes the new goal"
 
 # --- 6. TestGoal (dry-run) — may be 501 Unimplemented in early build
 
+# Body is the Goal directly (`body: "goal"`); `days` is read from
+# the request struct's default (7) when the body doesn't carry one.
 test_status=$(curl_test -s -o /dev/null -w '%{http_code}' \
     -H "$auth_hdr" -H 'Content-Type: application/json' \
     -X POST \
-    --data "{\"goal\":{\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/\"},\"days\":7}" \
+    --data "{\"kind\":\"GOAL_KIND_URL_VISIT\",\"rule_url_regex\":\"^/\"}" \
     "https://${HULA_HOST}/api/v1/goals/${SERVER_ID}/test" || true)
 
 case "$test_status" in
