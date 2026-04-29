@@ -1,7 +1,6 @@
 package handler
 
 import (
-	stdctx "context"
 	"fmt"
 	"net/url"
 
@@ -35,7 +34,7 @@ func MintVisitor(ctx RequestCtx, hostconf *config.Server, baton *VisitorCookiesB
 			err = &ResponseError{StatusCode: 500, RootCause: fmt.Errorf("storage not initialised")}
 			return
 		}
-		salt, sErr := hulabolt.GetOrCreateCookielessSalt(stdctx.Background(), s, hostconf.ID)
+		salt, sErr := hulabolt.GetOrCreateCookielessSalt(ctx.Context(), s, hostconf.ID)
 		if sErr != nil {
 			log.Errorf("cookieless: GetOrCreateCookielessSalt(%s): %s", hostconf.ID, sErr.Error())
 			err = &ResponseError{StatusCode: 500, RootCause: sErr}
