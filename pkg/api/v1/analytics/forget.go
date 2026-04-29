@@ -27,6 +27,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
@@ -135,8 +136,11 @@ func (s *Server) ForgetVisitor(ctx context.Context, req *analyticsspec.ForgetVis
 	}
 	if s := storage.Global(); s != nil {
 		if err := hulabolt.PutForgetAudit(ctx, s, audit); err != nil {
-			// Non-fatal — the delete still happened. Log-and-continue.
-			_ = err
+			// Non-fatal — the delete still happened, but the
+			// audit row didn't land. Surface it so operators
+			// can triage compliance gaps.
+			log.Warnf("ForgetVisitor: PutForgetAudit(visitor=%s, server=%s): %s",
+				req.GetVisitorId(), req.GetServerId(), err.Error())
 		}
 	}
 
