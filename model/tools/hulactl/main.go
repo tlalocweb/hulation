@@ -1274,10 +1274,15 @@ func main() {
 		}
 
 		// 1) Read the CURRENT password (or empty for first-time
-		//    bootstrap). Env preferred over interactive.
+		//    bootstrap). Env preferred over interactive. We must
+		//    distinguish "env unset" (prompt) from "env set to
+		//    empty string" (intentional bootstrap, do NOT prompt) —
+		//    the latter is how wrapper scripts signal bootstrap mode.
 		var currentPass string
-		if v := os.Getenv("HULACTL_CURRENT_PASSWORD"); v != "" {
+		curFromEnv := false
+		if v, ok := os.LookupEnv("HULACTL_CURRENT_PASSWORD"); ok {
 			currentPass = v
+			curFromEnv = true
 		}
 
 		// 2) Read the NEW password (env preferred over interactive).
@@ -1287,13 +1292,13 @@ func main() {
 		}
 
 		// 3) If anything is still missing, prompt interactively.
-		if currentPass == "" || newPass == "" {
+		if !curFromEnv || newPass == "" {
 			l, err := readline.NewEx(&readline.Config{})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error with readline: %s\n", err.Error())
 				os.Exit(1)
 			}
-			if currentPass == "" {
+			if !curFromEnv {
 				cur, err := l.ReadPassword(fmt.Sprintf(
 					"Current password for %s/%s (leave blank ONLY for first-time bootstrap): ",
 					provider, username))
