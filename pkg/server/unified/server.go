@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	stdlog "log"
+	"regexp"
 	"strings"
+	"sync/atomic"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	proxyproto "github.com/pires/go-proxyproto"
@@ -18,6 +21,24 @@ import (
 	"github.com/tlalocweb/hulation/pkg/server/static"
 	"github.com/tlalocweb/hulation/pkg/tune"
 )
+
+// IncidentRecorder is the optional callback for scoring TCP/TLS-level
+// scanner activity. Set via Server.SetIncidentRecorder; nil-safe at
+// every call site (the listener and TLS error hook check before
+// calling). Defined here, not imported, to keep pkg/server/unified
+// free of a hard dependency on the badactor package.
+//
+//   ip       — client IP (no port)
+//   category — short tag, e.g. "tcp_probe", "tls_no_cipher"
+//   reason   — human-readable line for logs and audit rows
+//   score    — points to add to this IP's running total
+type IncidentRecorder interface {
+	RecordIncident(ip, category, reason string, score int)
+}
+
+// incidentBox wraps an IncidentRecorder for atomic.Value (which
+// requires a consistent concrete type across Store calls).
+type incidentBox struct{ rec IncidentRecorder }
 
 var unifiedLogger = log.GetTaggedLogger("unified", "Unified HTTPS server")
 
@@ -46,6 +67,98 @@ type Server struct {
 	// per-host static certs and BEFORE the externalCert fallback. Primary
 	// use: ACME autocert.Manager.GetCertificate.
 	dynamicGetCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+	// incidents holds an *incidentBox or nil. Settable at any time
+	// via SetIncidentRecorder; the protocol-detecting listener and
+	// TLS handshake error hook load it on each invocation.
+	incidents atomic.Value
+}
+
+// SetIncidentRecorder wires a recorder for protocol-peek and TLS
+// handshake failures. Safe to call before or after Start; future
+// edge-case events pick up the new recorder atomically. Pass nil
+// to disable scoring.
+func (s *Server) SetIncidentRecorder(rec IncidentRecorder) {
+	s.incidents.Store(&incidentBox{rec: rec})
+}
+
+func (s *Server) loadIncidentRecorder() IncidentRecorder {
+	v, _ := s.incidents.Load().(*incidentBox)
+	if v == nil {
+		return nil
+	}
+	return v.rec
+}
+
+// remoteIPOnly returns just the IP from a "ip:port" RemoteAddr,
+// gracefully handling IPv6 brackets and parse failures.
+func remoteIPOnly(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
+}
+
+// tlsHandshakeErrorRE matches the line shape Go's net/http stdlib
+// emits for TLS handshake failures:
+//
+//	http: TLS handshake error from <host>:<port>: <reason>
+//
+// We extract the IP and the reason so we can score the IP and
+// classify the failure.
+var tlsHandshakeErrorRE = regexp.MustCompile(
+	`^http: TLS handshake error from ([^\s:]+):\d+: (.+?)\s*$`)
+
+// classifyTLSError maps a stdlib TLS handshake error reason to a
+// (category, score) tuple for badactor scoring. EOF mid-handshake
+// is light (1 incident shouldn't block); deliberate cipher
+// fingerprinting is heavier. Returns ("", 0) for reasons we don't
+// want to score.
+func classifyTLSError(reason string) (category string, score int) {
+	switch {
+	case strings.Contains(reason, "no cipher suite supported"):
+		return "tls_no_cipher", 10
+	case strings.HasPrefix(reason, "EOF"), reason == "EOF":
+		return "tls_handshake_eof", 5
+	case strings.Contains(reason, "remote error"),
+		strings.Contains(reason, "tls: client offered only unsupported"),
+		strings.Contains(reason, "tls: unsupported"),
+		strings.Contains(reason, "tls: first record does not look like a TLS handshake"):
+		return "tls_handshake_other", 10
+	default:
+		// Unknown TLS error — score lightly so log spam alone
+		// doesn't trigger a false positive.
+		return "tls_handshake_other", 5
+	}
+}
+
+// incidentLogWriter implements io.Writer for http.Server.ErrorLog.
+// It parses every line, scores TLS handshake failures via the
+// IncidentRecorder, and forwards the line through to the original
+// logger so operator-visible output is unchanged.
+type incidentLogWriter struct {
+	loadRec func() IncidentRecorder
+	passthrough *stdlog.Logger
+}
+
+func (w *incidentLogWriter) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	if rec := w.loadRec(); rec != nil {
+		if m := tlsHandshakeErrorRE.FindStringSubmatch(line); len(m) == 3 {
+			ip, reason := m[1], m[2]
+			if cat, score := classifyTLSError(reason); score > 0 {
+				rec.RecordIncident(ip, cat, "tls handshake: "+reason, score)
+			}
+		}
+	}
+	if w.passthrough != nil {
+		w.passthrough.Print(line)
+	}
+	return len(p), nil
 }
 
 // Config holds the configuration for the unified server
@@ -208,6 +321,14 @@ func NewServer(cfg *Config) (*Server, error) {
 		}),
 		TLSConfig: tlsConfig,
 	}
+	// Replace the default stdlib ErrorLog with one that scores TLS
+	// handshake errors against the (optional) incident recorder. The
+	// passthrough preserves the original log destination so existing
+	// operator-visible output is unchanged.
+	server.httpServer.ErrorLog = stdlog.New(&incidentLogWriter{
+		loadRec:     server.loadIncidentRecorder,
+		passthrough: stdlog.Default(),
+	}, "", 0)
 
 	unifiedLogger.Infof("Unified HTTPS server created on %s", cfg.Address)
 	return server, nil
@@ -461,6 +582,7 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsConfig: s.httpServer.TLSConfig,
 		logger:    s.logger,
 		address:   s.address,
+		loadRec:   s.loadIncidentRecorder,
 	}
 
 	// Start serving with protocol detection in a goroutine
@@ -605,6 +727,10 @@ type protocolDetectingListener struct {
 	tlsConfig *tls.Config
 	logger    *log.TaggedLogger
 	address   string
+	// loadRec returns the current IncidentRecorder (may be nil).
+	// Loaded lazily on each Accept so SetIncidentRecorder calls
+	// after Start are picked up immediately.
+	loadRec func() IncidentRecorder
 }
 
 // Accept waits for and returns the next connection to the listener
@@ -627,6 +753,19 @@ func (l *protocolDetectingListener) Accept() (net.Conn, error) {
 	// process off-line.
 	firstByte, err := peekConn.Peek()
 	if err != nil {
+		// Score this as a low-severity incident. A connection that
+		// opens TCP and closes before sending a single byte is the
+		// classic port-scan / half-open-probe signature. One hit is
+		// noise; repeated hits from the same IP accumulate toward
+		// the badactor block threshold.
+		if l.loadRec != nil {
+			if rec := l.loadRec(); rec != nil {
+				if ip := remoteIPOnly(conn.RemoteAddr()); ip != "" {
+					rec.RecordIncident(ip, "tcp_probe",
+						"protocol peek failed: "+err.Error(), 5)
+				}
+			}
+		}
 		conn.Close()
 		l.logger.Debugf("protocol peek failed: %v", err)
 		return nil, &temporaryError{msg: "protocol peek failed: " + err.Error()}
