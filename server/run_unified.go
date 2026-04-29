@@ -63,6 +63,15 @@ func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 		log.Errorf("RunUnified: boot failed: %s", err.Error())
 		return 1
 	}
+	// Wire scanner-incident scoring (TLS handshake errors and
+	// protocol-peek EOFs in the unified listener) to the badactor
+	// store. preloadSharedSubsystems initialised the store; here we
+	// connect it to the listener so TCP/TLS-level probes contribute
+	// to the IP's running score the same way HTTP-signature matches
+	// do. No-op when badactor is disabled (GetStore returns nil).
+	if store := badactor.GetStore(); store != nil {
+		srv.SetIncidentRecorder(store)
+	}
 	if err := srv.Start(ctx); err != nil {
 		log.Errorf("RunUnified: start failed: %s", err.Error())
 		return 1

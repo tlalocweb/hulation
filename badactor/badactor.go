@@ -274,6 +274,73 @@ func (s *Store) CheckAndBlock(ip, userAgent, method, urlPath, queryString, host 
 	return false, ""
 }
 
+// RecordIncident bumps the IP's score by `score` for a non-HTTP
+// signal (TCP probe, TLS handshake failure, etc.) where signature
+// matching doesn't apply. category is a short tag that flows into
+// the ClickHouse audit row; reason is the human-readable line. A
+// single incident below blockThreshold is harmless; the running
+// total accumulates across calls so a scanner that hits us repeatedly
+// from the same IP eventually crosses the threshold and gets blocked
+// the same way HTTP-signature matches do.
+//
+// Allowlist + CIDR allowlist short-circuit before any scoring.
+// No-op when called with empty ip or score <= 0.
+func (s *Store) RecordIncident(ip, category, reason string, score int) {
+	if ip == "" || score <= 0 {
+		return
+	}
+	if _, found := s.allowTree.Load().Get([]byte(ip)); found {
+		return
+	}
+	if len(s.cidrAllowlist) > 0 {
+		if parsed := net.ParseIP(ip); parsed != nil {
+			for _, cidr := range s.cidrAllowlist {
+				if cidr.Contains(parsed) {
+					return
+				}
+			}
+		}
+	}
+
+	tree := s.tree.Load()
+	existingScore := 0
+	if entry, found := tree.Get([]byte(ip)); found && time.Now().Before(entry.ExpiresAt) {
+		existingScore = entry.Score
+	}
+	newScore := existingScore + score
+
+	now := time.Now()
+	txn := s.tree.Load().Txn()
+	txn.Insert([]byte(ip), BadActorEntry{
+		Score:      newScore,
+		DetectedAt: now,
+		ExpiresAt:  now.Add(s.ttl),
+		LastReason: reason,
+	})
+	s.tree.Store(txn.Commit())
+
+	LookupIPInfoAsync(ip)
+	go func() {
+		if err := InsertBadActorRecord(s.db, ip, "", "", "", "", reason, "", category, score); err != nil {
+			baLog.Errorf("error recording incident to DB: %s", err)
+		}
+	}()
+
+	if newScore >= s.blockThreshold {
+		ipInfoStr := FormatIPInfoCached(ip)
+		if s.cfg.DryRun {
+			baLog.Warnf("[DRY RUN] would block %s (score=%d, reason=%s, category=%s) %s",
+				ip, newScore, reason, category, ipInfoStr)
+			return
+		}
+		baLog.Infof("BLOCKED %s (score=%d, reason=%s, category=%s) %s",
+			ip, newScore, reason, category, ipInfoStr)
+		return
+	}
+	baLog.Debugf("incident %s +%d=%d (threshold %d, category=%s, reason=%s)",
+		ip, score, newScore, s.blockThreshold, category, reason)
+}
+
 // CheckKnownOnly checks only the radix tree (no signature matching).
 // Used for pre-TLS blocking where we have no HTTP data.
 func (s *Store) CheckKnownOnly(ip string) (bool, string) {
