@@ -29,12 +29,17 @@ runner_shell "curl -sk \
     'https://${HULA_HOST}/v/hula_hello.html?h=testsite&u=https%3A%2F%2F${SITE_HOST}%2Fwelcome'" \
     >/dev/null 2>&1 || true
 
-# Give the async commit a moment to hit ClickHouse.
-sleep 3
-
-# Query ClickHouse for the most recent event. Expect the enrichment
-# columns to be populated.
-latest=$(dc exec -T hula-clickhouse sh -c "clickhouse-client -q \"SELECT channel, device_category, browser, is_bot FROM hula.events ORDER BY when DESC LIMIT 1 FORMAT TSV\"" 2>/dev/null || true)
+# Poll ClickHouse for up to ~30s. Hula's bounce + async commit
+# can take longer than a few seconds on a cold compose stack, so
+# a fixed sleep is too brittle.
+latest=""
+for _ in $(seq 1 15); do
+    latest=$(dc exec -T hula-clickhouse sh -c "clickhouse-client -q \"SELECT channel, device_category, browser, is_bot FROM hula.events ORDER BY when DESC LIMIT 1 FORMAT TSV\"" 2>/dev/null || true)
+    if [ -n "$latest" ]; then
+        break
+    fi
+    sleep 2
+done
 
 # Legacy schema: this query may fail if events_v1 migration hasn't run
 # (Phase-0 state: GORM AutoMigrate handles the new columns as nullable

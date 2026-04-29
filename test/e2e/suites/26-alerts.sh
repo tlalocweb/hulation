@@ -33,8 +33,10 @@ fi
 # --- 2. CreateAlert (goal_count_above) -----------------------------
 
 alert_name="e2e-$(date +%s)"
+# Body is the Alert message directly (proto annotates
+# `body: "alert"` — the gateway expects a flat object).
 create_payload=$(cat <<JSON
-{"alert":{
+{
   "name":"${alert_name}",
   "kind":"ALERT_KIND_GOAL_COUNT_ABOVE",
   "threshold":1,
@@ -43,7 +45,7 @@ create_payload=$(cat <<JSON
   "recipients":["e2e@test.local"],
   "target_goal_id":"synthetic-goal",
   "enabled":true
-}}
+}
 JSON
 )
 create_resp=$(curl_test -s \
@@ -68,7 +70,7 @@ assert_contains "$get_resp" "$alert_name" "GetAlert returns the created alert"
 # --- 4. UpdateAlert toggles enabled=false --------------------------
 
 upd_payload=$(cat <<JSON
-{"alert":{
+{
   "name":"${alert_name}",
   "kind":"ALERT_KIND_GOAL_COUNT_ABOVE",
   "threshold":1,
@@ -77,7 +79,7 @@ upd_payload=$(cat <<JSON
   "recipients":["e2e@test.local"],
   "target_goal_id":"synthetic-goal",
   "enabled":false
-}}
+}
 JSON
 )
 upd_resp=$(curl_test -s \

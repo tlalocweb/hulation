@@ -37,15 +37,18 @@ fi
 # --- 2. CreateReport -----------------------------------------------
 
 report_name="e2e-$(date +%s)"
+# Body is the Report message directly (proto annotates
+# `body: "report"` — the gateway expects a flat object, not an
+# envelope).
 create_payload=$(cat <<JSON
-{"report":{
+{
   "name":"${report_name}",
   "cron":"0 9 * * 1",
   "timezone":"UTC",
   "recipients":["e2e@test.local"],
   "template_variant":"TEMPLATE_VARIANT_SUMMARY",
   "enabled":true
-}}
+}
 JSON
 )
 create_resp=$(curl_test -s \
@@ -73,14 +76,14 @@ assert_contains "$get_resp" "$report_name" "GetReport returns the same report"
 
 new_name="${report_name}-v2"
 upd_payload=$(cat <<JSON
-{"report":{
+{
   "name":"${new_name}",
   "cron":"0 9 * * 1",
   "timezone":"UTC",
   "recipients":["e2e@test.local"],
   "template_variant":"TEMPLATE_VARIANT_DETAILED",
   "enabled":true
-}}
+}
 JSON
 )
 upd_resp=$(curl_test -s \
