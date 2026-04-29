@@ -86,10 +86,19 @@ func (i *informer) publish(key string, value []byte, op storage.OpKind) {
 }
 
 func (i *informer) shutdown() {
+	// Detach the subs slice under lock so concurrent publish/
+	// unsubscribe see an empty informer immediately, then close
+	// channels and cancel contexts outside the lock. Without this
+	// detach-first pattern, the per-sub unsubscribe goroutine
+	// (spawned in subscribe) wakes on ctx.Done, scans the empty
+	// slice, and returns without ever calling close(sub.ch) — so
+	// Watch consumers blocked on the channel never see EOF.
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, sub := range i.subs {
+	subs := i.subs
+	i.subs = nil
+	i.mu.Unlock()
+	for _, sub := range subs {
+		close(sub.ch)
 		sub.cancel()
 	}
-	i.subs = nil
 }
