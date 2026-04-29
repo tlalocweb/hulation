@@ -36,6 +36,9 @@ func chatRosterKey(serverID string) string { return "chat_acl/" + serverID }
 // is allowed and clears the list for that server. Recipients are
 // deduped + sorted on write.
 func PutChatRoster(ctx context.Context, s storage.Storage, r StoredChatRoster) (StoredChatRoster, error) {
+	if s == nil {
+		return r, ErrNotOpen
+	}
 	if r.ServerID == "" {
 		return r, fmt.Errorf("chat roster: server_id required")
 	}
@@ -56,6 +59,9 @@ func PutChatRoster(ctx context.Context, s storage.Storage, r StoredChatRoster) (
 // when nothing is on file.
 func GetChatRoster(ctx context.Context, s storage.Storage, serverID string) (StoredChatRoster, error) {
 	out := StoredChatRoster{ServerID: serverID}
+	if s == nil {
+		return out, ErrNotOpen
+	}
 	if serverID == "" {
 		return out, fmt.Errorf("chat roster: server_id required")
 	}
@@ -74,6 +80,9 @@ func GetChatRoster(ctx context.Context, s storage.Storage, serverID string) (Sto
 
 // DeleteChatRoster removes the roster entry for ServerID. Idempotent.
 func DeleteChatRoster(ctx context.Context, s storage.Storage, serverID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if serverID == "" {
 		return fmt.Errorf("chat roster: server_id required")
 	}

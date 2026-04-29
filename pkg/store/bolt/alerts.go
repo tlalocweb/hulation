@@ -58,6 +58,9 @@ func auditForgetKey(visitorID, ts string) string {
 // PutAlert upserts. Preserves CreatedAt on update by reading the
 // existing row first and copying the field forward.
 func PutAlert(ctx context.Context, s storage.Storage, a StoredAlert) (StoredAlert, error) {
+	if s == nil {
+		return a, ErrNotOpen
+	}
 	if a.ID == "" || a.ServerID == "" {
 		return a, fmt.Errorf("alert: id and server_id required")
 	}
@@ -81,6 +84,9 @@ func PutAlert(ctx context.Context, s storage.Storage, a StoredAlert) (StoredAler
 
 // GetAlert loads one alert. Returns nil when not found.
 func GetAlert(ctx context.Context, s storage.Storage, alertID string) (*StoredAlert, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, alertKey(alertID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
@@ -98,11 +104,17 @@ func GetAlert(ctx context.Context, s storage.Storage, alertID string) (*StoredAl
 // DeleteAlert removes the alert. Idempotent. Does not remove the
 // associated AlertEvent rows — those stay as historical record.
 func DeleteAlert(ctx context.Context, s storage.Storage, alertID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, alertKey(alertID))
 }
 
 // ListAlerts returns every alert scoped to server_id (empty = all).
 func ListAlerts(ctx context.Context, s storage.Storage, serverID string) ([]StoredAlert, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "alerts/")
 	if err != nil {
 		return nil, err
@@ -123,6 +135,9 @@ func ListAlerts(ctx context.Context, s storage.Storage, serverID string) ([]Stor
 
 // PutAlertEvent appends a fire-history row.
 func PutAlertEvent(ctx context.Context, s storage.Storage, e StoredAlertEvent) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if e.ID == "" || e.AlertID == "" {
 		return fmt.Errorf("alert event: id and alert_id required")
 	}
@@ -139,6 +154,9 @@ func PutAlertEvent(ctx context.Context, s storage.Storage, e StoredAlertEvent) e
 // ListAlertEvents returns the most recent N events for one alert,
 // ordered by FiredAt DESC.
 func ListAlertEvents(ctx context.Context, s storage.Storage, alertID string, limit int) ([]StoredAlertEvent, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	if limit <= 0 {
 		limit = 25
 	}
@@ -182,6 +200,9 @@ type StoredForgetAudit struct {
 // "<visitor_id>|<RFC3339Nano timestamp>" so callers can re-create
 // a scrollable timeline without juggling uuids.
 func PutForgetAudit(ctx context.Context, s storage.Storage, a StoredForgetAudit) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	if a.At.IsZero() {
 		a.At = time.Now().UTC()
 	}

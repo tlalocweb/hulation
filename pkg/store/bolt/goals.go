@@ -38,6 +38,9 @@ func goalKey(id string) string { return "goals/" + id }
 // PutGoal upserts the goal. ID + ServerID must be set; CreatedAt is
 // preserved on update. Returns the persisted goal.
 func PutGoal(ctx context.Context, s storage.Storage, g StoredGoal) (StoredGoal, error) {
+	if s == nil {
+		return g, ErrNotOpen
+	}
 	if g.ID == "" || g.ServerID == "" {
 		return g, fmt.Errorf("goal: id and server_id required")
 	}
@@ -60,6 +63,9 @@ func PutGoal(ctx context.Context, s storage.Storage, g StoredGoal) (StoredGoal, 
 
 // GetGoal loads one goal. Returns nil when not found (not an error).
 func GetGoal(ctx context.Context, s storage.Storage, goalID string) (*StoredGoal, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	v, err := s.Get(ctx, goalKey(goalID))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
@@ -76,12 +82,18 @@ func GetGoal(ctx context.Context, s storage.Storage, goalID string) (*StoredGoal
 
 // DeleteGoal removes the goal. Idempotent.
 func DeleteGoal(ctx context.Context, s storage.Storage, goalID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
 	return s.Delete(ctx, goalKey(goalID))
 }
 
 // ListGoals returns every goal scoped to the given server_id. Empty
 // server_id returns every goal (admin view).
 func ListGoals(ctx context.Context, s storage.Storage, serverID string) ([]StoredGoal, error) {
+	if s == nil {
+		return nil, ErrNotOpen
+	}
 	rows, err := s.List(ctx, "goals/")
 	if err != nil {
 		return nil, err
