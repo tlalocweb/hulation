@@ -71,7 +71,13 @@ type Storage interface {
 
 	// CompareAndSwap atomically replaces the value at key from
 	// expected to fresh. Returns ErrCASFailed if the current value
-	// doesn't match expected (including missing-vs-nil mismatch).
+	// doesn't match expected (compared bytewise via bytes.Equal).
+	//
+	// nil and zero-length expected are equivalent and both match
+	// either a missing key or a key whose stored value is empty —
+	// implementations do not distinguish "absent" from "stored
+	// empty bytes". Callers that need that distinction should use
+	// Get and check for ErrNotFound separately.
 	CompareAndSwap(ctx context.Context, key string, expected, fresh []byte) error
 
 	// CompareAndCreate atomically creates the key. Returns
