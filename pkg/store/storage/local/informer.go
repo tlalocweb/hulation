@@ -100,11 +100,19 @@ func (i *informer) publish(key string, value []byte, op storage.OpKind) {
 }
 
 // shutdown closes every subscription. Called by LocalStorage.Close.
+//
+// Detach the subs slice under lock, then close channels and cancel
+// contexts outside it. Without the detach-first pattern, the per-sub
+// unsubscribe goroutine (spawned in subscribe) wakes on ctx.Done,
+// scans the empty slice, and returns without ever calling
+// close(sub.ch) — leaving Watch consumers blocked.
 func (i *informer) shutdown() {
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, sub := range i.subs {
+	subs := i.subs
+	i.subs = nil
+	i.mu.Unlock()
+	for _, sub := range subs {
+		close(sub.ch)
 		sub.cancel()
 	}
-	i.subs = nil
 }
