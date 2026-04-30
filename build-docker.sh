@@ -83,14 +83,18 @@ case "${ACTION}" in
         fi
         CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" ${GO} build \
             -ldflags "-X github.com/tlalocweb/hulation/config.Version=${hulaversion}" \
-            -o "${SCRIPT_DIR}/builder-images/hulabuild-linux" \
+            -o "${SCRIPT_DIR}/builder-images/hulabuild-linux-${GOARCH}" \
             "${SCRIPT_DIR}/model/tools/hulabuild"
 
-        # Build alpine-default builder image
+        # Build alpine-default builder image. Dockerfile expects
+        # hulabuild-linux-${TARGETARCH}; on plain `docker build`
+        # TARGETARCH isn't auto-set, so we pass it explicitly.
         echo "Building hula-builder-alpine-default..."
-        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux" "${SCRIPT_DIR}/builder-images/alpine-default/hulabuild"
+        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux-${GOARCH}" \
+           "${SCRIPT_DIR}/builder-images/alpine-default/hulabuild-linux-${GOARCH}"
         docker build \
             --network=host \
+            --build-arg "TARGETARCH=${GOARCH}" \
             -t hula-builder-alpine-default:latest \
             -t hula-builder-default:latest \
             "${SCRIPT_DIR}/builder-images/alpine-default"
@@ -98,17 +102,19 @@ case "${ACTION}" in
 
         # Build ubuntu22.04 builder image
         echo "Building hula-builder-ubuntu22.04..."
-        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux" "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild"
+        cp "${SCRIPT_DIR}/builder-images/hulabuild-linux-${GOARCH}" \
+           "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild-linux-${GOARCH}"
         docker build \
             --network=host \
+            --build-arg "TARGETARCH=${GOARCH}" \
             -t hula-builder-ubuntu22.04:latest \
             "${SCRIPT_DIR}/builder-images/ubuntu22.04"
         echo "Image built: hula-builder-ubuntu22.04:latest"
 
         # Cleanup
-        rm -f "${SCRIPT_DIR}/builder-images/hulabuild-linux"
-        rm -f "${SCRIPT_DIR}/builder-images/alpine-default/hulabuild"
-        rm -f "${SCRIPT_DIR}/builder-images/ubuntu22.04/hulabuild"
+        rm -f "${SCRIPT_DIR}"/builder-images/hulabuild-linux-*
+        rm -f "${SCRIPT_DIR}"/builder-images/alpine-default/hulabuild-linux-*
+        rm -f "${SCRIPT_DIR}"/builder-images/ubuntu22.04/hulabuild-linux-*
         ;;
     push)
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
