@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	stdlog "log"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -113,6 +114,20 @@ func remoteIPOnly(addr net.Addr) string {
 var tlsHandshakeErrorRE = regexp.MustCompile(
 	`^http: TLS handshake error from ([^\s:]+):\d+: (.+?)\s*$`)
 
+// Listener-side Accept errors that the badactor pipeline already
+// records at source (see protocolDetectingListener). Suppressing
+// the stdlib log line keeps operators from seeing the same scanner
+// hit twice — the badactor scorer is the canonical record.
+var (
+	acceptProtoPeekRE = regexp.MustCompile(`^http: Accept error: protocol peek failed:`)
+	acceptRedirectRE  = regexp.MustCompile(`^http: Accept error: redirected HTTP to HTTPS`)
+)
+
+// noiseVerbose lets operators force-emit the raw scanner-noise log
+// lines (TLS handshake failures + Accept errors) for debugging.
+// Off by default — set HULA_LOG_VERBOSE_NOISE=1 to opt back in.
+var noiseVerbose = os.Getenv("HULA_LOG_VERBOSE_NOISE") == "1"
+
 // classifyTLSError maps a stdlib TLS handshake error reason to a
 // (category, score) tuple for badactor scoring. EOF mid-handshake
 // is light (1 incident shouldn't block); deliberate cipher
@@ -138,8 +153,10 @@ func classifyTLSError(reason string) (category string, score int) {
 
 // incidentLogWriter implements io.Writer for http.Server.ErrorLog.
 // It parses every line, scores TLS handshake failures via the
-// IncidentRecorder, and forwards the line through to the original
-// logger so operator-visible output is unchanged.
+// IncidentRecorder, and suppresses log lines for events the
+// badactor pipeline has already recorded (TLS handshake failures
+// and listener-side Accept errors). Set HULA_LOG_VERBOSE_NOISE=1
+// to keep the raw lines flowing for debugging.
 type incidentLogWriter struct {
 	loadRec func() IncidentRecorder
 	passthrough *stdlog.Logger
@@ -147,15 +164,23 @@ type incidentLogWriter struct {
 
 func (w *incidentLogWriter) Write(p []byte) (int, error) {
 	line := strings.TrimRight(string(p), "\n")
+	suppressed := false
 	if rec := w.loadRec(); rec != nil {
 		if m := tlsHandshakeErrorRE.FindStringSubmatch(line); len(m) == 3 {
 			ip, reason := m[1], m[2]
 			if cat, score := classifyTLSError(reason); score > 0 {
 				rec.RecordIncident(ip, cat, "tls handshake: "+reason, score)
 			}
+			suppressed = true
 		}
+	} else if tlsHandshakeErrorRE.MatchString(line) {
+		// No recorder wired yet, but it's still scanner noise.
+		suppressed = true
 	}
-	if w.passthrough != nil {
+	if acceptProtoPeekRE.MatchString(line) || acceptRedirectRE.MatchString(line) {
+		suppressed = true
+	}
+	if w.passthrough != nil && (!suppressed || noiseVerbose) {
 		w.passthrough.Print(line)
 	}
 	return len(p), nil
