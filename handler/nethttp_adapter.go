@@ -7,11 +7,20 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/log"
 	"sync"
 )
+
+// debugCFHeaders, when HULA_DEBUG_CF_HEADERS=1, makes Country() log
+// what it sees on every call: the immediate RemoteAddr, whether
+// that's in the loaded Cloudflare CIDR set, and the value of the
+// CF-IPCountry header. Useful to diagnose "country column always
+// empty behind Cloudflare" without having to dump every request.
+var debugCFHeaders = os.Getenv("HULA_DEBUG_CF_HEADERS") == "1"
 
 // NetHTTPCtx adapts http.ResponseWriter + *http.Request to the RequestCtx interface.
 type NetHTTPCtx struct {
@@ -113,10 +122,22 @@ func (n *NetHTTPCtx) Country() string {
 	// edge IP. Without that check a malicious client could spoof the
 	// header on a direct connection.
 	cfRanges := app.GetConfig().GetCloudflareIPs()
-	if cfRanges == nil || !cfRanges.ContainsString(n.r.RemoteAddr) {
+	cfRangesLoaded := cfRanges != nil
+	cfTrusted := cfRangesLoaded && cfRanges.ContainsString(n.r.RemoteAddr)
+	cc := strings.TrimSpace(n.r.Header.Get("CF-IPCountry"))
+
+	if debugCFHeaders {
+		// Only log on actual visitor endpoints to keep noise low.
+		p := n.r.URL.Path
+		if strings.HasPrefix(p, "/v/") || strings.Contains(p, "/api/v/") {
+			log.Infof("country-debug path=%s remote=%s cf_ranges_loaded=%v cf_trusted=%v cf_ipcountry=%q cf_connecting_ip=%q",
+				p, n.r.RemoteAddr, cfRangesLoaded, cfTrusted, cc, n.r.Header.Get("CF-Connecting-IP"))
+		}
+	}
+
+	if !cfTrusted {
 		return ""
 	}
-	cc := strings.TrimSpace(n.r.Header.Get("CF-IPCountry"))
 	// Cloudflare uses "XX" or "T1" for unknown / Tor. Treat those
 	// as "no country" so downstream code can fall back to geo-IP
 	// lookup instead of writing a synthetic value.
