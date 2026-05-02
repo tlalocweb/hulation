@@ -108,6 +108,24 @@ func (n *NetHTTPCtx) IP() string {
 	return host
 }
 
+func (n *NetHTTPCtx) Country() string {
+	// Trust CF-IPCountry only if RemoteAddr is a verified Cloudflare
+	// edge IP. Without that check a malicious client could spoof the
+	// header on a direct connection.
+	cfRanges := app.GetConfig().GetCloudflareIPs()
+	if cfRanges == nil || !cfRanges.ContainsString(n.r.RemoteAddr) {
+		return ""
+	}
+	cc := strings.TrimSpace(n.r.Header.Get("CF-IPCountry"))
+	// Cloudflare uses "XX" or "T1" for unknown / Tor. Treat those
+	// as "no country" so downstream code can fall back to geo-IP
+	// lookup instead of writing a synthetic value.
+	if cc == "" || cc == "XX" || cc == "T1" {
+		return ""
+	}
+	return cc
+}
+
 func (n *NetHTTPCtx) Hostname() string {
 	host := n.r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {

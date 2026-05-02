@@ -8,11 +8,15 @@ import (
 
 // init registers the ipinfo lookup hook with the handler package so
 // handler/visitor.go can enrich events with cached geo info without
-// creating a handler → badactor import cycle.
+// creating a handler → badactor import cycle. On a cache miss the
+// hook also fires LookupIPInfoAsync so subsequent events for the
+// same visitor find region/city populated. The async lookup is
+// deduped per IP and rate-limited at the ip-api.com client.
 func init() {
 	handler.IPInfoHook = func(ip string) (countryCode, region, city string) {
 		info := GetIPInfo(ip)
 		if info == nil {
+			LookupIPInfoAsync(ip)
 			return "", "", ""
 		}
 		return info.CountryCode, info.Region, info.City

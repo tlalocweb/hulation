@@ -68,6 +68,16 @@ type Tunables struct {
 
 	// Permission cache settings
 	PermissionCacheMaxEntries int `yaml:"permission_cache_max_entries" default:"1000" env:"HULA_PERMISSION_CACHE_MAX_ENTRIES" usage:"Maximum number of user permission sets to cache in memory"`
+
+	// IP-info (geo/ASN) cache settings — backs the visitor-analytics
+	// country/region/city enrichment and the badactor ipinfo lookups.
+	// Cache is in-process LRU sized by an approximate byte budget;
+	// entries past the budget are evicted oldest-first. TTL is a soft
+	// upper bound — entries older than this are refreshed on next hit.
+	IPInfoCacheMaxMB         int    `yaml:"ipinfo_cache_max_mb" default:"16" env:"HULA_IPINFO_CACHE_MAX_MB" usage:"Approximate memory budget for the in-process IP-info cache (MB). 0 disables in-process caching (DB-only)."`
+	IPInfoCacheTTL           string `yaml:"ipinfo_cache_ttl" default:"168h" env:"HULA_IPINFO_CACHE_TTL" usage:"How long an IP-info entry stays valid before re-lookup (default 7 days)"`
+	IPInfoRateLimitPerMinute int    `yaml:"ipinfo_rate_limit_per_minute" default:"40" env:"HULA_IPINFO_RATE_LIMIT_PER_MINUTE" usage:"Outbound rate limit for the ip-api.com lookup. Free tier is 45/min; we default to 40 to leave headroom."`
+	IPInfoUseHTTPS           bool   `yaml:"ipinfo_use_https" env:"HULA_IPINFO_USE_HTTPS" usage:"Use HTTPS for ip-api.com lookups (requires Pro plan)"`
 }
 
 var globalTunables Tunables
@@ -91,7 +101,62 @@ var (
 	inMemoryCacheExpiration time.Duration
 	backingSyncPollInterval time.Duration
 	backingSyncStaleTimeout time.Duration
+	ipInfoCacheTTL          time.Duration
 )
+
+// init applies default values from struct tags so tune.GetX() returns
+// sane defaults even when SetupTunables is never called (e.g. tests,
+// CLI tools, or boot paths that haven't been migrated yet). YAML
+// overrides via SetupTunables, and env-var overrides via conftagz, are
+// still honored when those entry points run.
+//
+// We deliberately exclude FLAGTAGS from OrderOfOps because conftagz's
+// flag-tag handler triggers flag.Parse() — and a stray flag.Parse() at
+// package-init time eats the runtime args before the testing package
+// gets a chance to register its own -test.* flags, which breaks
+// `go test` for any binary that transitively imports this package.
+func init() {
+	globalTunables.ProxyProtocolEnabled = true
+	opts := &conftagz.ConfTagOpts{
+		OrderOfOps: []int{conftagz.DEFAULTTAGS, conftagz.ENVTAGS, conftagz.TESTTAGS},
+	}
+	if err := conftagz.Process(opts, &globalTunables); err != nil {
+		// struct-tag failures are programmer errors — fail fast.
+		panic(fmt.Sprintf("tune: applying defaults: %v", err))
+	}
+	parseDurationTunables()
+}
+
+// parseDurationTunables resolves all *string duration fields into
+// their parsed time.Duration counterparts. Called from init() (with
+// defaults) and again from SetupTunables (with operator overrides).
+func parseDurationTunables() {
+	parse := func(field, raw string) time.Duration {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			panic(fmt.Sprintf("invalid %s '%s': %v", field, raw, err))
+		}
+		return d
+	}
+	tokenDuration = parse("token_duration", globalTunables.TokenDuration)
+	keyRotationInterval = parse("key_rotation_interval", globalTunables.KeyRotationInterval)
+	jwtKeyInitRetryDelay = parse("jwt_key_init_retry_delay", globalTunables.JWTKeyInitRetryDelay)
+	rootHashInitRetryDelay = parse("root_hash_init_retry_delay", globalTunables.RootHashInitRetryDelay)
+	conversionPollInterval = parse("conversion_poll_interval", globalTunables.ConversionPollInterval)
+	conversionStaleTimeout = parse("conversion_stale_timeout", globalTunables.ConversionStaleTimeout)
+	raftTransportTimeout = parse("raft_transport_timeout", globalTunables.RaftTransportTimeout)
+	raftApplyTimeout = parse("raft_apply_timeout", globalTunables.RaftApplyTimeout)
+	raftBarrierTimeout = parse("raft_barrier_timeout", globalTunables.RaftBarrierTimeout)
+	serverStartupDelay = parse("server_startup_delay", globalTunables.ServerStartupDelay)
+	gracefulShutdownTimeout = parse("graceful_shutdown_timeout", globalTunables.GracefulShutdownTimeout)
+	grpcKeepAliveInterval = parse("grpc_keepalive_interval", globalTunables.GRPCKeepAliveInterval)
+	httpRequestTimeout = parse("http_request_timeout", globalTunables.HTTPRequestTimeout)
+	tlsHandshakeTimeout = parse("tls_handshake_timeout", globalTunables.TLSHandshakeTimeout)
+	inMemoryCacheExpiration = parse("inmemory_cache_expiration", globalTunables.InMemoryCacheExpiration)
+	backingSyncPollInterval = parse("backing_sync_poll_interval", globalTunables.BackingSyncPollInterval)
+	backingSyncStaleTimeout = parse("backing_sync_stale_timeout", globalTunables.BackingSyncStaleTimeout)
+	ipInfoCacheTTL = parse("ipinfo_cache_ttl", globalTunables.IPInfoCacheTTL)
+}
 
 // SetupTunables initializes tunables from YAML config node
 // Panics on invalid duration strings (fail fast at startup)
@@ -111,94 +176,7 @@ func SetupTunables(node yaml.Node) error {
 
 	logtune.Debugf("Tunables loaded: %+v", globalTunables)
 
-	// Parse and cache all duration values - panic on invalid
-	var err error
-
-	tokenDuration, err = time.ParseDuration(globalTunables.TokenDuration)
-	if err != nil {
-		panic(fmt.Sprintf("invalid token_duration '%s': %v", globalTunables.TokenDuration, err))
-	}
-
-	keyRotationInterval, err = time.ParseDuration(globalTunables.KeyRotationInterval)
-	if err != nil {
-		panic(fmt.Sprintf("invalid key_rotation_interval '%s': %v", globalTunables.KeyRotationInterval, err))
-	}
-
-	jwtKeyInitRetryDelay, err = time.ParseDuration(globalTunables.JWTKeyInitRetryDelay)
-	if err != nil {
-		panic(fmt.Sprintf("invalid jwt_key_init_retry_delay '%s': %v", globalTunables.JWTKeyInitRetryDelay, err))
-	}
-
-	rootHashInitRetryDelay, err = time.ParseDuration(globalTunables.RootHashInitRetryDelay)
-	if err != nil {
-		panic(fmt.Sprintf("invalid root_hash_init_retry_delay '%s': %v", globalTunables.RootHashInitRetryDelay, err))
-	}
-
-	conversionPollInterval, err = time.ParseDuration(globalTunables.ConversionPollInterval)
-	if err != nil {
-		panic(fmt.Sprintf("invalid conversion_poll_interval '%s': %v", globalTunables.ConversionPollInterval, err))
-	}
-
-	conversionStaleTimeout, err = time.ParseDuration(globalTunables.ConversionStaleTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid conversion_stale_timeout '%s': %v", globalTunables.ConversionStaleTimeout, err))
-	}
-
-	raftTransportTimeout, err = time.ParseDuration(globalTunables.RaftTransportTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid raft_transport_timeout '%s': %v", globalTunables.RaftTransportTimeout, err))
-	}
-
-	raftApplyTimeout, err = time.ParseDuration(globalTunables.RaftApplyTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid raft_apply_timeout '%s': %v", globalTunables.RaftApplyTimeout, err))
-	}
-
-	raftBarrierTimeout, err = time.ParseDuration(globalTunables.RaftBarrierTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid raft_barrier_timeout '%s': %v", globalTunables.RaftBarrierTimeout, err))
-	}
-
-	serverStartupDelay, err = time.ParseDuration(globalTunables.ServerStartupDelay)
-	if err != nil {
-		panic(fmt.Sprintf("invalid server_startup_delay '%s': %v", globalTunables.ServerStartupDelay, err))
-	}
-
-	gracefulShutdownTimeout, err = time.ParseDuration(globalTunables.GracefulShutdownTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid graceful_shutdown_timeout '%s': %v", globalTunables.GracefulShutdownTimeout, err))
-	}
-
-	grpcKeepAliveInterval, err = time.ParseDuration(globalTunables.GRPCKeepAliveInterval)
-	if err != nil {
-		panic(fmt.Sprintf("invalid grpc_keepalive_interval '%s': %v", globalTunables.GRPCKeepAliveInterval, err))
-	}
-
-	httpRequestTimeout, err = time.ParseDuration(globalTunables.HTTPRequestTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid http_request_timeout '%s': %v", globalTunables.HTTPRequestTimeout, err))
-	}
-
-	tlsHandshakeTimeout, err = time.ParseDuration(globalTunables.TLSHandshakeTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid tls_handshake_timeout '%s': %v", globalTunables.TLSHandshakeTimeout, err))
-	}
-
-	inMemoryCacheExpiration, err = time.ParseDuration(globalTunables.InMemoryCacheExpiration)
-	if err != nil {
-		panic(fmt.Sprintf("invalid inmemory_cache_expiration '%s': %v", globalTunables.InMemoryCacheExpiration, err))
-	}
-
-	backingSyncPollInterval, err = time.ParseDuration(globalTunables.BackingSyncPollInterval)
-	if err != nil {
-		panic(fmt.Sprintf("invalid backing_sync_poll_interval '%s': %v", globalTunables.BackingSyncPollInterval, err))
-	}
-
-	backingSyncStaleTimeout, err = time.ParseDuration(globalTunables.BackingSyncStaleTimeout)
-	if err != nil {
-		panic(fmt.Sprintf("invalid backing_sync_stale_timeout '%s': %v", globalTunables.BackingSyncStaleTimeout, err))
-	}
-
+	parseDurationTunables()
 	return nil
 }
 
@@ -307,3 +285,18 @@ func GetProxyProtocolEnabled() bool { return globalTunables.ProxyProtocolEnabled
 
 func GetPermissionCacheMaxEntries() int     { return globalTunables.PermissionCacheMaxEntries }
 func GetPermissionCacheStoragePrefix() string { return GetStorageKey("permcache") }
+
+// ==================== IP-info (geo/ASN) Cache Getters ====================
+
+// GetIPInfoCacheMaxBytes returns the in-process IP-info cache budget
+// in bytes. 0 means in-process caching is disabled (DB-only).
+func GetIPInfoCacheMaxBytes() int64 {
+	if globalTunables.IPInfoCacheMaxMB <= 0 {
+		return 0
+	}
+	return int64(globalTunables.IPInfoCacheMaxMB) * 1024 * 1024
+}
+
+func GetIPInfoCacheTTL() time.Duration  { return ipInfoCacheTTL }
+func GetIPInfoRateLimit() int           { return globalTunables.IPInfoRateLimitPerMinute }
+func GetIPInfoUseHTTPS() bool           { return globalTunables.IPInfoUseHTTPS }

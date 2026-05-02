@@ -29,6 +29,12 @@ type RequestCtx interface {
 	QueryString() string
 	Param(name string) string
 	IP() string
+	// Country returns a 2-letter ISO country code from a trusted
+	// edge proxy header (e.g. CF-IPCountry from Cloudflare) when
+	// the upstream connection is from a verified edge. Returns
+	// "" when no trusted source is available — callers fall
+	// back to async geo-IP lookup in that case.
+	Country() string
 	Hostname() string
 	Method() string
 	Path() string

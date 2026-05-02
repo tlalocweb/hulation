@@ -55,6 +55,7 @@ const (
 	BMIndexVisitorM  = iota // *model.Visitor
 	BMHostConf       = iota // *config.Server
 	BMIndexReferer   = iota // string — raw Referer header captured at ingest
+	BMIndexCountry   = iota // string — 2-letter ISO country code from a trusted edge header (e.g. CF-IPCountry); empty when not available
 	// user
 	BMIndexData1 = iota
 	BMIndexData2 = iota
@@ -120,12 +121,24 @@ func enrichEventFromBounce(ev *model.Event, b *model.Bounce, visitorID string) {
 			ownHost = hconf.Host
 		}
 	}
-	// Geo enrichment from the ipinfo cache. Non-blocking: if the hook
-	// isn't registered (test harnesses, etc.) or the IP isn't cached,
-	// geo fields are left empty.
+	// Geo enrichment. Preferred source is the trusted edge header
+	// (CF-IPCountry from Cloudflare), captured at ingest into
+	// BMIndexCountry — that's instant and works on the first
+	// event for a brand-new visitor. The IPInfoHook fallback
+	// (ip-api.com cache) only fires when the edge didn't supply a
+	// country, and supplies region + city in either case if it has
+	// them cached. Non-blocking: missing inputs leave fields empty.
 	var countryCode, region, city string
+	if v, ok := b.Data[BMIndexCountry]; ok {
+		countryCode, _ = v.(string)
+	}
 	if ip != "" && IPInfoHook != nil {
-		countryCode, region, city = IPInfoHook(ip)
+		hookCC, hookRegion, hookCity := IPInfoHook(ip)
+		if countryCode == "" {
+			countryCode = hookCC
+		}
+		region = hookRegion
+		city = hookCity
 	}
 	ev.ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city)
 }
@@ -248,7 +261,7 @@ func Hello(ctx RequestCtx) error {
 		}
 
 		return err
-	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexConsentDecision: &consentDecision, BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hconf, BMIndexReferer: strings.Clone(ctx.Referer())})
+	}, map[uint32]interface{}{BMIndexHelloMsg: &hello, BMIndexConsentDecision: &consentDecision, BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hconf, BMIndexReferer: strings.Clone(ctx.Referer()), BMIndexCountry: ctx.Country()})
 
 	return ctx.SendString(`{"status":"ok","vc":"` + sscookie + `"}`)
 }
@@ -393,7 +406,7 @@ func HelloIframe(ctx RequestCtx) error {
 		return err
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(thisurl), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
 		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hostconf, BMIndexReferer: strings.Clone(ctx.Referer()),
-		BMIndexConsentDecision: &consentDecision})
+		BMIndexConsentDecision: &consentDecision, BMIndexCountry: ctx.Country()})
 
 	hulaurl, err := utils.GetBaseUrl(ctx.OriginalURL())
 	if err != nil {
@@ -550,7 +563,7 @@ func HelloNoScript(ctx RequestCtx) error {
 
 	}, map[uint32]interface{}{BMIndexURL: strings.Clone(refurl), BMIndexCookieM: cookiebaton.Cookiem, BMIndexSSCookieM: cookiebaton.Sscookiem,
 		BMIndexUA: strings.Clone(ctx.Header("User-Agent")), BMIndexIP: strings.Clone(ctx.IP()), BMHostConf: hostconf, BMIndexReferer: strings.Clone(refurl),
-		BMIndexConsentDecision: &consentDecision})
+		BMIndexConsentDecision: &consentDecision, BMIndexCountry: ctx.Country()})
 
 	body, err = iframeTemplate.Render(map[string]string{"helloscript": app.GetConfig().PublishedHelloScriptFilename, "apipath": hostconf.APIPath, "h": hostconf.ID,
 		"b": bounceS, "iframename": app.GetConfig().PublishedIFrameNoScriptFilename, "cookieprefix": hostconf.CookieOpts.CookiePrefix, "hulahost": hostconf.Host, "hulaurl": hostconf.GetExternalUrl()})

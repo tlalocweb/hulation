@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	lru "github.com/hashicorp/golang-lru/v2/expirable"
 	"gorm.io/gorm"
+
+	"github.com/tlalocweb/hulation/pkg/tune"
 )
 
 // IPInfo holds cached geolocation and ASN data for an IP address.
@@ -56,47 +59,92 @@ func (i *IPInfo) Format() string {
 }
 
 // --- Cache ---
-
-var (
-	ipInfoCache sync.Map // map[string]*IPInfo
-	ipInfoDB    *gorm.DB
-	// Rate limiter: track requests to avoid exceeding 45/min
-	ipInfoMu       sync.Mutex
-	ipInfoRequests int
-	ipInfoWindow   time.Time
-	// ipInfoUseHTTPS toggles https:// vs http:// for ip-api.com. The free
-	// tier is HTTP-only; HTTPS requires an ip-api Pro plan.
-	ipInfoUseHTTPS bool
-)
+//
+// In-process cache is a bounded LRU sized by an approximate byte
+// budget (tune.GetIPInfoCacheMaxBytes). When the budget is exhausted
+// the oldest entry is evicted. Entries past the TTL are filtered on
+// read so a stale-but-still-resident hit triggers a refresh instead
+// of being returned. The DB-backed cache (ClickHouse `ip_info_cache`
+// table) survives restarts and reseeds the LRU at boot.
+//
+// Per-entry size is hard to measure exactly in Go (struct + map
+// bookkeeping + LRU linked-list nodes + the variable-length string
+// fields), so we estimate at avgEntryBytes and turn the byte budget
+// into a fixed entry count at init time. avgEntryBytes deliberately
+// errs high so the in-memory footprint stays under the budget.
 
 const (
-	ipInfoCacheTTL     = 7 * 24 * time.Hour // 7 days
-	ipInfoRateLimit    = 40                  // stay under 45/min
+	avgEntryBytes      = 512
+	defaultMaxEntries  = 32 * 1024 // safety floor when budget is misconfigured
 	ipInfoRateWindow   = time.Minute
 	ipInfoAPITimeout   = 5 * time.Second
 )
 
-// InitIPInfoCache sets the database for persistent IP info caching. The
-// useHTTPS flag controls whether the ip-api.com lookup uses https://
-// (requires Pro plan) or http:// (free tier).
-func InitIPInfoCache(db *gorm.DB, useHTTPS bool) {
+var (
+	ipInfoCache *lru.LRU[string, *IPInfo]
+	ipInfoCacheMu sync.RWMutex
+	ipInfoDB    *gorm.DB
+	// Rate limiter: track requests to avoid exceeding the configured limit.
+	ipInfoMu       sync.Mutex
+	ipInfoRequests int
+	ipInfoWindow   time.Time
+)
+
+// loadCache returns the active LRU snapshot. Read-locked because the
+// pointer can be swapped by future reload paths; the LRU itself is
+// internally synchronised so we don't hold the lock during use.
+func loadCache() *lru.LRU[string, *IPInfo] {
+	ipInfoCacheMu.RLock()
+	defer ipInfoCacheMu.RUnlock()
+	return ipInfoCache
+}
+
+// InitIPInfoCache sets the database for persistent IP info caching
+// and builds the in-process LRU sized from tune.GetIPInfoCacheMaxBytes.
+// The useHTTPS flag is retained for backwards compatibility with the
+// existing call site but the canonical source is now
+// tune.GetIPInfoUseHTTPS — the param is ignored when the tunable is
+// also true. (Yes, it's a temporary belt-and-suspenders.)
+func InitIPInfoCache(db *gorm.DB, _useHTTPS bool) {
 	ipInfoDB = db
-	ipInfoUseHTTPS = useHTTPS
+
+	// Size the LRU from the byte-budget tunable. 0 = disabled →
+	// build a minimal cache so existing callers don't have to nil-check.
+	maxBytes := tune.GetIPInfoCacheMaxBytes()
+	maxEntries := int(maxBytes / avgEntryBytes)
+	if maxEntries <= 0 {
+		maxEntries = 1 // disabled — caller still gets a working pointer
+	}
+	if maxEntries > defaultMaxEntries*4 {
+		// soft ceiling: even a generous 64MB budget caps at ~131k entries
+		maxEntries = defaultMaxEntries * 4
+	}
+	ttl := tune.GetIPInfoCacheTTL()
+
+	ipInfoCacheMu.Lock()
+	ipInfoCache = lru.NewLRU[string, *IPInfo](maxEntries, nil, ttl)
+	ipInfoCacheMu.Unlock()
+
+	baLog.Infof("ipinfo: cache budget=%dMB entries=%d ttl=%s",
+		maxBytes/1024/1024, maxEntries, ttl)
+
 	// Create table
 	if err := db.Exec(sqlCreateIPInfoCache).Error; err != nil {
 		baLog.Warnf("ipinfo: failed to create cache table: %s", err)
 		return
 	}
-	// Load existing cache into memory
+	// Load existing cache into memory (oldest-first so newer rows win
+	// on collision — ReplacingMergeTree may surface duplicates).
 	var records []IPInfoRecord
 	if err := db.Find(&records).Error; err != nil {
 		baLog.Warnf("ipinfo: failed to load cache from DB: %s", err)
 		return
 	}
+	cache := loadCache()
 	loaded := 0
 	for _, r := range records {
-		if time.Since(r.LookedUpAt) < ipInfoCacheTTL {
-			ipInfoCache.Store(r.IP, &IPInfo{
+		if time.Since(r.LookedUpAt) < ttl {
+			cache.Add(r.IP, &IPInfo{
 				Country:     r.Country,
 				CountryCode: r.CountryCode,
 				Region:      r.Region,
@@ -117,9 +165,15 @@ func InitIPInfoCache(db *gorm.DB, useHTTPS bool) {
 // GetIPInfo returns cached IP info if available, or nil.
 // Does NOT trigger a lookup — use LookupIPInfoAsync for that.
 func GetIPInfo(ip string) *IPInfo {
-	if v, ok := ipInfoCache.Load(ip); ok {
-		info := v.(*IPInfo)
-		if time.Since(info.LookedUpAt) < ipInfoCacheTTL {
+	cache := loadCache()
+	if cache == nil {
+		return nil
+	}
+	if info, ok := cache.Get(ip); ok {
+		// LRU enforces TTL on its own; this second check guards against
+		// records that were resurrected from the DB with a stale
+		// timestamp before our LRU TTL kicked in.
+		if time.Since(info.LookedUpAt) < tune.GetIPInfoCacheTTL() {
 			return info
 		}
 	}
@@ -146,26 +200,44 @@ func LookupAndFormatIPInfo(ip string) string {
 	if info == nil {
 		return ""
 	}
-	ipInfoCache.Store(ip, info)
+	if cache := loadCache(); cache != nil {
+		cache.Add(ip, info)
+	}
 	if ipInfoDB != nil {
 		go persistIPInfo(ip, info)
 	}
 	return info.Format()
 }
 
-// LookupIPInfoAsync looks up IP info in the background and caches the result.
+// pendingLookups dedupes concurrent async lookups for the same IP.
+// Without it a burst of analytics events for a freshly-seen visitor
+// would each spawn their own goroutine and each consume one of our
+// 40-per-minute outbound API tokens.
+var pendingLookups sync.Map // map[string]struct{}
+
+// LookupIPInfoAsync looks up IP info in the background and caches the
+// result. Safe to call from hot paths — the function returns
+// immediately. No-op when the IP is already cached or another lookup
+// for the same IP is already in flight.
 func LookupIPInfoAsync(ip string) {
-	// Skip if already cached
+	if ip == "" {
+		return
+	}
 	if GetIPInfo(ip) != nil {
 		return
 	}
+	if _, busy := pendingLookups.LoadOrStore(ip, struct{}{}); busy {
+		return
+	}
 	go func() {
+		defer pendingLookups.Delete(ip)
 		info := fetchIPInfo(ip)
 		if info == nil {
 			return
 		}
-		ipInfoCache.Store(ip, info)
-		// Persist to DB
+		if cache := loadCache(); cache != nil {
+			cache.Add(ip, info)
+		}
 		if ipInfoDB != nil {
 			persistIPInfo(ip, info)
 		}
@@ -187,13 +259,17 @@ type ipAPIResponse struct {
 
 func fetchIPInfo(ip string) *IPInfo {
 	// Rate limiting
+	rateLimit := tune.GetIPInfoRateLimit()
+	if rateLimit <= 0 {
+		rateLimit = 40
+	}
 	ipInfoMu.Lock()
 	now := time.Now()
 	if now.Sub(ipInfoWindow) > ipInfoRateWindow {
 		ipInfoRequests = 0
 		ipInfoWindow = now
 	}
-	if ipInfoRequests >= ipInfoRateLimit {
+	if ipInfoRequests >= rateLimit {
 		ipInfoMu.Unlock()
 		baLog.Debugf("ipinfo: rate limited, skipping lookup for %s", ip)
 		return nil
@@ -203,7 +279,7 @@ func fetchIPInfo(ip string) *IPInfo {
 
 	client := &http.Client{Timeout: ipInfoAPITimeout}
 	scheme := "http"
-	if ipInfoUseHTTPS {
+	if tune.GetIPInfoUseHTTPS() {
 		scheme = "https"
 	}
 	url := fmt.Sprintf("%s://ip-api.com/json/%s?fields=status,country,countryCode,regionName,city,isp,org,as", scheme, ip)
