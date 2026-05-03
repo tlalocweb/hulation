@@ -32,6 +32,7 @@
     { href: 'admin/reports', label: 'Reports' },
     { href: 'admin/alerts', label: 'Alerts' },
     { href: 'admin/notifications', label: 'Notifications' },
+    { href: 'admin/security', label: 'Security' },
   ];
 
   let isAdmin = false;
