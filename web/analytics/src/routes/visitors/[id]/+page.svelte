@@ -5,7 +5,7 @@
   import { analytics, ApiError } from '$lib/api/analytics';
   import { filters, setFilter } from '$lib/filters';
   import ErrorCard from '$lib/components/ErrorCard.svelte';
-  import type { VisitorResponse, VisitorEvent } from '$lib/api/types';
+  import type { VisitorResponse, VisitorEvent, VisitorIP } from '$lib/api/types';
 
   // Visitor detail drill-down. Fetches /visitor/{id} on mount. The
   // "Forget visitor (GDPR)" button is admin-gated (hidden for
@@ -124,7 +124,7 @@
   {:else if loading}
     <div class="h-40 animate-pulse rounded-lg border bg-muted/30"></div>
   {:else if data}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
       <article class="rounded-lg border bg-card p-4">
         <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Country
@@ -136,6 +136,17 @@
           Device
         </h2>
         <p class="mt-2 text-lg font-semibold">{data.visitor.top_device || '—'}</p>
+      </article>
+      <article class="rounded-lg border bg-card p-4">
+        <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Network
+        </h2>
+        <p class="mt-2 text-sm font-semibold">
+          {data.visitor.top_asn || '—'}
+        </p>
+        <p class="text-xs text-muted-foreground" title={data.visitor.top_isp ?? ''}>
+          {data.visitor.top_isp || ''}
+        </p>
       </article>
       <article class="rounded-lg border bg-card p-4">
         <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -176,14 +187,52 @@
       {/if}
     </article>
 
-    {#if data.aliases?.length || data.ips?.length}
+    {#if data.visitor_ips?.length || data.ips?.length}
+      <article class="rounded-lg border bg-card">
+        <header class="border-b px-3 py-2">
+          <h2 class="text-sm font-semibold">IP addresses</h2>
+        </header>
+        <table class="min-w-full text-xs">
+          <thead class="text-muted-foreground">
+            <tr class="text-left">
+              <th class="px-3 py-2 font-medium">IP</th>
+              <th class="px-3 py-2 font-medium">ASN</th>
+              <th class="px-3 py-2 font-medium">ISP</th>
+              <th class="px-3 py-2 font-medium">Org</th>
+              <th class="px-3 py-2 font-medium">Country</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if data.visitor_ips?.length}
+              {#each data.visitor_ips as r (r.ip)}
+                <tr class="border-t">
+                  <td class="px-3 py-2 font-mono">{r.ip}</td>
+                  <td class="px-3 py-2 font-mono">{r.asn || '—'}</td>
+                  <td class="px-3 py-2">{r.isp || '—'}</td>
+                  <td class="px-3 py-2">{r.org || '—'}</td>
+                  <td class="px-3 py-2">{r.country_code || '—'}</td>
+                </tr>
+              {/each}
+            {:else}
+              <!-- Fallback for older servers that haven't grown visitor_ips yet. -->
+              {#each data.ips ?? [] as ip (ip)}
+                <tr class="border-t">
+                  <td class="px-3 py-2 font-mono">{ip}</td>
+                  <td class="px-3 py-2 text-muted-foreground" colspan="4">
+                    Network details not yet resolved
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </article>
+    {/if}
+
+    {#if data.aliases?.length || data.cookies?.length}
       <article class="rounded-lg border bg-card p-4 text-xs">
         <h2 class="mb-2 text-sm font-semibold">Related identifiers</h2>
         <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1">
-          {#if data.ips?.length}
-            <dt class="text-muted-foreground">IPs</dt>
-            <dd class="font-mono">{data.ips.join(', ')}</dd>
-          {/if}
           {#if data.aliases?.length}
             <dt class="text-muted-foreground">Aliases</dt>
             <dd class="font-mono">{data.aliases.join(', ')}</dd>

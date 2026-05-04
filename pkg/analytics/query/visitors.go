@@ -38,7 +38,9 @@ SELECT
     countIf(code = 1) AS pageviews,
     count() AS events,
     anyHeavy(country_code) AS top_country,
-    anyHeavy(device_category) AS top_device
+    anyHeavy(device_category) AS top_device,
+    anyHeavy(asn) AS top_asn,
+    anyHeavy(isp) AS top_isp
 FROM events
 WHERE %s
 GROUP BY belongs_to
@@ -91,6 +93,8 @@ SELECT
     count() AS events,
     anyHeavy(country_code) AS top_country,
     anyHeavy(device_category) AS top_device,
+    anyHeavy(asn) AS top_asn,
+    anyHeavy(isp) AS top_isp,
     groupUniqArray(from_ip) AS ips
 FROM events
 WHERE %s
@@ -104,7 +108,9 @@ SELECT
     referer AS referrer,
     country_code AS country,
     device_category AS device,
-    from_ip AS ip
+    from_ip AS ip,
+    asn,
+    isp
 FROM events
 WHERE %s
 ORDER BY when DESC
@@ -113,4 +119,49 @@ LIMIT 1000`, where)
 	summary = &Built{SQL: summarySQL, Params: append([]any(nil), params...)}
 	timeline = &Built{SQL: timelineSQL, Params: append([]any(nil), params...)}
 	return summary, timeline, nil
+}
+
+// BuildVisitorIPs emits the per-IP enrichment query for a visitor's
+// detail page. One row per distinct IP the visitor has used, with
+// the most-frequently-seen ASN / ISP / Org / country_code for that
+// IP. Same widened time range as BuildVisitor.
+func (b *Builder) BuildVisitorIPs(f *analyticsspec.Filters, serverID, visitorID string) (*Built, error) {
+	if visitorID == "" {
+		return nil, Error("query.Builder: BuildVisitorIPs needs a non-empty visitor_id")
+	}
+	ctx, err := b.resolve(f, serverID)
+	if err != nil {
+		return nil, err
+	}
+	ctx.requireEvents = true
+	src := pickSource(ctx)
+
+	profileCtx := &filterCtx{
+		from:       ctx.to.AddDate(0, 0, -400),
+		to:         ctx.to,
+		gran:       ctx.gran,
+		allowedIDs: ctx.allowedIDs,
+	}
+	whereBase, paramsBase := profileCtx.whereClause(src.timeCol, "server_id", false)
+	where := whereBase + " AND belongs_to = ?"
+	params := append(append([]any(nil), paramsBase...), visitorID)
+
+	// from_ip is high-cardinality; LowCardinality columns (asn/isp/org)
+	// resolve fast inside anyHeavy. Sorting by recency keeps the most
+	// relevant IP on top.
+	sql := fmt.Sprintf(`
+SELECT
+    from_ip AS ip,
+    anyHeavy(asn) AS asn,
+    anyHeavy(isp) AS isp,
+    anyHeavy(org) AS org,
+    anyHeavy(country_code) AS country_code,
+    max(when) AS last_seen
+FROM events
+WHERE %s AND from_ip != ''
+GROUP BY from_ip
+ORDER BY last_seen DESC
+LIMIT 200`, where)
+
+	return &Built{SQL: sql, Params: params}, nil
 }

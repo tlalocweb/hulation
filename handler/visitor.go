@@ -39,7 +39,7 @@ func dispatchForwarder(ev *model.Event, serverID, ip, ua string) {
 // visitor enrichment path pull cached geo info without creating a
 // handler → badactor import cycle (badactor already imports handler).
 // Returns empty strings when no cached info exists; non-blocking.
-var IPInfoHook func(ip string) (countryCode, region, city string)
+var IPInfoHook func(ip string) (countryCode, region, city, asn, isp, org string)
 
 const (
 	VisitBounceFlagSawURL = 1 << iota
@@ -121,26 +121,31 @@ func enrichEventFromBounce(ev *model.Event, b *model.Bounce, visitorID string) {
 			ownHost = hconf.Host
 		}
 	}
-	// Geo enrichment. Preferred source is the trusted edge header
-	// (CF-IPCountry from Cloudflare), captured at ingest into
-	// BMIndexCountry — that's instant and works on the first
-	// event for a brand-new visitor. The IPInfoHook fallback
-	// (ip-api.com cache) only fires when the edge didn't supply a
-	// country, and supplies region + city in either case if it has
-	// them cached. Non-blocking: missing inputs leave fields empty.
-	var countryCode, region, city string
+	// Geo + network enrichment. Preferred country source is the
+	// trusted edge header (CF-IPCountry from Cloudflare), captured
+	// at ingest into BMIndexCountry — that's instant and works on
+	// the first event for a brand-new visitor. The IPInfoHook
+	// fallback (ip-api.com cache) provides region/city/ASN/ISP/Org
+	// (and country, when CF didn't supply one). Non-blocking:
+	// missing inputs leave fields empty; the hook's async-on-miss
+	// behavior backfills the cache so the next event lands fully
+	// enriched.
+	var countryCode, region, city, asn, isp, org string
 	if v, ok := b.Data[BMIndexCountry]; ok {
 		countryCode, _ = v.(string)
 	}
 	if ip != "" && IPInfoHook != nil {
-		hookCC, hookRegion, hookCity := IPInfoHook(ip)
+		hookCC, hookRegion, hookCity, hookASN, hookISP, hookOrg := IPInfoHook(ip)
 		if countryCode == "" {
 			countryCode = hookCC
 		}
 		region = hookRegion
 		city = hookCity
+		asn = hookASN
+		isp = hookISP
+		org = hookOrg
 	}
-	ev.ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city)
+	ev.ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city, asn, isp, org)
 }
 
 var precompileNewVisitorHooks = &utils.RunOnceSingleton{Run: func(p interface{}) (err error) {

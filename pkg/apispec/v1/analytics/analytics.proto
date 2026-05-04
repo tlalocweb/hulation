@@ -202,15 +202,34 @@ message VisitorSummary {
   int32 events = 7;
   string top_country = 8;
   string top_device = 9;
+  // Most-frequently-seen network identity for this visitor across
+  // all of their events. Empty when the ipinfo cache hasn't
+  // resolved any of the visitor's IPs yet.
+  string top_asn = 10;
+  string top_isp = 11;
 }
 
 message VisitorRequest { string server_id = 1; string visitor_id = 2; }
 message VisitorResponse {
   VisitorSummary visitor = 1;
   repeated VisitorEvent timeline = 2;
+  // Deprecated — use visitor_ips for richer per-IP attribution.
+  // Kept for older clients that just want the bare IP list.
   repeated string ips = 3;
   repeated string cookies = 4;
   repeated string aliases = 5;
+  // Per-IP network identity. One entry per distinct IP in the
+  // visitor's full history. Empty asn/isp/org when the cache
+  // hasn't resolved that specific IP yet.
+  repeated VisitorIP visitor_ips = 6;
+}
+
+message VisitorIP {
+  string ip = 1;
+  string asn = 2;
+  string isp = 3;
+  string org = 4;
+  string country_code = 5;
 }
 
 message VisitorEvent {
@@ -221,6 +240,11 @@ message VisitorEvent {
   string country = 5;
   string device = 6;
   string ip = 7;
+  // Network identity at the time of the event. May be empty for
+  // the first event from a fresh IP (cache miss) — subsequent
+  // events for that IP land enriched.
+  string asn = 8;
+  string isp = 9;
 }
 
 message RealtimeRequest { string server_id = 1; }

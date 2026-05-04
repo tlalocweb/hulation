@@ -1,6 +1,7 @@
 package badactor
 
 import (
+	"strings"
 	"time"
 
 	"github.com/tlalocweb/hulation/handler"
@@ -13,13 +14,20 @@ import (
 // same visitor find region/city populated. The async lookup is
 // deduped per IP and rate-limited at the ip-api.com client.
 func init() {
-	handler.IPInfoHook = func(ip string) (countryCode, region, city string) {
+	handler.IPInfoHook = func(ip string) (countryCode, region, city, asn, isp, org string) {
 		info := GetIPInfo(ip)
 		if info == nil {
 			LookupIPInfoAsync(ip)
-			return "", "", ""
+			return "", "", "", "", "", ""
 		}
-		return info.CountryCode, info.Region, info.City
+		// ip-api.com puts the AS number + Org in one "AS" field
+		// (e.g. "AS16509 Amazon.com, Inc."). Split on the first
+		// space so we can show the bare ASN and a clean Org.
+		bareASN := info.ASN
+		if idx := strings.IndexByte(bareASN, ' '); idx > 0 {
+			bareASN = bareASN[:idx]
+		}
+		return info.CountryCode, info.Region, info.City, bareASN, info.ISP, info.Org
 	}
 }
 

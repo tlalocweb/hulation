@@ -1541,16 +1541,21 @@ func (x *VisitorsResponse) GetTotal() int32 {
 }
 
 type VisitorSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VisitorId     string                 `protobuf:"bytes,1,opt,name=visitor_id,json=visitorId,proto3" json:"visitor_id,omitempty"`
-	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
-	FirstSeen     string                 `protobuf:"bytes,3,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
-	LastSeen      string                 `protobuf:"bytes,4,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	Sessions      int32                  `protobuf:"varint,5,opt,name=sessions,proto3" json:"sessions,omitempty"`
-	Pageviews     int32                  `protobuf:"varint,6,opt,name=pageviews,proto3" json:"pageviews,omitempty"`
-	Events        int32                  `protobuf:"varint,7,opt,name=events,proto3" json:"events,omitempty"`
-	TopCountry    string                 `protobuf:"bytes,8,opt,name=top_country,json=topCountry,proto3" json:"top_country,omitempty"`
-	TopDevice     string                 `protobuf:"bytes,9,opt,name=top_device,json=topDevice,proto3" json:"top_device,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	VisitorId  string                 `protobuf:"bytes,1,opt,name=visitor_id,json=visitorId,proto3" json:"visitor_id,omitempty"`
+	Email      string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
+	FirstSeen  string                 `protobuf:"bytes,3,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen   string                 `protobuf:"bytes,4,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	Sessions   int32                  `protobuf:"varint,5,opt,name=sessions,proto3" json:"sessions,omitempty"`
+	Pageviews  int32                  `protobuf:"varint,6,opt,name=pageviews,proto3" json:"pageviews,omitempty"`
+	Events     int32                  `protobuf:"varint,7,opt,name=events,proto3" json:"events,omitempty"`
+	TopCountry string                 `protobuf:"bytes,8,opt,name=top_country,json=topCountry,proto3" json:"top_country,omitempty"`
+	TopDevice  string                 `protobuf:"bytes,9,opt,name=top_device,json=topDevice,proto3" json:"top_device,omitempty"`
+	// Most-frequently-seen network identity for this visitor across
+	// all of their events. Empty when the ipinfo cache hasn't
+	// resolved any of the visitor's IPs yet.
+	TopAsn        string `protobuf:"bytes,10,opt,name=top_asn,json=topAsn,proto3" json:"top_asn,omitempty"`
+	TopIsp        string `protobuf:"bytes,11,opt,name=top_isp,json=topIsp,proto3" json:"top_isp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1648,6 +1653,20 @@ func (x *VisitorSummary) GetTopDevice() string {
 	return ""
 }
 
+func (x *VisitorSummary) GetTopAsn() string {
+	if x != nil {
+		return x.TopAsn
+	}
+	return ""
+}
+
+func (x *VisitorSummary) GetTopIsp() string {
+	if x != nil {
+		return x.TopIsp
+	}
+	return ""
+}
+
 type VisitorRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
@@ -1701,12 +1720,18 @@ func (x *VisitorRequest) GetVisitorId() string {
 }
 
 type VisitorResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Visitor       *VisitorSummary        `protobuf:"bytes,1,opt,name=visitor,proto3" json:"visitor,omitempty"`
-	Timeline      []*VisitorEvent        `protobuf:"bytes,2,rep,name=timeline,proto3" json:"timeline,omitempty"`
-	Ips           []string               `protobuf:"bytes,3,rep,name=ips,proto3" json:"ips,omitempty"`
-	Cookies       []string               `protobuf:"bytes,4,rep,name=cookies,proto3" json:"cookies,omitempty"`
-	Aliases       []string               `protobuf:"bytes,5,rep,name=aliases,proto3" json:"aliases,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Visitor  *VisitorSummary        `protobuf:"bytes,1,opt,name=visitor,proto3" json:"visitor,omitempty"`
+	Timeline []*VisitorEvent        `protobuf:"bytes,2,rep,name=timeline,proto3" json:"timeline,omitempty"`
+	// Deprecated — use visitor_ips for richer per-IP attribution.
+	// Kept for older clients that just want the bare IP list.
+	Ips     []string `protobuf:"bytes,3,rep,name=ips,proto3" json:"ips,omitempty"`
+	Cookies []string `protobuf:"bytes,4,rep,name=cookies,proto3" json:"cookies,omitempty"`
+	Aliases []string `protobuf:"bytes,5,rep,name=aliases,proto3" json:"aliases,omitempty"`
+	// Per-IP network identity. One entry per distinct IP in the
+	// visitor's full history. Empty asn/isp/org when the cache
+	// hasn't resolved that specific IP yet.
+	VisitorIps    []*VisitorIP `protobuf:"bytes,6,rep,name=visitor_ips,json=visitorIps,proto3" json:"visitor_ips,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1776,22 +1801,110 @@ func (x *VisitorResponse) GetAliases() []string {
 	return nil
 }
 
-type VisitorEvent struct {
+func (x *VisitorResponse) GetVisitorIps() []*VisitorIP {
+	if x != nil {
+		return x.VisitorIps
+	}
+	return nil
+}
+
+type VisitorIP struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ts            string                 `protobuf:"bytes,1,opt,name=ts,proto3" json:"ts,omitempty"`
-	EventCode     string                 `protobuf:"bytes,2,opt,name=event_code,json=eventCode,proto3" json:"event_code,omitempty"`
-	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
-	Referrer      string                 `protobuf:"bytes,4,opt,name=referrer,proto3" json:"referrer,omitempty"`
-	Country       string                 `protobuf:"bytes,5,opt,name=country,proto3" json:"country,omitempty"`
-	Device        string                 `protobuf:"bytes,6,opt,name=device,proto3" json:"device,omitempty"`
-	Ip            string                 `protobuf:"bytes,7,opt,name=ip,proto3" json:"ip,omitempty"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	Asn           string                 `protobuf:"bytes,2,opt,name=asn,proto3" json:"asn,omitempty"`
+	Isp           string                 `protobuf:"bytes,3,opt,name=isp,proto3" json:"isp,omitempty"`
+	Org           string                 `protobuf:"bytes,4,opt,name=org,proto3" json:"org,omitempty"`
+	CountryCode   string                 `protobuf:"bytes,5,opt,name=country_code,json=countryCode,proto3" json:"country_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VisitorIP) Reset() {
+	*x = VisitorIP{}
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VisitorIP) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VisitorIP) ProtoMessage() {}
+
+func (x *VisitorIP) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VisitorIP.ProtoReflect.Descriptor instead.
+func (*VisitorIP) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *VisitorIP) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+func (x *VisitorIP) GetAsn() string {
+	if x != nil {
+		return x.Asn
+	}
+	return ""
+}
+
+func (x *VisitorIP) GetIsp() string {
+	if x != nil {
+		return x.Isp
+	}
+	return ""
+}
+
+func (x *VisitorIP) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+func (x *VisitorIP) GetCountryCode() string {
+	if x != nil {
+		return x.CountryCode
+	}
+	return ""
+}
+
+type VisitorEvent struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Ts        string                 `protobuf:"bytes,1,opt,name=ts,proto3" json:"ts,omitempty"`
+	EventCode string                 `protobuf:"bytes,2,opt,name=event_code,json=eventCode,proto3" json:"event_code,omitempty"`
+	Url       string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	Referrer  string                 `protobuf:"bytes,4,opt,name=referrer,proto3" json:"referrer,omitempty"`
+	Country   string                 `protobuf:"bytes,5,opt,name=country,proto3" json:"country,omitempty"`
+	Device    string                 `protobuf:"bytes,6,opt,name=device,proto3" json:"device,omitempty"`
+	Ip        string                 `protobuf:"bytes,7,opt,name=ip,proto3" json:"ip,omitempty"`
+	// Network identity at the time of the event. May be empty for
+	// the first event from a fresh IP (cache miss) — subsequent
+	// events for that IP land enriched.
+	Asn           string `protobuf:"bytes,8,opt,name=asn,proto3" json:"asn,omitempty"`
+	Isp           string `protobuf:"bytes,9,opt,name=isp,proto3" json:"isp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VisitorEvent) Reset() {
 	*x = VisitorEvent{}
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[24]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1803,7 +1916,7 @@ func (x *VisitorEvent) String() string {
 func (*VisitorEvent) ProtoMessage() {}
 
 func (x *VisitorEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[24]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1816,7 +1929,7 @@ func (x *VisitorEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VisitorEvent.ProtoReflect.Descriptor instead.
 func (*VisitorEvent) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{24}
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *VisitorEvent) GetTs() string {
@@ -1868,6 +1981,20 @@ func (x *VisitorEvent) GetIp() string {
 	return ""
 }
 
+func (x *VisitorEvent) GetAsn() string {
+	if x != nil {
+		return x.Asn
+	}
+	return ""
+}
+
+func (x *VisitorEvent) GetIsp() string {
+	if x != nil {
+		return x.Isp
+	}
+	return ""
+}
+
 type RealtimeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
@@ -1877,7 +2004,7 @@ type RealtimeRequest struct {
 
 func (x *RealtimeRequest) Reset() {
 	*x = RealtimeRequest{}
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[25]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1889,7 +2016,7 @@ func (x *RealtimeRequest) String() string {
 func (*RealtimeRequest) ProtoMessage() {}
 
 func (x *RealtimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[25]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1902,7 +2029,7 @@ func (x *RealtimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealtimeRequest.ProtoReflect.Descriptor instead.
 func (*RealtimeRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{25}
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RealtimeRequest) GetServerId() string {
@@ -1924,7 +2051,7 @@ type RealtimeResponse struct {
 
 func (x *RealtimeResponse) Reset() {
 	*x = RealtimeResponse{}
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[26]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1936,7 +2063,7 @@ func (x *RealtimeResponse) String() string {
 func (*RealtimeResponse) ProtoMessage() {}
 
 func (x *RealtimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[26]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1949,7 +2076,7 @@ func (x *RealtimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealtimeResponse.ProtoReflect.Descriptor instead.
 func (*RealtimeResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{26}
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RealtimeResponse) GetActiveVisitors_5M() int32 {
@@ -1990,7 +2117,7 @@ type ForgetVisitorRequest struct {
 
 func (x *ForgetVisitorRequest) Reset() {
 	*x = ForgetVisitorRequest{}
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2002,7 +2129,7 @@ func (x *ForgetVisitorRequest) String() string {
 func (*ForgetVisitorRequest) ProtoMessage() {}
 
 func (x *ForgetVisitorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[27]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2015,7 +2142,7 @@ func (x *ForgetVisitorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgetVisitorRequest.ProtoReflect.Descriptor instead.
 func (*ForgetVisitorRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{27}
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ForgetVisitorRequest) GetServerId() string {
@@ -2047,7 +2174,7 @@ type ForgetVisitorResponse struct {
 
 func (x *ForgetVisitorResponse) Reset() {
 	*x = ForgetVisitorResponse{}
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2059,7 +2186,7 @@ func (x *ForgetVisitorResponse) String() string {
 func (*ForgetVisitorResponse) ProtoMessage() {}
 
 func (x *ForgetVisitorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[28]
+	mi := &file_pkg_apispec_v1_analytics_analytics_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2072,7 +2199,7 @@ func (x *ForgetVisitorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgetVisitorResponse.ProtoReflect.Descriptor instead.
 func (*ForgetVisitorResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{28}
+	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ForgetVisitorResponse) GetRowsDeleted() int64 {
@@ -2215,7 +2342,7 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\x06format\x18\x05 \x01(\tR\x06format\"k\n" +
 	"\x10VisitorsResponse\x12A\n" +
 	"\bvisitors\x18\x01 \x03(\v2%.hulation.v1.analytics.VisitorSummaryR\bvisitors\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"\x93\x02\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"\xc5\x02\n" +
 	"\x0eVisitorSummary\x12\x1d\n" +
 	"\n" +
 	"visitor_id\x18\x01 \x01(\tR\tvisitorId\x12\x14\n" +
@@ -2229,17 +2356,28 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\vtop_country\x18\b \x01(\tR\n" +
 	"topCountry\x12\x1d\n" +
 	"\n" +
-	"top_device\x18\t \x01(\tR\ttopDevice\"L\n" +
+	"top_device\x18\t \x01(\tR\ttopDevice\x12\x17\n" +
+	"\atop_asn\x18\n" +
+	" \x01(\tR\x06topAsn\x12\x17\n" +
+	"\atop_isp\x18\v \x01(\tR\x06topIsp\"L\n" +
 	"\x0eVisitorRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1d\n" +
 	"\n" +
-	"visitor_id\x18\x02 \x01(\tR\tvisitorId\"\xd9\x01\n" +
+	"visitor_id\x18\x02 \x01(\tR\tvisitorId\"\x9c\x02\n" +
 	"\x0fVisitorResponse\x12?\n" +
 	"\avisitor\x18\x01 \x01(\v2%.hulation.v1.analytics.VisitorSummaryR\avisitor\x12?\n" +
 	"\btimeline\x18\x02 \x03(\v2#.hulation.v1.analytics.VisitorEventR\btimeline\x12\x10\n" +
 	"\x03ips\x18\x03 \x03(\tR\x03ips\x12\x18\n" +
 	"\acookies\x18\x04 \x03(\tR\acookies\x12\x18\n" +
-	"\aaliases\x18\x05 \x03(\tR\aaliases\"\xad\x01\n" +
+	"\aaliases\x18\x05 \x03(\tR\aaliases\x12A\n" +
+	"\vvisitor_ips\x18\x06 \x03(\v2 .hulation.v1.analytics.VisitorIPR\n" +
+	"visitorIps\"t\n" +
+	"\tVisitorIP\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x10\n" +
+	"\x03asn\x18\x02 \x01(\tR\x03asn\x12\x10\n" +
+	"\x03isp\x18\x03 \x01(\tR\x03isp\x12\x10\n" +
+	"\x03org\x18\x04 \x01(\tR\x03org\x12!\n" +
+	"\fcountry_code\x18\x05 \x01(\tR\vcountryCode\"\xd1\x01\n" +
 	"\fVisitorEvent\x12\x0e\n" +
 	"\x02ts\x18\x01 \x01(\tR\x02ts\x12\x1d\n" +
 	"\n" +
@@ -2248,7 +2386,9 @@ const file_pkg_apispec_v1_analytics_analytics_proto_rawDesc = "" +
 	"\breferrer\x18\x04 \x01(\tR\breferrer\x12\x18\n" +
 	"\acountry\x18\x05 \x01(\tR\acountry\x12\x16\n" +
 	"\x06device\x18\x06 \x01(\tR\x06device\x12\x0e\n" +
-	"\x02ip\x18\a \x01(\tR\x02ip\".\n" +
+	"\x02ip\x18\a \x01(\tR\x02ip\x12\x10\n" +
+	"\x03asn\x18\b \x01(\tR\x03asn\x12\x10\n" +
+	"\x03isp\x18\t \x01(\tR\x03isp\".\n" +
 	"\x0fRealtimeRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\"\xfd\x01\n" +
 	"\x10RealtimeResponse\x12,\n" +
@@ -2303,7 +2443,7 @@ func file_pkg_apispec_v1_analytics_analytics_proto_rawDescGZIP() []byte {
 	return file_pkg_apispec_v1_analytics_analytics_proto_rawDescData
 }
 
-var file_pkg_apispec_v1_analytics_analytics_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_pkg_apispec_v1_analytics_analytics_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_pkg_apispec_v1_analytics_analytics_proto_goTypes = []any{
 	(*Filters)(nil),               // 0: hulation.v1.analytics.Filters
 	(*SummaryRequest)(nil),        // 1: hulation.v1.analytics.SummaryRequest
@@ -2329,11 +2469,12 @@ var file_pkg_apispec_v1_analytics_analytics_proto_goTypes = []any{
 	(*VisitorSummary)(nil),        // 21: hulation.v1.analytics.VisitorSummary
 	(*VisitorRequest)(nil),        // 22: hulation.v1.analytics.VisitorRequest
 	(*VisitorResponse)(nil),       // 23: hulation.v1.analytics.VisitorResponse
-	(*VisitorEvent)(nil),          // 24: hulation.v1.analytics.VisitorEvent
-	(*RealtimeRequest)(nil),       // 25: hulation.v1.analytics.RealtimeRequest
-	(*RealtimeResponse)(nil),      // 26: hulation.v1.analytics.RealtimeResponse
-	(*ForgetVisitorRequest)(nil),  // 27: hulation.v1.analytics.ForgetVisitorRequest
-	(*ForgetVisitorResponse)(nil), // 28: hulation.v1.analytics.ForgetVisitorResponse
+	(*VisitorIP)(nil),             // 24: hulation.v1.analytics.VisitorIP
+	(*VisitorEvent)(nil),          // 25: hulation.v1.analytics.VisitorEvent
+	(*RealtimeRequest)(nil),       // 26: hulation.v1.analytics.RealtimeRequest
+	(*RealtimeResponse)(nil),      // 27: hulation.v1.analytics.RealtimeResponse
+	(*ForgetVisitorRequest)(nil),  // 28: hulation.v1.analytics.ForgetVisitorRequest
+	(*ForgetVisitorResponse)(nil), // 29: hulation.v1.analytics.ForgetVisitorResponse
 }
 var file_pkg_apispec_v1_analytics_analytics_proto_depIdxs = []int32{
 	0,  // 0: hulation.v1.analytics.SummaryRequest.filters:type_name -> hulation.v1.analytics.Filters
@@ -2356,39 +2497,40 @@ var file_pkg_apispec_v1_analytics_analytics_proto_depIdxs = []int32{
 	0,  // 17: hulation.v1.analytics.VisitorsRequest.filters:type_name -> hulation.v1.analytics.Filters
 	21, // 18: hulation.v1.analytics.VisitorsResponse.visitors:type_name -> hulation.v1.analytics.VisitorSummary
 	21, // 19: hulation.v1.analytics.VisitorResponse.visitor:type_name -> hulation.v1.analytics.VisitorSummary
-	24, // 20: hulation.v1.analytics.VisitorResponse.timeline:type_name -> hulation.v1.analytics.VisitorEvent
-	24, // 21: hulation.v1.analytics.RealtimeResponse.recent:type_name -> hulation.v1.analytics.VisitorEvent
-	6,  // 22: hulation.v1.analytics.RealtimeResponse.top_pages:type_name -> hulation.v1.analytics.TableRow
-	6,  // 23: hulation.v1.analytics.RealtimeResponse.top_sources:type_name -> hulation.v1.analytics.TableRow
-	1,  // 24: hulation.v1.analytics.AnalyticsService.Summary:input_type -> hulation.v1.analytics.SummaryRequest
-	4,  // 25: hulation.v1.analytics.AnalyticsService.Timeseries:input_type -> hulation.v1.analytics.TimeseriesRequest
-	7,  // 26: hulation.v1.analytics.AnalyticsService.Pages:input_type -> hulation.v1.analytics.PagesRequest
-	9,  // 27: hulation.v1.analytics.AnalyticsService.Sources:input_type -> hulation.v1.analytics.SourcesRequest
-	11, // 28: hulation.v1.analytics.AnalyticsService.Geography:input_type -> hulation.v1.analytics.GeographyRequest
-	13, // 29: hulation.v1.analytics.AnalyticsService.Devices:input_type -> hulation.v1.analytics.DevicesRequest
-	15, // 30: hulation.v1.analytics.AnalyticsService.Events:input_type -> hulation.v1.analytics.EventsRequest
-	17, // 31: hulation.v1.analytics.AnalyticsService.FormsReport:input_type -> hulation.v1.analytics.FormsReportRequest
-	19, // 32: hulation.v1.analytics.AnalyticsService.Visitors:input_type -> hulation.v1.analytics.VisitorsRequest
-	22, // 33: hulation.v1.analytics.AnalyticsService.Visitor:input_type -> hulation.v1.analytics.VisitorRequest
-	25, // 34: hulation.v1.analytics.AnalyticsService.Realtime:input_type -> hulation.v1.analytics.RealtimeRequest
-	27, // 35: hulation.v1.analytics.AnalyticsService.ForgetVisitor:input_type -> hulation.v1.analytics.ForgetVisitorRequest
-	2,  // 36: hulation.v1.analytics.AnalyticsService.Summary:output_type -> hulation.v1.analytics.SummaryResponse
-	5,  // 37: hulation.v1.analytics.AnalyticsService.Timeseries:output_type -> hulation.v1.analytics.TimeseriesResponse
-	8,  // 38: hulation.v1.analytics.AnalyticsService.Pages:output_type -> hulation.v1.analytics.PagesResponse
-	10, // 39: hulation.v1.analytics.AnalyticsService.Sources:output_type -> hulation.v1.analytics.SourcesResponse
-	12, // 40: hulation.v1.analytics.AnalyticsService.Geography:output_type -> hulation.v1.analytics.GeographyResponse
-	14, // 41: hulation.v1.analytics.AnalyticsService.Devices:output_type -> hulation.v1.analytics.DevicesResponse
-	16, // 42: hulation.v1.analytics.AnalyticsService.Events:output_type -> hulation.v1.analytics.EventsResponse
-	18, // 43: hulation.v1.analytics.AnalyticsService.FormsReport:output_type -> hulation.v1.analytics.FormsReportResponse
-	20, // 44: hulation.v1.analytics.AnalyticsService.Visitors:output_type -> hulation.v1.analytics.VisitorsResponse
-	23, // 45: hulation.v1.analytics.AnalyticsService.Visitor:output_type -> hulation.v1.analytics.VisitorResponse
-	26, // 46: hulation.v1.analytics.AnalyticsService.Realtime:output_type -> hulation.v1.analytics.RealtimeResponse
-	28, // 47: hulation.v1.analytics.AnalyticsService.ForgetVisitor:output_type -> hulation.v1.analytics.ForgetVisitorResponse
-	36, // [36:48] is the sub-list for method output_type
-	24, // [24:36] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	25, // 20: hulation.v1.analytics.VisitorResponse.timeline:type_name -> hulation.v1.analytics.VisitorEvent
+	24, // 21: hulation.v1.analytics.VisitorResponse.visitor_ips:type_name -> hulation.v1.analytics.VisitorIP
+	25, // 22: hulation.v1.analytics.RealtimeResponse.recent:type_name -> hulation.v1.analytics.VisitorEvent
+	6,  // 23: hulation.v1.analytics.RealtimeResponse.top_pages:type_name -> hulation.v1.analytics.TableRow
+	6,  // 24: hulation.v1.analytics.RealtimeResponse.top_sources:type_name -> hulation.v1.analytics.TableRow
+	1,  // 25: hulation.v1.analytics.AnalyticsService.Summary:input_type -> hulation.v1.analytics.SummaryRequest
+	4,  // 26: hulation.v1.analytics.AnalyticsService.Timeseries:input_type -> hulation.v1.analytics.TimeseriesRequest
+	7,  // 27: hulation.v1.analytics.AnalyticsService.Pages:input_type -> hulation.v1.analytics.PagesRequest
+	9,  // 28: hulation.v1.analytics.AnalyticsService.Sources:input_type -> hulation.v1.analytics.SourcesRequest
+	11, // 29: hulation.v1.analytics.AnalyticsService.Geography:input_type -> hulation.v1.analytics.GeographyRequest
+	13, // 30: hulation.v1.analytics.AnalyticsService.Devices:input_type -> hulation.v1.analytics.DevicesRequest
+	15, // 31: hulation.v1.analytics.AnalyticsService.Events:input_type -> hulation.v1.analytics.EventsRequest
+	17, // 32: hulation.v1.analytics.AnalyticsService.FormsReport:input_type -> hulation.v1.analytics.FormsReportRequest
+	19, // 33: hulation.v1.analytics.AnalyticsService.Visitors:input_type -> hulation.v1.analytics.VisitorsRequest
+	22, // 34: hulation.v1.analytics.AnalyticsService.Visitor:input_type -> hulation.v1.analytics.VisitorRequest
+	26, // 35: hulation.v1.analytics.AnalyticsService.Realtime:input_type -> hulation.v1.analytics.RealtimeRequest
+	28, // 36: hulation.v1.analytics.AnalyticsService.ForgetVisitor:input_type -> hulation.v1.analytics.ForgetVisitorRequest
+	2,  // 37: hulation.v1.analytics.AnalyticsService.Summary:output_type -> hulation.v1.analytics.SummaryResponse
+	5,  // 38: hulation.v1.analytics.AnalyticsService.Timeseries:output_type -> hulation.v1.analytics.TimeseriesResponse
+	8,  // 39: hulation.v1.analytics.AnalyticsService.Pages:output_type -> hulation.v1.analytics.PagesResponse
+	10, // 40: hulation.v1.analytics.AnalyticsService.Sources:output_type -> hulation.v1.analytics.SourcesResponse
+	12, // 41: hulation.v1.analytics.AnalyticsService.Geography:output_type -> hulation.v1.analytics.GeographyResponse
+	14, // 42: hulation.v1.analytics.AnalyticsService.Devices:output_type -> hulation.v1.analytics.DevicesResponse
+	16, // 43: hulation.v1.analytics.AnalyticsService.Events:output_type -> hulation.v1.analytics.EventsResponse
+	18, // 44: hulation.v1.analytics.AnalyticsService.FormsReport:output_type -> hulation.v1.analytics.FormsReportResponse
+	20, // 45: hulation.v1.analytics.AnalyticsService.Visitors:output_type -> hulation.v1.analytics.VisitorsResponse
+	23, // 46: hulation.v1.analytics.AnalyticsService.Visitor:output_type -> hulation.v1.analytics.VisitorResponse
+	27, // 47: hulation.v1.analytics.AnalyticsService.Realtime:output_type -> hulation.v1.analytics.RealtimeResponse
+	29, // 48: hulation.v1.analytics.AnalyticsService.ForgetVisitor:output_type -> hulation.v1.analytics.ForgetVisitorResponse
+	37, // [37:49] is the sub-list for method output_type
+	25, // [25:37] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_pkg_apispec_v1_analytics_analytics_proto_init() }
@@ -2402,7 +2544,7 @@ func file_pkg_apispec_v1_analytics_analytics_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apispec_v1_analytics_analytics_proto_rawDesc), len(file_pkg_apispec_v1_analytics_analytics_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

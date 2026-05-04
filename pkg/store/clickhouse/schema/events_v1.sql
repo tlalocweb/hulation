@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS events_v1
     country_code     LowCardinality(String),
     region           LowCardinality(String),
     city             String,
+    -- Network identity sourced from the badactor ipinfo cache (ip-api.com
+    -- backed). Migration 0005 adds these to existing deployments. Empty
+    -- string when the IP hasn't been resolved yet (first event for a
+    -- fresh IP); subsequent events pick up the cache hit.
+    asn              LowCardinality(String),
+    isp              LowCardinality(String),
+    org              LowCardinality(String),
     when             DateTime64(3),
     from_ip          String,
     browser_ua       String,

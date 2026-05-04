@@ -73,6 +73,14 @@ type Event struct {
 	CountryCode string `json:"country_code" gorm:"column:country_code"`
 	Region      string `json:"region" gorm:"column:region"`
 	City        string `json:"city" gorm:"column:city"`
+	// Network identity (sourced from the same ipinfo cache).
+	// ASN format: "AS16509" (or empty when unknown).
+	// Org / ISP commonly diverge — Org is the registered owner ("Amazon.com, Inc."),
+	// ISP is the operating carrier ("Amazon Technologies Inc."). Both are
+	// surfaced because customer-facing ASN attribution typically wants Org.
+	ASN string `json:"asn" gorm:"column:asn"`
+	ISP string `json:"isp" gorm:"column:isp"`
+	Org string `json:"org" gorm:"column:org"`
 
 	// --- Phase 4c.1 consent state ---
 	// ConsentAnalytics — visitor consents to analytics processing.
@@ -170,14 +178,20 @@ func (e *Event) BeforeCreate(tx *gorm.DB) (err error) {
 //	countryCode — populated from badactor.GetIPInfo (caller-supplied).
 //	region      — same.
 //	city        — same.
+//	asn         — same (e.g. "AS16509"); empty when uncached.
+//	isp         — same (carrier name).
+//	org         — same (registered owner; commonly different from isp).
 //
 // The landing URL used for UTM parsing is e.URL; callers set that via
 // SetURL before invoking this function.
-func (e *Event) ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city string) {
+func (e *Event) ApplyEnrichment(visitorID, ownHost, serverID, referer, ua, countryCode, region, city, asn, isp, org string) {
 	e.ServerID = serverID
 	e.CountryCode = countryCode
 	e.Region = region
 	e.City = city
+	e.ASN = asn
+	e.ISP = isp
+	e.Org = org
 
 	if visitorID != "" {
 		when := e.When

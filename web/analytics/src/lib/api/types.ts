@@ -97,6 +97,8 @@ export interface VisitorSummary {
   events: number;
   top_country: string;
   top_device: string;
+  top_asn?: string;
+  top_isp?: string;
 }
 
 export interface VisitorsResponse {
@@ -112,6 +114,16 @@ export interface VisitorEvent {
   country: string;
   device: string;
   ip: string;
+  asn?: string;
+  isp?: string;
+}
+
+export interface VisitorIP {
+  ip: string;
+  asn?: string;
+  isp?: string;
+  org?: string;
+  country_code?: string;
 }
 
 export interface VisitorResponse {
@@ -120,6 +132,7 @@ export interface VisitorResponse {
   ips?: string[];
   cookies?: string[];
   aliases?: string[];
+  visitor_ips?: VisitorIP[];
 }
 
 export interface RealtimeResponse {

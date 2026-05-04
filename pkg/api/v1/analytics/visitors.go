@@ -37,13 +37,14 @@ func (s *Server) Visitors(ctx context.Context, req *analyticsspec.VisitorsReques
 	resp := &analyticsspec.VisitorsResponse{}
 	for rows.Next() {
 		var (
-			visitorID            sql.NullString
-			firstSeen, lastSeen  sql.NullTime
-			sessions, pageviews  sql.NullInt64
-			events               sql.NullInt64
+			visitorID             sql.NullString
+			firstSeen, lastSeen   sql.NullTime
+			sessions, pageviews   sql.NullInt64
+			events                sql.NullInt64
 			topCountry, topDevice sql.NullString
+			topASN, topISP        sql.NullString
 		)
-		if err := rows.Scan(&visitorID, &firstSeen, &lastSeen, &sessions, &pageviews, &events, &topCountry, &topDevice); err != nil {
+		if err := rows.Scan(&visitorID, &firstSeen, &lastSeen, &sessions, &pageviews, &events, &topCountry, &topDevice, &topASN, &topISP); err != nil {
 			return nil, status.Errorf(codes.Internal, "visitors scan: %s", err)
 		}
 		vs := &analyticsspec.VisitorSummary{
@@ -53,6 +54,8 @@ func (s *Server) Visitors(ctx context.Context, req *analyticsspec.VisitorsReques
 			Events:     int32(events.Int64),
 			TopCountry: topCountry.String,
 			TopDevice:  topDevice.String,
+			TopAsn:     topASN.String,
+			TopIsp:     topISP.String,
 		}
 		if firstSeen.Valid {
 			vs.FirstSeen = firstSeen.Time.UTC().Format(time.RFC3339)
@@ -108,10 +111,11 @@ func (s *Server) Visitor(ctx context.Context, req *analyticsspec.VisitorRequest)
 		sessions, pageviews   sql.NullInt64
 		events                sql.NullInt64
 		topCountry, topDevice sql.NullString
+		topASN, topISP        sql.NullString
 		ipsRaw                any // groupUniqArray returns []string; clickhouse-go decodes into any
 	)
 	srow := db.QueryRowContext(ctx, summaryQ.SQL, summaryQ.Params...)
-	if err := srow.Scan(&vid, &firstSeen, &lastSeen, &sessions, &pageviews, &events, &topCountry, &topDevice, &ipsRaw); err != nil && err != sql.ErrNoRows {
+	if err := srow.Scan(&vid, &firstSeen, &lastSeen, &sessions, &pageviews, &events, &topCountry, &topDevice, &topASN, &topISP, &ipsRaw); err != nil && err != sql.ErrNoRows {
 		return nil, status.Errorf(codes.Internal, "visitor summary: %s", err)
 	}
 	if vid.String == "" {
@@ -124,6 +128,8 @@ func (s *Server) Visitor(ctx context.Context, req *analyticsspec.VisitorRequest)
 		Events:     int32(events.Int64),
 		TopCountry: topCountry.String,
 		TopDevice:  topDevice.String,
+		TopAsn:     topASN.String,
+		TopIsp:     topISP.String,
 	}
 	if firstSeen.Valid {
 		vs.FirstSeen = firstSeen.Time.UTC().Format(time.RFC3339)
@@ -144,11 +150,12 @@ func (s *Server) Visitor(ctx context.Context, req *analyticsspec.VisitorRequest)
 	defer trows.Close()
 	for trows.Next() {
 		var (
-			ts                        sql.NullTime
-			eventCode, url, referrer  sql.NullString
-			country, device, ip       sql.NullString
+			ts                       sql.NullTime
+			eventCode, url, referrer sql.NullString
+			country, device, ip      sql.NullString
+			asn, isp                 sql.NullString
 		)
-		if err := trows.Scan(&ts, &eventCode, &url, &referrer, &country, &device, &ip); err != nil {
+		if err := trows.Scan(&ts, &eventCode, &url, &referrer, &country, &device, &ip, &asn, &isp); err != nil {
 			return nil, status.Errorf(codes.Internal, "visitor timeline scan: %s", err)
 		}
 		ev := &analyticsspec.VisitorEvent{
@@ -158,6 +165,8 @@ func (s *Server) Visitor(ctx context.Context, req *analyticsspec.VisitorRequest)
 			Country:   country.String,
 			Device:    device.String,
 			Ip:        ip.String,
+			Asn:       asn.String,
+			Isp:       isp.String,
 		}
 		if ts.Valid {
 			ev.Ts = ts.Time.UTC().Format(time.RFC3339)
@@ -166,6 +175,37 @@ func (s *Server) Visitor(ctx context.Context, req *analyticsspec.VisitorRequest)
 	}
 	if err := trows.Err(); err != nil {
 		return nil, status.Errorf(codes.Internal, "visitor timeline rows: %s", err)
+	}
+
+	// Per-IP enrichment for the visitor's full history. One row per
+	// distinct IP, with the most-frequently-seen ASN/ISP/Org. Issued
+	// after the timeline so the existing two queries still complete
+	// even if this third one fails (best-effort enrichment).
+	ipsQ, err := b.BuildVisitorIPs(&analyticsspec.Filters{
+		From: from.Format(time.RFC3339),
+		To:   to.Format(time.RFC3339),
+	}, req.ServerId, req.VisitorId)
+	if err == nil {
+		iprows, ierr := db.QueryContext(ctx, ipsQ.SQL, ipsQ.Params...)
+		if ierr == nil {
+			defer iprows.Close()
+			for iprows.Next() {
+				var (
+					ip, asn, isp, org, cc sql.NullString
+					lastSeenIP            sql.NullTime
+				)
+				if e := iprows.Scan(&ip, &asn, &isp, &org, &cc, &lastSeenIP); e != nil {
+					break
+				}
+				resp.VisitorIps = append(resp.VisitorIps, &analyticsspec.VisitorIP{
+					Ip:          ip.String,
+					Asn:         asn.String,
+					Isp:         isp.String,
+					Org:         org.String,
+					CountryCode: cc.String,
+				})
+			}
+		}
 	}
 
 	return &resp, nil
