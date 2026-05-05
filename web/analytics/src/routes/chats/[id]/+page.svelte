@@ -24,7 +24,7 @@
   let pendingClose = false;
   let error = '';
 
-  $: sessionID = $page.params.id;
+  $: sessionID = $page.params.id ?? '';
   $: serverID = $filters.server_id;
 
   onMount(async () => {
