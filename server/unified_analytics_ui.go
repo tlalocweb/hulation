@@ -78,25 +78,6 @@ func requestHost(r *http.Request) string {
 	return strings.ToLower(h)
 }
 
-// pathInsideRoot reports whether candidate resolves to a path within
-// root after both are made absolute. Uses filepath.Rel rather than a
-// string-prefix check so /var/foo and /var/foobar can't collide.
-func pathInsideRoot(root, candidate string) bool {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	absCand, err := filepath.Abs(candidate)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(absRoot, absCand)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
-}
-
 // hulaConfigInjectMarker is the closing tag we replace with the
 // pre-hydration <script>window.hulaConfig=...</script> block. The
 // SvelteKit-built index.html is plain HTML5; the </head> tag is the
@@ -112,18 +93,25 @@ const hulaConfigInjectMarker = "</head>"
 // child onMount handlers that read window.hulaConfig synchronously.
 func spaHandler(root string, fs http.Handler, cfg *config.Config) http.HandlerFunc {
 	indexPath := filepath.Join(root, "index.html")
+	absRoot, absErr := filepath.Abs(root)
+	if absErr == nil {
+		absRoot = filepath.Clean(absRoot)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Strip the /analytics prefix.
 		stripped := strings.TrimPrefix(r.URL.Path, "/analytics")
 		if stripped == "" {
 			stripped = "/"
 		}
-		// Resolve against the root. Serve the asset when it exists.
-		candidate := filepath.Join(root, filepath.FromSlash(stripped))
-		// Defense in depth: refuse to stat anything outside root and
-		// fall back to index.html so the SPA still hydrates.
-		if pathInsideRoot(root, candidate) {
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		// Resolve against the root, then ensure the resolved path
+		// remains inside root before touching the filesystem. The
+		// sanitizer is inlined here (rather than hidden behind a
+		// helper) so CodeQL recognizes it as taint barrier between
+		// the request URL and the os.Stat call below.
+		candidate := filepath.Clean(filepath.Join(absRoot, filepath.FromSlash(stripped)))
+		if rel, relErr := filepath.Rel(absRoot, candidate); absErr == nil && relErr == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
 				r2 := r.Clone(r.Context())
 				r2.URL.Path = stripped
 				fs.ServeHTTP(w, r2)
