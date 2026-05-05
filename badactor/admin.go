@@ -8,16 +8,26 @@ import (
 )
 
 // init registers the ipinfo lookup hook with the handler package so
-// handler/visitor.go can enrich events with cached geo info without
-// creating a handler → badactor import cycle. On a cache miss the
-// hook also fires LookupIPInfoAsync so subsequent events for the
-// same visitor find region/city populated. The async lookup is
-// deduped per IP and rate-limited at the ip-api.com client.
+// handler/visitor.go can enrich events with geo + ASN info without
+// creating a handler → badactor import cycle.
+//
+// The hook is invoked exclusively from the BounceMap writer
+// goroutine (handler.enrichEventFromBounce → ApplyEnrichment), which
+// runs OFF the request hot path — the visitor's HTTP response has
+// already gone out by the time we get here. That means we can
+// afford to do a synchronous lookup on cache miss instead of
+// returning blanks and praying the next event for this IP arrives
+// after the async lookup completes.
+//
+// Trade-off: a fresh-IP miss now blocks the bounce writer for up to
+// the ip-api.com client timeout (5s worst case; ~100-300ms typical).
+// The writer is single-threaded, so events queued behind a slow
+// lookup wait their turn. Acceptable for the analytics-write path
+// since the browser never sees this latency.
 func init() {
 	handler.IPInfoHook = func(ip string) (countryCode, region, city, asn, isp, org string) {
-		info := GetIPInfo(ip)
+		info := LookupIPInfoSync(ip)
 		if info == nil {
-			LookupIPInfoAsync(ip)
 			return "", "", "", "", "", ""
 		}
 		// ip-api.com puts the AS number + Org in one "AS" field
