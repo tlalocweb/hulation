@@ -43,14 +43,8 @@ type AuthProvider interface {
 	// ValidateToken validates a token - returns the user if valid
 	ValidateToken(token string) (user *apiobjects.User, valid bool, err error)
 
-	// LoginWithSecret logs in with a secret
-	LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (resp *authspec.LoginWithSecretResponse, err error)
-
 	// LoginOIDC logs in with an OIDC provider
 	LoginOIDC(ctx context.Context, req *authspec.LoginOIDCRequest) (resp *authspec.LoginOIDCResponse, err error)
-
-	// UpdatePassword updates the password for a user
-	UpdatePassword(ctx context.Context, req *authspec.UpdatePasswordRequest) (resp *authspec.UpdatePasswordResponse, err error)
 }
 
 // ProviderManager handles multiple authentication providers and their lifecycle

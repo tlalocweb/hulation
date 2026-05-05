@@ -1,13 +1,12 @@
 package utils
 
 import (
-	"crypto/sha256"
-	"fmt"
-
 	"github.com/alexedwards/argon2id"
 )
 
-// Argon2GenerateFromSecretDefaults hashes a secret with argon2id default params.
+// Argon2GenerateFromSecretDefaults hashes a secret with argon2id default
+// params. Used by TOTP recovery-code storage; password authentication
+// itself goes through OPAQUE PAKE (see pkg/api/v1/auth/opaque.go).
 func Argon2GenerateFromSecretDefaults(password string) (string, error) {
 	return Argon2GenerateFromSecret(password, argon2id.DefaultParams)
 }
@@ -17,22 +16,8 @@ func Argon2GenerateFromSecret(password string, p *argon2id.Params) (string, erro
 	return argon2id.CreateHash(password, p)
 }
 
-// Argon2CompareHashAndSecret compares a network-hashed secret against a stored hash.
+// Argon2CompareHashAndSecret compares a secret against a stored argon2id
+// hash. Used by TOTP recovery-code verification.
 func Argon2CompareHashAndSecret(secret, hash string) (bool, error) {
 	return argon2id.ComparePasswordAndHash(secret, hash)
-}
-
-// GenerateNetworkPassHash produces the sha256 hash that auth APIs expect to
-// receive — the actual password never crosses the wire.
-func GenerateNetworkPassHash(password string) string {
-	sum := sha256.Sum256([]byte(password))
-	return fmt.Sprintf("%x", sum)
-}
-
-// GenerateHashFromPlaintextPass produces both the sha256 network hash and the
-// argon2id stored hash from a plaintext password.
-func GenerateHashFromPlaintextPass(password string) (argonhash, stringsum string, err error) {
-	stringsum = GenerateNetworkPassHash(password)
-	argonhash, err = Argon2GenerateFromSecretDefaults(stringsum)
-	return
 }

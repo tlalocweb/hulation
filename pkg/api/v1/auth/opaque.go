@@ -9,13 +9,11 @@ package auth
 //     anytime; internal users register via the invite-token flow
 //     (TODO stage 7).
 //   * LoginInit / LoginFinish — issues a JWT on success. For admin,
-//     populates `admintoken`; for internal users, `token`. Matches
-//     the legacy LoginAdmin / LoginWithSecret response shapes so
-//     downstream code paths don't fork.
-//   * legacy_available — when a username has no OPAQUE record but
-//     the legacy hash is still good (admin only — see `cfg.Admin.Hash`),
-//     return legacy_available=true on LoginInit so the client can
-//     fall back to LoginAdmin during the deprecation window.
+//     populates `admintoken`; for internal users, `token`.
+//   * legacy_available — vestigial. The legacy LoginAdmin /
+//     LoginWithSecret flows have been removed; servers always
+//     return legacy_available=false on LoginInit. The field is
+//     kept on the wire so older clients deserialize cleanly.
 
 import (
 	"context"
@@ -250,7 +248,7 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	// Best-effort: bump LastSuccessLogin on the record.
 	_ = hulabolt.MarkOpaqueLoginSuccess(ctx, storage.Global(), finish.Provider, finish.Username)
 
-	// Issue JWT — same path as LoginAdmin / LoginWithSecret today.
+	// Issue JWT — admin gets the admin claim, everyone else gets a user JWT.
 	isAdmin := finish.Provider == providerAdmin
 	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), finish.Username, &model.LoginOpts{
 		IsAdmin: isAdmin,

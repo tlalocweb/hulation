@@ -186,24 +186,6 @@ func Argon2CompareHashAndSecret(secret, hash string) (match bool, err error) {
 	return
 }
 
-// this is a function which hashes a password for use with /login
-// with Hula. It is a sha256 hash of the password.
-func GenerateHulaNetworkPassHash(password string) (hash string) {
-	sum := sha256.Sum256([]byte(password))
-	hash = fmt.Sprintf("%x", sum)
-	return
-}
-
-// This generate the hash we store in the database. It is built from the sha256 hash of the password
-// which is sent to use with auth API. The user should never send their actual password
-func GenerateHulaHashFromPlaintextPass(password string) (argonhash string, stringsum string, err error) {
-	// we never actually should keep or know the real password - so first we hash it using sha256
-	stringsum = GenerateHulaNetworkPassHash(password)
-	// then we hash it using argon2
-	argonhash, err = Argon2GenerateFromSecretDefaults(stringsum)
-	return
-}
-
 func CamelCase(s string) string {
 	// Courtesy of https://stackoverflow.com/questions/70083837/how-to-convert-a-string-to-camelcase-in-go
 	// Remove all characters that are not alphanumeric or spaces or underscores

@@ -91,18 +91,10 @@ func (p *BaseProvider) Type() string {
 // 	return p.Config.RedirectURI
 // }
 
-func (p *BaseProvider) LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (resp *authspec.LoginWithSecretResponse, err error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
 func (p *BaseProvider) LoginOIDC(ctx context.Context, req *authspec.LoginOIDCRequest) (resp *authspec.LoginOIDCResponse, err error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 func (p *BaseProvider) ValidateToken(token string) (user *apiobjects.User, valid bool, err error) {
 	return nil, false, fmt.Errorf("not implemented")
-}
-
-func (p *BaseProvider) UpdatePassword(ctx context.Context, req *authspec.UpdatePasswordRequest) (resp *authspec.UpdatePasswordResponse, err error) {
-	return nil, fmt.Errorf("password updates not supported for this authentication provider")
 }

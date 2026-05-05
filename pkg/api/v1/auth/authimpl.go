@@ -89,21 +89,6 @@ func (s *Server) RequestPasswordReset(ctx context.Context, req *authspec.Request
 	return &authspec.RequestPasswordResetResponse{Status: "success"}, nil
 }
 
-// LoginWithSecret is the username+password login path for non-OIDC
-// providers (e.g., internal/local). Delegates to the named provider.
-func (s *Server) LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (*authspec.LoginWithSecretResponse, error) {
-	providerName := req.GetProvider()
-	if providerName == "" {
-		providerName = "internal"
-	}
-	pm := authprovider.GetProviderManager()
-	p, err := pm.GetProvider(providerName)
-	if err != nil || p == nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "provider %q not configured", providerName)
-	}
-	return p.LoginWithSecret(ctx, req)
-}
-
 // LoginOIDC starts an OIDC login. Returns a redirect URL + instructions
 // for the caller to visit, plus a one-time token used to correlate
 // with the subsequent LoginWithCode call.
