@@ -113,23 +113,23 @@ gen_credentials() {
     local go_bin
     go_bin=$(pick_go)
     cd "$REPO_ROOT"
-    # Random 16-byte hex password; compute network-hash and argon2 hash via
-    # the existing gen-hash tool (which picks its own random password). We
-    # wrap it in our own tool that accepts the password as an argument.
+    # Random 16-byte hex password; gen-hash-from-password.go (run via `go run`)
+    # emits the argon2id hash on stdout. Used to populate the vestigial
+    # admin.hash field in the rendered config.
     local password
     password=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p -c 16)
 
-    # Use an inline Go program to produce the argon2 hash of the network-hash.
-    local hashes
-    hashes=$(PASSWORD="$password" "$go_bin" run "$HULA_E2E_ROOT/lib/gen-hash-from-password.go")
-    ADMIN_NETWORK_HASH=$(printf '%s\n' "$hashes" | sed -n '1p')
-    ADMIN_ARGON_HASH=$(printf '%s\n' "$hashes" | sed -n '2p')
+    # Use an inline Go program to produce the argon2 hash of the plaintext
+    # password. Legacy SHA256 "network hash" was removed when auth went
+    # OPAQUE-only; admin.hash in the rendered config is vestigial but still
+    # required to be a valid argon2 string.
+    ADMIN_ARGON_HASH=$(PASSWORD="$password" "$go_bin" run "$HULA_E2E_ROOT/lib/gen-hash-from-password.go")
     ADMIN_PASS="$password"
     if [ -z "$ADMIN_ARGON_HASH" ] || [ -z "$ADMIN_PASS" ]; then
         echo "ERROR: failed to generate admin credentials" >&2
         exit 1
     fi
-    export ADMIN_PASS ADMIN_NETWORK_HASH ADMIN_ARGON_HASH
+    export ADMIN_PASS ADMIN_ARGON_HASH
     echo "  password: ${ADMIN_PASS:0:4}*** (saved to workdir)"
     echo "  argon hash: ${ADMIN_ARGON_HASH:0:30}..."
     echo "$ADMIN_PASS" > "$WORKDIR/admin_password.txt"
