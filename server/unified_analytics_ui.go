@@ -78,6 +78,25 @@ func requestHost(r *http.Request) string {
 	return strings.ToLower(h)
 }
 
+// pathInsideRoot reports whether candidate resolves to a path within
+// root after both are made absolute. Uses filepath.Rel rather than a
+// string-prefix check so /var/foo and /var/foobar can't collide.
+func pathInsideRoot(root, candidate string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absCand, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absCand)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
 // hulaConfigInjectMarker is the closing tag we replace with the
 // pre-hydration <script>window.hulaConfig=...</script> block. The
 // SvelteKit-built index.html is plain HTML5; the </head> tag is the
@@ -101,11 +120,15 @@ func spaHandler(root string, fs http.Handler, cfg *config.Config) http.HandlerFu
 		}
 		// Resolve against the root. Serve the asset when it exists.
 		candidate := filepath.Join(root, filepath.FromSlash(stripped))
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = stripped
-			fs.ServeHTTP(w, r2)
-			return
+		// Defense in depth: refuse to stat anything outside root and
+		// fall back to index.html so the SPA still hydrates.
+		if pathInsideRoot(root, candidate) {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				r2 := r.Clone(r.Context())
+				r2.URL.Path = stripped
+				fs.ServeHTTP(w, r2)
+				return
+			}
 		}
 		// Fall back to index.html with hulaConfig injected.
 		serveIndexWithConfig(w, r, cfg, indexPath)

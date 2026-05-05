@@ -382,6 +382,16 @@ func extractTarGz(tarballPath, destDir string) error {
 			}
 			outFile.Close()
 		case tar.TypeSymlink:
+			// Reject symlinks whose linkname escapes destDir when
+			// resolved relative to the symlink's own directory —
+			// otherwise a crafted archive could plant a link
+			// pointing at /etc/passwd.
+			resolved := filepath.Join(filepath.Dir(target), header.Linkname)
+			cleanDest := filepath.Clean(destDir) + string(os.PathSeparator)
+			if !strings.HasPrefix(filepath.Clean(resolved)+string(os.PathSeparator), cleanDest) {
+				return fmt.Errorf("tar symlink %s -> %s escapes destination %s",
+					header.Name, header.Linkname, destDir)
+			}
 			if err := os.Symlink(header.Linkname, target); err != nil {
 				return err
 			}

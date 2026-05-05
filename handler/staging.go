@@ -582,7 +582,10 @@ func resolveStagingPath(hostDir, davPath string) (string, error) {
 	// Join with hostDir; strip the leading slash so filepath.Join doesn't
 	// treat it as a rooted replacement on Windows.
 	joined := filepath.Join(hostDir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
-	// Safety: the resolved path must remain inside hostDir.
+	// Safety: the resolved path must remain inside hostDir. Use
+	// filepath.Rel rather than a string-prefix check — the latter is
+	// bypassable when one staging dir is a literal prefix of another
+	// (e.g. /var/staging/site1 vs /var/staging/site1234).
 	absHostDir, err := filepath.Abs(hostDir)
 	if err != nil {
 		return "", err
@@ -591,7 +594,8 @@ func resolveStagingPath(hostDir, davPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(absJoined, absHostDir) {
+	rel, err := filepath.Rel(absHostDir, absJoined)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path escapes host directory")
 	}
 	return joined, nil
