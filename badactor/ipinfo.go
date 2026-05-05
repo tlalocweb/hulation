@@ -189,22 +189,51 @@ func FormatIPInfoCached(ip string) string {
 	return info.Format()
 }
 
-// LookupAndFormatIPInfo does a synchronous lookup (cache first, then API) and returns
-// the formatted string. Use when you can afford to block (e.g. dropping a connection anyway).
-func LookupAndFormatIPInfo(ip string) string {
-	info := GetIPInfo(ip)
-	if info != nil {
-		return info.Format()
+// LookupIPInfoSync does a synchronous lookup: cache hit returns
+// instantly; on miss, performs one ip-api.com fetch (subject to the
+// rate limit + the 5-second client timeout in fetchIPInfo) and caches
+// the result before returning. Returns nil on rate-limit, network
+// failure, or API error — callers should treat that as "no
+// enrichment available right now".
+//
+// Safe — and intended — to call from off-hot-path workers like the
+// BounceMap writer goroutine, where blocking briefly to enrich an
+// event before it lands in ClickHouse is the right tradeoff. Do NOT
+// call from a request hot path: a fresh-IP cold cache combined with
+// ip-api.com latency variability could stall the response by seconds.
+//
+// DB persistence is fired in a background goroutine — the in-memory
+// cache is the source of truth for subsequent events in this
+// process; the DB row exists only to survive a hula restart, and
+// gating the event commit on it would defeat the point of this
+// function.
+func LookupIPInfoSync(ip string) *IPInfo {
+	if ip == "" {
+		return nil
 	}
-	info = fetchIPInfo(ip)
+	if info := GetIPInfo(ip); info != nil {
+		return info
+	}
+	info := fetchIPInfo(ip)
 	if info == nil {
-		return ""
+		return nil
 	}
 	if cache := loadCache(); cache != nil {
 		cache.Add(ip, info)
 	}
 	if ipInfoDB != nil {
 		go persistIPInfo(ip, info)
+	}
+	return info
+}
+
+// LookupAndFormatIPInfo is the formatted-string variant of
+// LookupIPInfoSync. Kept as a wrapper because callers in the
+// badactor scoring path want a single human-readable line.
+func LookupAndFormatIPInfo(ip string) string {
+	info := LookupIPInfoSync(ip)
+	if info == nil {
+		return ""
 	}
 	return info.Format()
 }
