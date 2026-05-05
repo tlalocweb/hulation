@@ -405,6 +405,15 @@ func extractTarGzFromReader(r io.Reader, destDir string) error {
 			}
 			f.Close()
 		case tar.TypeSymlink:
+			// Reject symlinks whose linkname escapes destDir when
+			// resolved relative to the symlink's own directory —
+			// otherwise a crafted archive could plant a link
+			// pointing at an arbitrary host path.
+			resolved := filepath.Join(filepath.Dir(target), header.Linkname)
+			cleanDest := filepath.Clean(destDir) + string(os.PathSeparator)
+			if !strings.HasPrefix(filepath.Clean(resolved)+string(os.PathSeparator), cleanDest) {
+				continue
+			}
 			os.Symlink(header.Linkname, target)
 		}
 	}
