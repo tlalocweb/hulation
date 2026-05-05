@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -334,9 +335,44 @@ func (s *Server) GetCSPMap() map[string]string {
 // }
 
 // GitCredentials holds authentication for git operations.
+//
+// The common case is token-based auth where the YAML omits `username`
+// entirely and supplies only `password: "{{env:VAR}}"`. The config
+// loader then infers the username from the repo host:
+//
+//   gitlab.com / *.gitlab.* → "oauth2"   (override: GITLAB_AUTH_TOKEN_USERNAME)
+//   github.com / *.github.* → "x-access-token" (override: GITHUB_AUTH_TOKEN_USERNAME)
+//
+// Other hosts must set username explicitly.
 type GitCredentials struct {
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
+}
+
+// inferGitUsername returns the conventional auth username for repoURL
+// when the operator hasn't pinned one. Returns empty for hosts we
+// don't recognize — the caller's existing "username unset" error
+// then surfaces a clear failure.
+func inferGitUsername(repoURL string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	switch {
+	case strings.Contains(host, "gitlab"):
+		if v := os.Getenv("GITLAB_AUTH_TOKEN_USERNAME"); v != "" {
+			return v
+		}
+		return "oauth2"
+	case strings.Contains(host, "github"):
+		if v := os.Getenv("GITHUB_AUTH_TOKEN_USERNAME"); v != "" {
+			return v
+		}
+		return "x-access-token"
+	default:
+		return ""
+	}
 }
 
 // GitRefConfig specifies which git ref to check out.
@@ -813,7 +849,12 @@ type Config struct {
 	// Supports cert/key files, ACME, or omit for auto self-signed.
 	HulaSSL        *SSLConfig `yaml:"hula_ssl,omitempty"`
 	Registries map[string]*backend.RegistryConfig `yaml:"registries,omitempty"`
-	BadActors  *BadActorConfig                      `yaml:"bad_actors,omitempty"`
+	BadActors  *BadActorConfig                    `yaml:"bad_actors,omitempty"`
+	// BackendLogs controls passthrough of backend container
+	// stdout/stderr into hula's log stream. nil = defaults
+	// (passthrough on, colorized — same as docker compose v2).
+	// Per-backend `logs:` blocks fully override this when set.
+	BackendLogs *backend.LogConfig `yaml:"backend_logs,omitempty"`
 	// Comma-separated list of log tags to enable (only these tags will log)
 	LogTags   string `yaml:"log_tags,omitempty"`
 	// Comma-separated list of log tags to exclude from logging
@@ -1255,9 +1296,10 @@ func LoadConfig(filename string) (*Config, error) {
 			listenerforserver = &Listener{listenOn: s.listenOn, servers: []*Server{s}, serverByHost: make(map[string]*Server)}
 			cfg.byListener[s.listenOn] = listenerforserver
 		}
-		if listenerforserver.CORS != nil {
-			log.Warnf("CORS config for listener %s will be overwritten - muliple CORS config for same listeber FIXME", s.listenOn)
-		}
+		// Listener.CORS always points at the same global cfg.CORS, so
+		// setting it more than once per listener is a no-op. Per-server
+		// CORS overrides aren't applied today (no middleware reads
+		// Listener.CORS or Server.CORS) — see TODO at top of CORSConfig.
 		listenerforserver.CORS = &cfg.CORS
 		if s.SSL != nil && !s.SSL.NoConfig() {
 			// Resolve env vars in Cloudflare config before validation
@@ -1491,10 +1533,30 @@ func LoadConfig(filename string) (*Config, error) {
 			gad.Repo = SubstConfVarsLogErrorf(gad.Repo, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.repo", s.Host))
 			if gad.Creds != nil {
+				origUser, origPass := gad.Creds.Username, gad.Creds.Password
 				gad.Creds.Username = SubstConfVarsLogErrorf(gad.Creds.Username, map[string]string{"confdir": confDir, "serverid": s.ID},
 					fmt.Sprintf("server[%s].root_git_autodeploy.creds.username", s.Host))
 				gad.Creds.Password = SubstConfVarsLogErrorf(gad.Creds.Password, map[string]string{"confdir": confDir, "serverid": s.ID},
 					fmt.Sprintf("server[%s].root_git_autodeploy.creds.password", s.Host))
+				// Catch the common foot-gun: password was a `{{env:VAR}}` template
+				// but the env var is unset, so substitution yielded "". Without this
+				// the clone fails later with a confusing
+				// `terminal prompts disabled` error.
+				if strings.Contains(origPass, "{{env:") && gad.Creds.Password == "" {
+					return nil, fmt.Errorf("server[%s].root_git_autodeploy.creds.password: %q substituted to empty — env var unset?", s.Host, origPass)
+				}
+				if strings.Contains(origUser, "{{env:") && gad.Creds.Username == "" {
+					return nil, fmt.Errorf("server[%s].root_git_autodeploy.creds.username: %q substituted to empty — env var unset?", s.Host, origUser)
+				}
+				// If only the password was given (the common case for token-based
+				// auth), infer the username from the repo host. Operators can
+				// override the inferred value with GITLAB_AUTH_TOKEN_USERNAME or
+				// GITHUB_AUTH_TOKEN_USERNAME env vars; otherwise we fall back to
+				// the provider's documented convention (gitlab=oauth2,
+				// github=x-access-token).
+				if gad.Creds.Username == "" && gad.Creds.Password != "" {
+					gad.Creds.Username = inferGitUsername(gad.Repo)
+				}
 			}
 			gad.DataDir = SubstConfVarsLogErrorf(gad.DataDir, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.data_dir", s.Host))
@@ -1504,8 +1566,25 @@ func LoadConfig(filename string) (*Config, error) {
 				fmt.Sprintf("server[%s].root_git_autodeploy.staging_dir", s.Host))
 			gad.StagingSrcDir = SubstConfVarsLogErrorf(gad.StagingSrcDir, map[string]string{"confdir": confDir, "serverid": s.ID},
 				fmt.Sprintf("server[%s].root_git_autodeploy.staging_src_dir", s.Host))
-			// Set server Root from DeployDir so static file serving works
-			s.Root = gad.DeployDir
+			// Decide static root from the operator's HulaBuild profile name,
+			// NOT from the cloned repo's sitebuild.yaml. This decouples
+			// listener startup from git clones — the static handler is
+			// registered with a real path, even if the repo hasn't been
+			// fetched yet (in which case http.FileServer just returns 404
+			// until content lands). StartupBuildAll, when it eventually
+			// runs, validates the operator's intent against the actual
+			// profile and warns on mismatch.
+			if strings.EqualFold(gad.HulaBuild, "staging") {
+				s.Root = gad.StagingDir
+			} else {
+				s.Root = gad.DeployDir
+			}
+			// Eagerly create the static root directory so the static
+			// handler has somewhere to look on first-boot before the
+			// background clone / build runs.
+			if err := os.MkdirAll(s.Root, 0o755); err != nil {
+				log.Warnf("server[%s]: mkdir static root %s: %s", s.Host, s.Root, err.Error())
+			}
 			log.Debugf("server[%s].root_git_autodeploy: repo=%s ref.branch=%s ref.tag=%s hula_build=%s data_dir=%s deploy_dir=%s",
 				s.Host, gad.Repo, gad.Ref.Branch, gad.Ref.Tag, gad.HulaBuild, gad.DataDir, gad.DeployDir)
 		}

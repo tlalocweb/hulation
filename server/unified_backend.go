@@ -61,12 +61,18 @@ func registerBackendProxies(srv *unified.Server, cfg *config.Config) {
 			continue
 		}
 		for _, b := range s.Backends {
-			if b == nil || !b.IsReady() {
-				if b != nil {
-					log.Warnf("Backend %s for server %s not ready; skipping proxy route", b.ContainerName, s.Host)
-				}
+			if b == nil {
 				continue
 			}
+			// Register the proxy route eagerly, even before the
+			// backend container has started. NewProxyHandler's
+			// Director re-reads the resolved address on every
+			// request, so the proxy starts working the moment the
+			// background backend manager finishes startup. Until
+			// then, requests get a clean 502 from the proxy's
+			// ErrorHandler — better than 404'ing into the static
+			// handler / gateway, which would mislead callers into
+			// thinking the endpoint doesn't exist.
 			ph := backend.NewProxyHandler(b)
 			routes = append(routes, &backendRoute{
 				host:        s.Host,
@@ -75,7 +81,7 @@ func registerBackendProxies(srv *unified.Server, cfg *config.Config) {
 				handler:     ph,
 				backendName: b.ContainerName,
 			})
-			log.Infof("Backend proxy route: %s %s → container %s (%s)", s.Host, b.VirtualPath, b.ContainerName, b.GetProxyTarget())
+			log.Infof("Backend proxy route: %s %s → container %s", s.Host, b.VirtualPath, b.ContainerName)
 		}
 	}
 	if len(routes) == 0 {

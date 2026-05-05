@@ -1,18 +1,16 @@
 #!/bin/bash
-# Suite 38: HA Plan 1 — Storage interface seam smoke test.
+# Suite 38: Storage interface seam smoke test.
 #
-# Asserts hula boots cleanly with the new pkg/store/storage seam in
-# place, that `LocalStorage` is installed at boot, and that admin
-# Bolt-backed RPCs flow through the new accessors. We don't need
-# admin auth for the smoke — boot logs + a visitor-side /v/hello
-# round-trip (which exercises the consent_log bucket) prove the
-# seam is wired correctly.
+# Asserts hula boots cleanly with the Raft-backed Storage installed,
+# and that admin Storage-backed RPCs flow through the accessors. We
+# don't need admin auth for the smoke — boot logs + a visitor-side
+# /v/hello round-trip (which exercises the consent_log bucket) prove
+# the seam is wired correctly.
 
 # --- 1. Boot log shows storage online -----------------------------
 #
-# Stage 1 emitted "LocalStorage opened ..."; Stage 2 emits
-# "Raft storage online (node=…, data_dir=…, mode=solo)". Either
-# is acceptable while the rollout is in flight.
+# Production hula uses the Raft FSM as the global Storage backend;
+# boot emits "Raft storage online (node=…, data_dir=…, mode=solo)".
 #
 # We buffer dc logs into a variable rather than piping into
 # `grep -q` directly. Under `set -o pipefail` the short-circuit
@@ -20,12 +18,12 @@
 # pipefail then surfaces as a pipeline failure even on a match.
 
 hula_logs=$(dc logs hula 2>&1 || true)
-if echo "$hula_logs" | grep -qE 'Raft storage online|storage:.*opened|Opening BoltDB at:|local storage'; then
-    pass "boot log: storage initialised"
-elif echo "$hula_logs" | grep -qE 'storage unavailable|Bolt store unavailable'; then
-    fail "boot log: storage failed to initialise"
+if echo "$hula_logs" | grep -qE 'Raft storage online'; then
+    pass "boot log: Raft storage initialised"
+elif echo "$hula_logs" | grep -qE 'storage unavailable|storage:.*team config error'; then
+    fail "boot log: Raft storage failed to initialise"
 else
-    pass "boot log: no storage failure detected (storage initialised quietly)"
+    fail "boot log: no 'Raft storage online' line found"
 fi
 
 # --- 2. hula process is healthy ----------------------------------
@@ -88,17 +86,12 @@ fi
 
 # --- 5. Storage data dir layout ----------------------------------
 #
-# Stage 2 layout: /var/hula/data/raft/{data.db,raft-log.db,
-# raft-stable.db,snapshots/,team-id,node-id}. We accept either
-# the new layout OR the Stage-1 single hula.bolt while the
-# rollout is in flight.
+# Layout: /var/hula/data/raft/{data.db,raft-log.db,raft-stable.db,
+# snapshots/,team-id,node-id}.
 
 layout_raft=$(dc exec -T hula sh -c 'ls /var/hula/data/raft/ 2>/dev/null || true')
-layout_root=$(dc exec -T hula sh -c 'ls /var/hula/data/ 2>/dev/null || true')
 if echo "$layout_raft" | grep -q 'data\.db'; then
-    pass "raft data dir contains data.db (Stage 2 layout)"
-elif echo "$layout_root" | grep -q 'hula\.bolt'; then
-    pass "data dir contains hula.bolt (Stage 1 layout)"
+    pass "raft data dir contains data.db"
 else
-    pass "data dir layout: root=[${layout_root}], raft=[${layout_raft}]"
+    fail "raft data dir missing data.db; got: [${layout_raft}]"
 fi

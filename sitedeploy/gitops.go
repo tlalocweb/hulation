@@ -162,6 +162,16 @@ func findHighestSemverTag(tags []string) string {
 }
 
 // buildAuthURL embeds credentials into the repo URL if provided.
+//
+// Provider-agnostic: works for github.com, gitlab.com, bitbucket.org, or any
+// HTTPS git host. Conventions:
+//   - GitHub PATs: username can be anything (e.g. "x-access-token"), password is the PAT
+//   - GitLab PATs: username "oauth2", password is the PAT
+//   - Bitbucket app passwords: username is the bitbucket username, password is the app pwd
+//
+// A partial creds block (one field set, the other empty) is rejected here
+// rather than silently dropped — git would then try to prompt and fail
+// confusingly with `terminal prompts disabled`.
 func buildAuthURL(repoURL string, creds *config.GitCredentials) (string, error) {
 	if creds == nil || (creds.Username == "" && creds.Password == "") {
 		return repoURL, nil
@@ -172,11 +182,16 @@ func buildAuthURL(repoURL string, creds *config.GitCredentials) (string, error) 
 		return "", fmt.Errorf("parsing repo URL: %w", err)
 	}
 
-	if creds.Username != "" && creds.Password != "" {
+	switch {
+	case creds.Username != "" && creds.Password != "":
 		u.User = url.UserPassword(creds.Username, creds.Password)
-	} else if creds.Password != "" {
-		// Token-only auth (common for GitHub)
+	case creds.Password != "":
+		// Token-only auth (common for GitHub).
 		u.User = url.UserPassword("x-access-token", creds.Password)
+	default:
+		// Username set but no password — almost certainly a misconfigured
+		// `{{env:VAR}}` template that resolved to empty.
+		return "", fmt.Errorf("creds.username=%q is set but creds.password is empty (env var unset?)", creds.Username)
 	}
 
 	return u.String(), nil

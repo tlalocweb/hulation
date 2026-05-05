@@ -23,6 +23,9 @@ type BackendConfig struct {
 	ContainerPath string `yaml:"container_path,omitempty"` // Path on the container, e.g. "/api/v2"
 	HealthCheckURL string `yaml:"health_check,omitempty"`  // Optional HTTP health endpoint to poll
 	HealthTimeout int    `yaml:"health_timeout,omitempty"` // Seconds to wait for healthy (default 30)
+	// Per-backend override of the global backend_logs config. nil =
+	// inherit global. When non-nil, fully replaces the global block.
+	Logs *LogConfig `yaml:"logs,omitempty"`
 
 	// Compose-compatible fields
 	ContainerName string            `yaml:"container_name"`

@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/notifier/fcm"
 	"github.com/tlalocweb/hulation/pkg/realtime"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
+	"github.com/tlalocweb/hulation/pkg/server/unified"
 	"github.com/tlalocweb/hulation/utils"
 	"github.com/tlalocweb/hulation/pkg/store/clickhouse"
 	"github.com/tlalocweb/hulation/pkg/store/storage"
@@ -45,6 +47,24 @@ import (
 // Returns when ctx is cancelled or a termination signal is received.
 // Non-zero exit code indicates a startup or shutdown error worth
 // propagating to main's os.Exit.
+//
+// Boot ordering is structured to get the listener (and therefore the
+// per-host static file servers) accepting requests as fast as
+// possible. Two phases:
+//
+//  1. preloadFastSubsystems — synchronous, only the work the listener
+//     hard-depends on: storage, OPAQUE keys, mailer + notifier
+//     handles, realtime hub, scheduled-report dispatcher start,
+//     forwarders. Anything that talks to ClickHouse beyond the
+//     handle that main.go already opened, anything that pulls
+//     Docker images, anything that clones git, all gets deferred.
+//
+//  2. preloadSlowSubsystems — runs in the background AFTER the
+//     listener is up. ClickHouse migrations, badactor (init +
+//     loadFromDB), per-server backend container startup, git
+//     auto-deploy resolve + clone, staging-container startup. None
+//     of these block static file serving; the listener has already
+//     accepted requests by the time they start.
 func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 	if conf == nil {
 		log.Errorf("RunUnified: config is nil")
@@ -53,8 +73,8 @@ func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	if err := preloadSharedSubsystems(ctx, conf); err != nil {
-		log.Errorf("RunUnified: preload failed: %s", err.Error())
+	if err := preloadFastSubsystems(ctx, conf); err != nil {
+		log.Errorf("RunUnified: fast preload failed: %s", err.Error())
 		return 1
 	}
 
@@ -63,20 +83,16 @@ func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 		log.Errorf("RunUnified: boot failed: %s", err.Error())
 		return 1
 	}
-	// Wire scanner-incident scoring (TLS handshake errors and
-	// protocol-peek EOFs in the unified listener) to the badactor
-	// store. preloadSharedSubsystems initialised the store; here we
-	// connect it to the listener so TCP/TLS-level probes contribute
-	// to the IP's running score the same way HTTP-signature matches
-	// do. No-op when badactor is disabled (GetStore returns nil).
-	if store := badactor.GetStore(); store != nil {
-		srv.SetIncidentRecorder(store)
-	}
 	if err := srv.Start(ctx); err != nil {
 		log.Errorf("RunUnified: start failed: %s", err.Error())
 		return 1
 	}
 	log.Infof("Unified server listening on %s", srv.GetAddress())
+
+	// Slow subsystems run in the background so the listener is
+	// already serving by the time they start. The goroutine attaches
+	// the badactor incident recorder once badactor.Init completes.
+	go preloadSlowSubsystems(ctx, conf, srv.SetIncidentRecorder)
 
 	// Wait for SIGINT/SIGTERM.
 	sigCh := make(chan os.Signal, 1)
@@ -89,20 +105,53 @@ func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 	}
 
 	// Graceful shutdown.
+	//
+	// Order matters: stop the listener FIRST so no new requests arrive
+	// at the about-to-die backends. Then tear down docker-spawned
+	// children (backends and staging containers) so a hula restart
+	// brings them up with fresh env, and the host doesn't leak
+	// containers across upgrades. Each step gets its own bounded
+	// context so a slow docker daemon can't hang shutdown forever.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	if err := srv.Stop(shutdownCtx); err != nil {
 		log.Errorf("RunUnified: shutdown failed: %s", err.Error())
-		return 1
+		// don't return — still attempt backend teardown
 	}
 	log.Infof("Unified server stopped")
+	stopDockerChildren()
 	return 0
 }
 
-// preloadSharedSubsystems runs the startup work that's independent of
-// which listener (Fiber or unified) handles requests. Mirrors the
-// corresponding block in Run() so the two entry points stay in sync.
-func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
+// stopDockerChildren tears down every docker container hula spawned:
+// backend containers (backend.Manager) and long-lived staging
+// containers (sitedeploy.StagingManager). Bounded by its own timeout
+// so a wedged docker daemon can't keep hula's process alive past the
+// shutdown grace period.
+func stopDockerChildren() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if mgr := backend.GetGlobalManager(); mgr != nil {
+		log.Infof("Shutdown: stopping backend containers...")
+		if err := mgr.StopAll(ctx); err != nil {
+			log.Errorf("Shutdown: backend StopAll: %s", err.Error())
+		}
+	}
+	if sm := sitedeploy.GetStagingManager(); sm != nil {
+		log.Infof("Shutdown: stopping staging containers...")
+		sm.Close()
+	}
+}
+
+// preloadFastSubsystems runs synchronously before the listener opens.
+// Only includes work the listener hard-depends on or that is cheap
+// enough to keep here. Anything that touches Docker, ClickHouse DDL,
+// or git is deferred to preloadSlowSubsystems.
+func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
+	// Lander + form preloads run gorm queries against ClickHouse. They
+	// keep the routing tables warm so the first request finds them
+	// without a cold-cache lookup. main.SetupAppDB has already opened
+	// the connection synchronously, so this is fast.
 	if err := model.PreloadDefinedLanders(model.GetDB()); err != nil {
 		return fmt.Errorf("preload landers: %w", err)
 	}
@@ -112,14 +161,9 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 
 	// Persistent store — identity/ACL/goals/reports data that
 	// doesn't belong in ClickHouse. Stage 2 of HA Plan: a
-	// Raft-backed RaftStorage in single-node mode. Solo
-	// deployments (the most common shape) don't need a `team:`
-	// block in config — AutoConfig auto-generates a TeamID +
-	// NodeID and persists them under DataDir so subsequent
-	// boots pick up the same identity. Non-fatal when init
-	// fails (degrades to no-storage so hulactl-style utilities
-	// that don't touch persistence still work) — same posture
-	// as Stage 1.
+	// Raft-backed RaftStorage in single-node mode. Non-fatal when
+	// init fails (degrades to no-storage so hulactl-style utilities
+	// that don't touch persistence still work).
 	if rcfg, err := raftbackend.AutoConfig(conf.Team); err != nil {
 		log.Warnf("storage: team config error (%s); ACL + goals + reports RPCs will 503", err.Error())
 	} else if rs, err := raftbackend.New(rcfg); err != nil {
@@ -148,12 +192,9 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	}
 	dispatch.Start(ctx, m)
 
-	// Notifier composite — Phase 5a.3. Email backend always; APNs +
-	// FCM plug in when creds are present. The APNs + FCM configs
-	// degrade to "not configured" on missing creds, so we register
-	// them unconditionally — per-recipient ErrNotConfigured is how
-	// the downstream evaluator knows to mark delivery status
-	// "mailer_unconfigured" for that channel.
+	// Notifier composite — email always; APNs + FCM plug in when
+	// creds are present. Per-recipient ErrNotConfigured is how the
+	// downstream evaluator knows to mark a missing channel.
 	composite := notifier.NewComposite(email.New(m))
 	if conf.APNS != nil && conf.APNS.KeyPEMPath != "" {
 		apnsBackend, err := apns.New(apns.Config{
@@ -185,7 +226,7 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 	notifier.SetGlobal(composite)
 
 	// OPAQUE PAKE — replaces plaintext password exchange for admin
-	// + internal-provider logins. See OPAQUE_PLAN.md.
+	// + internal-provider logins.
 	{
 		var opaqueSeedCfg, opaqueAKECfg string
 		if conf.OPAQUE != nil {
@@ -203,44 +244,57 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 	}
 
-	// Realtime pub/sub hub — Phase 5a.6. Broadcasters:
-	//   * /api/mobile/v1/debug/publish (used by e2e suite 30)
-	//   * TODO: visitor-tracking ingest hook (follow-up)
-	// Subscribers: every connection on /api/mobile/v1/events.
+	// Realtime pub/sub hub.
 	realtime.SetGlobal(realtime.New())
 
-	// Install the master key the evaluator uses to open sealed push
-	// tokens before handing them to the notifier. Same key the TOTP
-	// subsystem uses; see pkg/mobile/tokenbox.
+	// Token key for the alerts evaluator — needed at every push send,
+	// so resolve it before evaluator goroutines start scoring.
 	if key, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey); err == nil {
 		alertsevaluator.SetTokenKey(key)
 	} else {
 		log.Warnf("alerts evaluator: no TOTP encryption key; push delivery will be disabled")
 	}
 
-	// Alert rule evaluator — Phase 4.7 (now Notifier-backed after
-	// stage 5a.4). Runs on a 1-minute ticker, evaluates every
-	// enabled alert against the kind-specific predicate and fires
-	// via the composite notifier (email + push fan-out).
-	// No-op until alerts are created via AlertsService.
+	// Alert rule evaluator. The 1-minute ticker + queue are cheap to
+	// spin up; only firings touch ClickHouse, and those are tolerant
+	// of transient unavailability.
 	if db := model.GetSQLDB(); db != nil {
 		alertsevaluator.Start(ctx, m, db)
 	} else {
 		log.Warnf("alerts evaluator: ClickHouse not available; alert rules will not fire until DB is reachable")
 	}
 
-	// Apply ClickHouse migrations — brings up the MV state tables and
-	// materialized views that the analytics query builder reads from.
-	// Phase 0 defined the SQL files; Phase 1 wires the runner into boot.
-	// Non-fatal on failure — analytics endpoints fall back to raw
-	// events when the MVs aren't present, and an ops team may not want
-	// DDL running unattended on an unhealthy cluster.
+	// Per-server forwarders are pure config wiring — no I/O at
+	// registration. Cheap, keep here.
+	if n := forwarder.BuildAndRegisterAll(conf.Servers); n > 0 {
+		log.Infof("forwarders registered for %d server(s)", n)
+	}
+
+	return nil
+}
+
+// preloadSlowSubsystems runs in a goroutine AFTER the listener opens.
+// Everything in here is non-fatal: failures degrade specific
+// surfaces (analytics, autodeploy, badactor scoring, backend proxies)
+// without taking the static file servers offline.
+//
+// setIncidentRecorder is the callback for wiring the listener's
+// incident hook once badactor.Init completes. Passed in (rather than
+// the *unified.Server) to keep the import graph one-way:
+// run_unified.go is the only file in pkg/server that knows about
+// pkg/server/unified.Server, and we want preloadSlowSubsystems to
+// stay easy to test without standing up a real listener.
+func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncidentRecorder func(unified.IncidentRecorder)) {
+	// Apply ClickHouse migrations — brings up the MV state tables
+	// and materialized views that the analytics query builder reads
+	// from. Non-fatal on failure — analytics endpoints fall back to
+	// raw events when the MVs aren't present.
 	if db := model.GetSQLDB(); db != nil {
-		ttl := 0 // zero → runner picks DefaultEventsTTLDays
+		ttl := 0
 		if conf.Analytics != nil {
 			ttl = conf.Analytics.EventsTTLDays
 		}
-		chatRet := 0 // zero → runner picks DefaultChatRetentionDays
+		chatRet := 0
 		if conf.Chat != nil {
 			chatRet = conf.Chat.RetentionDays
 		}
@@ -251,6 +305,9 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 	}
 
+	// Bad-actor detection. Init does its own DDL + loadFromDB; once
+	// it's online we wire the listener's incident recorder so TLS
+	// handshake errors and protocol-peek EOFs contribute to scoring.
 	if conf.BadActors != nil && !conf.BadActors.Disable {
 		var cfCIDRs []*net.IPNet
 		if conf.IsCloudflareMode() {
@@ -258,11 +315,19 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 		if err := badactor.Init(conf.BadActors, model.GetDB(), conf.Servers, cfCIDRs); err != nil {
 			log.Errorf("Failed to initialize bad actor detection: %s", err.Error())
-			// Non-fatal — matches Run() semantics.
+		} else if store := badactor.GetStore(); store != nil && setIncidentRecorder != nil {
+			setIncidentRecorder(store)
+			log.Infof("badactor: incident recorder wired to unified listener")
 		}
 	}
 
-	// Docker backends per-server.
+	// Docker backends per-server. Each StartBackendsForServer call
+	// pulls the image + starts the container + waits for healthcheck.
+	// Run them concurrently so a slow image doesn't gate every
+	// other server, and downgrade failures from fatal to logged —
+	// the backend reverse proxy already returns 502/503 when its
+	// upstream isn't ready, so the static and api surfaces of an
+	// unrelated server stay up.
 	hasBackends := false
 	for _, s := range conf.Servers {
 		if len(s.Backends) > 0 {
@@ -271,26 +336,40 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		}
 	}
 	if hasBackends {
-		mgr, berr := backend.NewManager(conf.Registries)
+		mgr, berr := backend.NewManager(conf.Registries, conf.BackendLogs)
 		if berr != nil {
-			return fmt.Errorf("backend manager: %w", berr)
-		}
-		startCtx, startCancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer startCancel()
-		for _, s := range conf.Servers {
-			if len(s.Backends) > 0 {
-				if berr := mgr.StartBackendsForServer(startCtx, s.Host, s.Backends); berr != nil {
-					return fmt.Errorf("start backends for %s: %w", s.Host, berr)
+			log.Errorf("backend manager: %s", berr.Error())
+		} else {
+			// Publish before any backend starts so a SIGTERM
+			// arriving mid-startup can still find the manager and
+			// tear down whatever did come up.
+			backend.SetGlobalManager(mgr)
+			startCtx, startCancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer startCancel()
+			var wg sync.WaitGroup
+			for _, s := range conf.Servers {
+				if len(s.Backends) == 0 {
+					continue
 				}
+				wg.Add(1)
+				go func(host string, bks []*backend.BackendConfig) {
+					defer wg.Done()
+					if err := mgr.StartBackendsForServer(startCtx, host, bks); err != nil {
+						log.Errorf("backends for %s failed to start: %s", host, err.Error())
+					}
+				}(s.Host, s.Backends)
 			}
+			wg.Wait()
 		}
-		// mgr is held by the global state it registers; no Close here
-		// because the process will exit at shutdown anyway. If a test
-		// harness needs finer control, it can call backend.Close()
-		// directly.
 	}
 
-	// Site deploy build manager — only if any server has git autodeploy.
+	// Site deploy build manager — only if any server has git
+	// autodeploy. Static roots are already pointed at the right
+	// directory by config validation, so the site serves whatever
+	// content is on disk from the previous boot. StartupBuildAll
+	// then pulls and rebuilds in this goroutine; the rebuild lands
+	// via an atomic rename swap (deploySite), so the cached site
+	// keeps serving until the new build is ready.
 	hasAutoDeploy := false
 	for _, s := range conf.Servers {
 		if s.GitAutoDeploy != nil {
@@ -302,30 +381,18 @@ func preloadSharedSubsystems(ctx context.Context, conf *config.Config) error {
 		buildMgr, berr := sitedeploy.NewBuildManager()
 		if berr != nil {
 			log.Errorf("Failed to initialize site deploy manager: %s", berr.Error())
-			// Non-fatal — site deploy disabled, server continues.
 		} else {
 			sitedeploy.SetGlobalBuildManager(buildMgr)
-			buildMgr.ResolveSiteRoots(conf.Servers)
 			stagingMgr := sitedeploy.NewStagingManager(buildMgr.DockerClient())
 			sitedeploy.SetGlobalStagingManager(stagingMgr)
 			log.Infof("Site deploy build manager initialized")
-			// Launch long-lived staging containers for every server
-			// configured with `hula_build: staging`. The legacy Fiber
-			// boot path did this; the unified rewrite dropped the call
-			// and staging-* commands nil-return from GetStagingContainer
-			// without it.
+			// Start staging containers (long-lived) and run
+			// production startup pulls + builds concurrently. Either
+			// can be slow; running them in parallel keeps total
+			// "fully ready" time as short as possible.
 			go stagingMgr.StartupStaging(conf.Servers)
+			go buildMgr.StartupBuildAll(conf.Servers)
 		}
 	}
-
-	// Phase 4c.2: server-side forwarders. Each server with a non-empty
-	// `forwarders:` config gets a per-server Composite + Worker drain.
-	// Servers without forwarders are silent (no goroutines, no
-	// allocation). Build failures are logged and the bad adapter is
-	// dropped — does not block boot.
-	if n := forwarder.BuildAndRegisterAll(conf.Servers); n > 0 {
-		log.Infof("forwarders registered for %d server(s)", n)
-	}
-
-	return nil
 }
+

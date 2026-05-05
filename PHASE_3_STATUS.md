@@ -83,13 +83,15 @@ Commit: `62185d7`
 - Generated Go stubs + gateway code registered into the unified
   server.
 
-### Stage 3.2 — BoltDB store + server-access ACL ✅
+### Stage 3.2 — Persistent store + server-access ACL ✅
 Commit: `3dbf309`
 
-- `pkg/store/bolt/bolt.go` — process-global open/close. Path from
-  `HULA_BOLT_PATH` or defaults to `/var/hula/data/hula.bolt`. Buckets
-  created on first open: `server_access`, `goals`, `reports`,
-  `report_runs`.
+- `pkg/store/bolt/bolt.go` — schema + bucket-name constants for the
+  persistent Storage seam. Buckets routed through
+  `pkg/store/storage/local`: `server_access`, `goals`, `reports`,
+  `report_runs`. Production wires the Raft FSM as the global
+  Storage at boot (HA Plan 2); the on-disk file lives at
+  `/var/hula/data/raft/data.db`.
 - `pkg/store/bolt/access.go` — ACL grants keyed as
   `"<user_id>|<server_id>" → role`. `GrantServerAccess` upserts;
   `RevokeServerAccess` is idempotent. `AllowedServerIDsForUser`

@@ -139,7 +139,7 @@ compile.
   prevents silent corruption).
 
 **Acceptance**: `go test ./pkg/mobile/tokenbox/...` green; no
-plaintext token appears in `hula.bolt` after registration.
+plaintext token appears in the Raft FSM bbolt file after registration.
 
 **Size**: 1 day.
 

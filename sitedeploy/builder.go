@@ -27,6 +27,55 @@ type BuilderContainer struct {
 	imageName   string
 }
 
+// builderNamePrefix is the prefix every builder container name starts
+// with — see startContainer's `containerName := "hula-builder-" + ...`.
+// sweepOrphanBuilders relies on this to identify what to clean up.
+const builderNamePrefix = "hula-builder-"
+
+// sweepOrphanBuilders force-removes every leftover hula-builder-*
+// container at boot. Builders are ephemeral by design — one per
+// build, removed via deferred cleanup — so any that survive a hula
+// restart are by definition orphans from a previous crashed run, an
+// ungraceful shutdown, or (historically) the cancelled-context bug
+// in cleanup() that left them stranded with no way to be reclaimed.
+//
+// Safe to call unconditionally at startup: when this runs there are
+// no active builds yet (BuildManager has just been constructed), so
+// no in-flight build can have a builder for it to nuke.
+//
+// Called from NewBuildManager.
+func sweepOrphanBuilders(ctx context.Context, cli *client.Client) {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		log.Warnf("sitedeploy: orphan-builder sweep: list failed: %s", err)
+		return
+	}
+	removed := 0
+	for _, c := range containers {
+		// Container.Names from the API is a list of strings each
+		// prefixed with "/" (legacy linker artefact). Strip and check.
+		isOrphan := false
+		for _, n := range c.Names {
+			if strings.HasPrefix(strings.TrimPrefix(n, "/"), builderNamePrefix) {
+				isOrphan = true
+				break
+			}
+		}
+		if !isOrphan {
+			continue
+		}
+		err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+		if err != nil {
+			log.Warnf("sitedeploy: orphan-builder sweep: remove %s failed: %s", c.ID[:12], err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		log.Infof("sitedeploy: orphan-builder sweep: removed %d leftover builder container(s)", removed)
+	}
+}
+
 // newBuilderContainer creates a new builder container manager.
 func newBuilderContainer(cli *client.Client) *BuilderContainer {
 	return &BuilderContainer{cli: cli}
@@ -172,10 +221,21 @@ func (bc *BuilderContainer) copyFromContainer(ctx context.Context, srcPath strin
 }
 
 // cleanup stops and removes the builder container.
-func (bc *BuilderContainer) cleanup(ctx context.Context) {
+//
+// We intentionally ignore the caller's ctx and use a fresh
+// context.Background() with a short timeout. The caller's ctx is
+// often already cancelled by the time this defer fires (build
+// timeout expired, hula received SIGTERM, build goroutine returned
+// early on error). The Docker SDK pre-cancels the HTTP request when
+// ctx.Err() != nil, so reusing the cancelled ctx silently no-ops
+// the stop+remove and the builder leaks. Cleanup must complete
+// regardless — it's the *whole point* of the deferred call.
+func (bc *BuilderContainer) cleanup(_ context.Context) {
 	if bc.containerID == "" {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	timeout := 5
 	_ = bc.cli.ContainerStop(ctx, bc.containerID, container.StopOptions{Timeout: &timeout})
 	err := bc.cli.ContainerRemove(ctx, bc.containerID, container.RemoveOptions{Force: true})

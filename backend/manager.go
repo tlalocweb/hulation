@@ -21,15 +21,21 @@ type Manager struct {
 	mu         sync.Mutex
 	cli        *client.Client
 	inDocker   bool
-	selfID     string                       // own container ID (if running in Docker)
-	networks   map[string]string            // serverHost -> networkID
-	containers map[string]string            // containerName -> containerID
-	registries map[string]*RegistryConfig   // registry server host -> config
+	selfID     string                     // own container ID (if running in Docker)
+	networks   map[string]string          // serverHost -> networkID
+	containers map[string]string          // containerName -> containerID
+	registries map[string]*RegistryConfig // registry server host -> config
+	logCfg     *LogConfig                 // global log-passthrough config (may be nil)
+	// logCancels lets us tear down the per-container log goroutine
+	// when the container is stopped/removed.
+	logCancels map[string]context.CancelFunc
 }
 
 // NewManager creates a new backend manager with a Docker client.
 // registries is a map of user-defined name -> RegistryConfig (may be nil).
-func NewManager(registries map[string]*RegistryConfig) (*Manager, error) {
+// logCfg controls backend stdout/stderr passthrough into hula's log
+// stream. nil receiver = passthrough on, colorized.
+func NewManager(registries map[string]*RegistryConfig, logCfg *LogConfig) (*Manager, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
@@ -71,6 +77,8 @@ func NewManager(registries map[string]*RegistryConfig) (*Manager, error) {
 		networks:   make(map[string]string),
 		containers: make(map[string]string),
 		registries: regByServer,
+		logCfg:     logCfg,
+		logCancels: make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -80,6 +88,31 @@ func (m *Manager) Close() error {
 		return m.cli.Close()
 	}
 	return nil
+}
+
+// Package-level global so the shutdown path can reach the Manager
+// that was constructed inside preloadSlowSubsystems. Without this
+// the manager goes out of scope after backends start, and SIGTERM
+// to hula leaves every backend container running with stale env.
+var (
+	globalManager   *Manager
+	globalManagerMu sync.RWMutex
+)
+
+// SetGlobalManager publishes mgr so RunUnified's shutdown handler
+// can call StopAll on the same Manager that started the backends.
+func SetGlobalManager(mgr *Manager) {
+	globalManagerMu.Lock()
+	defer globalManagerMu.Unlock()
+	globalManager = mgr
+}
+
+// GetGlobalManager returns the published Manager, or nil if none
+// was constructed (no backends configured, or NewManager failed).
+func GetGlobalManager() *Manager {
+	globalManagerMu.RLock()
+	defer globalManagerMu.RUnlock()
+	return globalManager
 }
 
 // StartBackendsForServer creates a Docker network for the server, pulls images,
@@ -157,6 +190,11 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	networksCopy := make(map[string]string, len(m.networks))
 	for k, v := range m.networks {
 		networksCopy[k] = v
+	}
+	// Cancel all per-container log-passthrough goroutines.
+	for name, cancel := range m.logCancels {
+		cancel()
+		delete(m.logCancels, name)
 	}
 	m.mu.Unlock()
 
@@ -271,6 +309,12 @@ func (m *Manager) createAndStartContainer(ctx context.Context, b *BackendConfig,
 			m.mu.Lock()
 			m.containers[b.ContainerName] = existing.ID
 			m.mu.Unlock()
+			// Adopt path: kick off log passthrough for the surviving
+			// container so a hula restart still streams its logs.
+			// Without this, only freshly-started containers stream,
+			// and a "hula restart with backends already up" produces
+			// no per-backend log output.
+			m.startLogPassthrough(b)
 			return nil
 		}
 		// Exists but not running — remove and recreate
@@ -313,7 +357,44 @@ func (m *Manager) createAndStartContainer(ctx context.Context, b *BackendConfig,
 	}
 
 	log.Infof("backend: started container %s (id=%s)", b.ContainerName, resp.ID[:12])
+	m.startLogPassthrough(b)
 	return nil
+}
+
+// startLogPassthrough wires stdout/stderr → hula log stream for a
+// backend container, with a per-container colorized prefix. The
+// merged config picks up any per-backend override from b.Logs over
+// the global m.logCfg. Called from both the create path and the
+// adopt-existing path so a hula restart re-attaches to surviving
+// backends.
+func (m *Manager) startLogPassthrough(b *BackendConfig) {
+	logCfg := mergeLogConfig(m.logCfg, b.Logs)
+	enabled, colored := logCfg.Effective()
+	if !enabled {
+		return
+	}
+	streamCtx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	// If a previous instance was still streaming (e.g. adopt path
+	// after a previous adopt of the same container), cancel it.
+	if prev, ok := m.logCancels[b.ContainerName]; ok {
+		prev()
+	}
+	m.logCancels[b.ContainerName] = cancel
+	m.mu.Unlock()
+	streamContainerLogs(streamCtx, m.cli, b.ContainerName, colored)
+}
+
+// mergeLogConfig picks the per-backend override when set, otherwise
+// the global config. Both may be nil (both nil → defaults).
+// LogConfig has only two bool fields, so a "partial" override has no
+// meaning — a backend block either fully replaces the global or
+// inherits it.
+func mergeLogConfig(global, override *LogConfig) *LogConfig {
+	if override != nil {
+		return override
+	}
+	return global
 }
 
 // stopAndRemoveContainer stops and removes a single container.
@@ -336,6 +417,10 @@ func (m *Manager) stopAndRemoveContainer(ctx context.Context, b *BackendConfig) 
 
 	m.mu.Lock()
 	delete(m.containers, b.ContainerName)
+	if cancel, ok := m.logCancels[b.ContainerName]; ok {
+		cancel()
+		delete(m.logCancels, b.ContainerName)
+	}
 	m.mu.Unlock()
 
 	log.Infof("backend: removed container %s", b.ContainerName)

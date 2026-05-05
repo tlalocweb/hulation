@@ -159,6 +159,12 @@ func NewBuildManager() (*BuildManager, error) {
 		return nil, fmt.Errorf("Docker daemon not reachable for site deploy: %w (if running in Docker, mount -v /var/run/docker.sock:/var/run/docker.sock)", err)
 	}
 
+	// Sweep any builder containers left over from a previous hula
+	// run that didn't get to clean up (crash, SIGKILL, or the prior
+	// cancelled-context bug in BuilderContainer.cleanup). Safe to
+	// run unconditionally — no builds are active yet at this point.
+	sweepOrphanBuilders(ctx, cli)
+
 	return &BuildManager{
 		cli:          cli,
 		serverLocks:  make(map[string]*sync.Mutex),
@@ -534,74 +540,60 @@ func siteNeedsBuild(deployDir string) bool {
 	return len(entries) == 0
 }
 
-// ResolveSiteRoots clones/pulls repos and determines whether each server uses
-// staging or production mode. For staging profiles, it sets server.Root to
-// the staging directory. This must be called BEFORE listeners start so that
-// Fiber's Static() middleware picks up the correct path.
-func (bm *BuildManager) ResolveSiteRoots(servers []*config.Server) {
-	for _, s := range servers {
-		if s.GitAutoDeploy == nil {
-			continue
-		}
-		gad := s.GitAutoDeploy
-
-		repoDir, err := CloneOrPull(gad)
-		if err != nil {
-			log.Errorf("sitedeploy: resolve roots: clone/pull failed for %s: %s", s.ID, err)
-			continue
-		}
-
-		siteBuildPath := filepath.Join(repoDir, ".hula", "sitebuild.yaml")
-		data, err := os.ReadFile(siteBuildPath)
-		if err != nil {
-			log.Debugf("sitedeploy: resolve roots: no sitebuild.yaml for %s: %s", s.ID, err)
-			continue
-		}
-
-		siteCfg, err := ParseSiteBuildConfig(data)
-		if err != nil {
-			log.Errorf("sitedeploy: resolve roots: parse error for %s: %s", s.ID, err)
-			continue
-		}
-
-		profile, err := siteCfg.GetProfile(gad.HulaBuild)
-		if err != nil {
-			log.Errorf("sitedeploy: resolve roots: profile error for %s: %s", s.ID, err)
-			continue
-		}
-
-		if profile.IsStaging() {
-			if err := os.MkdirAll(gad.StagingDir, 0o755); err != nil {
-				log.Errorf("sitedeploy: resolve roots: mkdir staging dir for %s: %s", s.ID, err)
-				continue
-			}
-			s.Root = gad.StagingDir
-			log.Infof("sitedeploy: server %s using staging mode, serving from %s", s.ID, gad.StagingDir)
-		}
+// warnOnProfileMismatch logs a one-line warn when the operator-chosen
+// HulaBuild profile name disagrees with the repo's sitebuild.yaml.
+// E.g. operator picked `hula_build: staging` but the matching profile
+// has no `servedir`, or the operator picked production but the
+// profile is staging-shaped. Static root is fixed at config-load time
+// from gad.HulaBuild and isn't changed here — this is informational.
+func warnOnProfileMismatch(s *config.Server, repoDir string) {
+	gad := s.GitAutoDeploy
+	if gad == nil {
+		return
+	}
+	siteBuildPath := filepath.Join(repoDir, ".hula", "sitebuild.yaml")
+	data, err := os.ReadFile(siteBuildPath)
+	if err != nil {
+		log.Debugf("sitedeploy: no sitebuild.yaml for %s: %s", s.ID, err)
+		return
+	}
+	siteCfg, err := ParseSiteBuildConfig(data)
+	if err != nil {
+		log.Errorf("sitedeploy: parse sitebuild.yaml for %s: %s", s.ID, err)
+		return
+	}
+	profile, err := siteCfg.GetProfile(gad.HulaBuild)
+	if err != nil {
+		log.Errorf("sitedeploy: profile %q not found in sitebuild.yaml for %s: %s", gad.HulaBuild, s.ID, err)
+		return
+	}
+	operatorWantsStaging := strings.EqualFold(gad.HulaBuild, "staging")
+	repoSaysStaging := profile.IsStaging()
+	switch {
+	case operatorWantsStaging && !repoSaysStaging:
+		log.Warnf("sitedeploy: server %s — hula_build=%q implies staging but profile lacks servedir; static root remains %s",
+			s.ID, gad.HulaBuild, s.Root)
+	case !operatorWantsStaging && repoSaysStaging:
+		log.Warnf("sitedeploy: server %s — hula_build=%q has servedir (staging-shaped) but operator picked production root %s",
+			s.ID, gad.HulaBuild, s.Root)
+	case operatorWantsStaging:
+		log.Infof("sitedeploy: server %s — staging mode, serving from %s", s.ID, s.Root)
 	}
 }
 
-// isStagingProfile returns true if the server's resolved profile is a staging profile.
-// It reads and parses the sitebuild.yaml from the cloned repo.
+// isStagingProfile returns true when the operator picked a staging
+// build profile (i.e. `hula_build: staging` in YAML). Source of truth
+// is the operator's intent — we don't read sitebuild.yaml here
+// because that would require a clone we haven't necessarily done yet.
+// warnOnProfileMismatch (called from StartupBuildAll after the clone
+// succeeds) catches the case where the operator's intent disagrees
+// with the repo's actual profile shape.
 func isStagingProfile(s *config.Server) bool {
 	gad := s.GitAutoDeploy
 	if gad == nil {
 		return false
 	}
-	siteBuildPath := filepath.Join(gad.DataDir, ".hula", "sitebuild.yaml")
-	data, err := os.ReadFile(siteBuildPath)
-	if err != nil {
-		return false
-	}
-	siteCfg, err := ParseSiteBuildConfig(data)
-	if err != nil {
-		return false
-	}
-	profile, err := siteCfg.GetProfile(gad.HulaBuild)
-	if err != nil {
-		return false
-	}
-	return profile.IsStaging()
+	return strings.EqualFold(gad.HulaBuild, "staging")
 }
 
 // StartupBuildAll processes all servers with root_git_autodeploy sequentially.
@@ -636,6 +628,11 @@ func (bm *BuildManager) StartupBuildAll(servers []*config.Server) {
 			log.Errorf("sitedeploy: startup clone/pull failed for %s: %s", s.ID, err)
 			continue
 		}
+
+		// Sanity check: the operator's HulaBuild value should match
+		// the profile's nature in sitebuild.yaml. Doesn't change
+		// behaviour, just surfaces config drift.
+		warnOnProfileMismatch(s, repoDir)
 
 		if !needsBuild {
 			// Repo was pulled. Check if HEAD changed since last build.

@@ -346,6 +346,13 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// arrives in stage 4b.4.
 	registerChatPublic(srv, cfg)
 
+	// CORS — must be the OUTERMOST middleware (attached last, so
+	// the most-recently-attached-runs-first ordering puts it on
+	// top). It needs to see OPTIONS preflights before auth/proxy
+	// middleware drops them, and add Access-Control-* headers to
+	// every response regardless of which handler produced it.
+	srv.AttachHTTPMiddleware(CORSMiddleware(cfg))
+
 	// Per-server static TLS certs. Each configured server can ship its
 	// own cert+key; the unified server's SNI selector maps Host →
 	// certificate at handshake time. Servers without static cert files
