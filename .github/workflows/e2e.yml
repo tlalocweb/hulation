@@ -153,7 +153,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-workdir-${{ github.ref_name }}
+          name: e2e-workdir-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             hulation/test/e2e/workdir/
             !hulation/test/e2e/workdir/certs/*-key.pem
