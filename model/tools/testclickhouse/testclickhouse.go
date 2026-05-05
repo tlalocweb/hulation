@@ -87,8 +87,9 @@ func main() {
 	}
 	fmt.Printf("Got config:\n%s\n", spew.Sdump(hulationconf))
 
-	dsn := config.GetDSNFromConfig(hulationconf)
-	fmt.Printf("Connecting to %s\n", dsn)
+	fmt.Printf("Connecting to %s:%d db=%s user=%s\n",
+		hulationconf.DBConfig.Host, hulationconf.DBConfig.Port,
+		hulationconf.DBConfig.DBName, hulationconf.DBConfig.Username)
 	//	var dsn = "clickhouse://default:@127.0.0.1:9000/db?dial_timeout=200ms&max_execution_time=60"
 
 	fmt.Printf("testing clickhouse-go library...\n")

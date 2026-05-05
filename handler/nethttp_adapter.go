@@ -226,6 +226,14 @@ func (n *NetHTTPCtx) SetContentType(v string) {
 func (n *NetHTTPCtx) writeHeader() {
 	if !n.written {
 		n.written = true
+		// Default to text/plain so SendBytes / SendString never let
+		// Go's net/http content sniffer auto-promote an HTML-looking
+		// body to text/html — that path is a reflected-XSS sink for
+		// callers that interpolate user input into error strings.
+		// SendJSON and explicit SetContentType callers override this.
+		if n.w.Header().Get("Content-Type") == "" {
+			n.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		}
 		n.w.WriteHeader(n.code)
 	}
 }

@@ -187,6 +187,23 @@ func spaHandler(root string, fileServer http.Handler) http.Handler {
 
 		// Check if the file exists
 		fullPath := filepath.Join(root, path)
+
+		// Defense in depth: refuse to stat anything outside root.
+		// In practice filepath.Clean of an absolute URL path never
+		// escapes, but we guard with filepath.Rel so a malformed
+		// request can't bypass the SPA handler into the host FS.
+		absRoot, rootErr := filepath.Abs(root)
+		absFull, fullErr := filepath.Abs(fullPath)
+		if rootErr != nil || fullErr != nil {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		rel, relErr := filepath.Rel(absRoot, absFull)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
 		_, err := os.Stat(fullPath)
 
 		if os.IsNotExist(err) {

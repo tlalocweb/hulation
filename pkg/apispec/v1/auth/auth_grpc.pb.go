@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	AuthService_LoginAdmin_FullMethodName                 = "/hulation.v1.auth.AuthService/LoginAdmin"
-	AuthService_LoginWithSecret_FullMethodName            = "/hulation.v1.auth.AuthService/LoginWithSecret"
 	AuthService_LoginOIDC_FullMethodName                  = "/hulation.v1.auth.AuthService/LoginOIDC"
 	AuthService_LoginWithCode_FullMethodName              = "/hulation.v1.auth.AuthService/LoginWithCode"
 	AuthService_OpaqueRegisterInit_FullMethodName         = "/hulation.v1.auth.AuthService/OpaqueRegisterInit"
@@ -73,8 +72,6 @@ type AuthServiceClient interface {
 	// Login for the "admin" user - root user with special privileges
 	// whose credentials are stored internally in izcr
 	LoginAdmin(ctx context.Context, in *LoginAdminRequest, opts ...grpc.CallOption) (*LoginAdminResponse, error)
-	// Login with a secret (password) - used for providers like Keycloak
-	LoginWithSecret(ctx context.Context, in *LoginWithSecretRequest, opts ...grpc.CallOption) (*LoginWithSecretResponse, error)
 	// Login via OpenID Connect - first step in three-step process
 	LoginOIDC(ctx context.Context, in *LoginOIDCRequest, opts ...grpc.CallOption) (*LoginOIDCResponse, error)
 	// Login with code - third step in OIDC login process
@@ -202,16 +199,6 @@ func (c *authServiceClient) LoginAdmin(ctx context.Context, in *LoginAdminReques
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LoginAdminResponse)
 	err := c.cc.Invoke(ctx, AuthService_LoginAdmin_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *authServiceClient) LoginWithSecret(ctx context.Context, in *LoginWithSecretRequest, opts ...grpc.CallOption) (*LoginWithSecretResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(LoginWithSecretResponse)
-	err := c.cc.Invoke(ctx, AuthService_LoginWithSecret_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -655,8 +642,6 @@ type AuthServiceServer interface {
 	// Login for the "admin" user - root user with special privileges
 	// whose credentials are stored internally in izcr
 	LoginAdmin(context.Context, *LoginAdminRequest) (*LoginAdminResponse, error)
-	// Login with a secret (password) - used for providers like Keycloak
-	LoginWithSecret(context.Context, *LoginWithSecretRequest) (*LoginWithSecretResponse, error)
 	// Login via OpenID Connect - first step in three-step process
 	LoginOIDC(context.Context, *LoginOIDCRequest) (*LoginOIDCResponse, error)
 	// Login with code - third step in OIDC login process
@@ -782,9 +767,6 @@ type UnimplementedAuthServiceServer struct{}
 
 func (UnimplementedAuthServiceServer) LoginAdmin(context.Context, *LoginAdminRequest) (*LoginAdminResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LoginAdmin not implemented")
-}
-func (UnimplementedAuthServiceServer) LoginWithSecret(context.Context, *LoginWithSecretRequest) (*LoginWithSecretResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LoginWithSecret not implemented")
 }
 func (UnimplementedAuthServiceServer) LoginOIDC(context.Context, *LoginOIDCRequest) (*LoginOIDCResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LoginOIDC not implemented")
@@ -950,24 +932,6 @@ func _AuthService_LoginAdmin_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthServiceServer).LoginAdmin(ctx, req.(*LoginAdminRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AuthService_LoginWithSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LoginWithSecretRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AuthServiceServer).LoginWithSecret(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AuthService_LoginWithSecret_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AuthServiceServer).LoginWithSecret(ctx, req.(*LoginWithSecretRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1756,10 +1720,6 @@ var AuthService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LoginAdmin",
 			Handler:    _AuthService_LoginAdmin_Handler,
-		},
-		{
-			MethodName: "LoginWithSecret",
-			Handler:    _AuthService_LoginWithSecret_Handler,
 		},
 		{
 			MethodName: "LoginOIDC",

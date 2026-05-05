@@ -45,3 +45,5 @@ hulactl
 hulabuild
 .cache/
 builder-images/hulabuild-linux
+testclickhouse
+gen-hash

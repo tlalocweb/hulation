@@ -1,5 +1,10 @@
-// gen-hash generates a random password + argon2id hash for test config,
-// and outputs the SHA256 network hash (for login) and the argon2id hash (for config).
+// gen-hash generates a random password and the corresponding argon2id
+// hash for test config. Outputs:
+//
+//	line 1: plaintext password (for hulactl set-password / OPAQUE register)
+//	line 2: argon2id hash (for hula admin.hash config — vestigial now
+//	        that OPAQUE owns admin auth, but still required for config
+//	        shape compat in some test fixtures)
 package main
 
 import (
@@ -12,19 +17,16 @@ import (
 )
 
 func main() {
-	// Generate random password
 	b := make([]byte, 16)
 	rand.Read(b)
 	password := hex.EncodeToString(b)
 
-	networkHash := utils.GenerateHulaNetworkPassHash(password)
-	argonHash, err := utils.Argon2GenerateFromSecretDefaults(networkHash)
+	argonHash, err := utils.Argon2GenerateFromSecretDefaults(password)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 
-	// Output: line 1 = network hash (for login), line 2 = argon2id hash (for config)
-	fmt.Println(networkHash)
+	fmt.Println(password)
 	fmt.Println(argonHash)
 }

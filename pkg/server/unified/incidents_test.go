@@ -96,3 +96,27 @@ func TestIncidentLogWriter_NilRecorderIsSafe(t *testing.T) {
 		t.Fatalf("Write with nil recorder must not error: %v", err)
 	}
 }
+
+// IPv6 remotes are bracketed by net/http (e.g. "[2001:db8::1]:1234").
+// The parser must strip the brackets/port and record only the host so
+// scanner activity from v6 sources is still scored.
+func TestIncidentLogWriter_IPv6Remote(t *testing.T) {
+	rec := &fakeRecorder{}
+	w := &incidentLogWriter{
+		loadRec:     func() IncidentRecorder { return rec },
+		passthrough: nil,
+	}
+	line := "http: TLS handshake error from [2001:db8::1]:35660: EOF\n"
+	if _, err := w.Write([]byte(line)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(rec.got) != 1 {
+		t.Fatalf("want 1 recorded incident, got %d: %+v", len(rec.got), rec.got)
+	}
+	if rec.got[0].ip != "2001:db8::1" {
+		t.Errorf("ipv6 host: got %q, want %q", rec.got[0].ip, "2001:db8::1")
+	}
+	if rec.got[0].category != "tls_handshake_eof" {
+		t.Errorf("ipv6 category: got %q", rec.got[0].category)
+	}
+}
