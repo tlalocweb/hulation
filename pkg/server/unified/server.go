@@ -109,10 +109,22 @@ func remoteIPOnly(addr net.Addr) string {
 //
 //	http: TLS handshake error from <host>:<port>: <reason>
 //
-// We extract the IP and the reason so we can score the IP and
-// classify the failure.
+// IPv6 remotes are formatted with brackets, e.g. "[2001:db8::1]:1234",
+// so the addr capture must allow ':' and the host extraction is
+// deferred to net.SplitHostPort.
 var tlsHandshakeErrorRE = regexp.MustCompile(
-	`^http: TLS handshake error from ([^\s:]+):\d+: (.+?)\s*$`)
+	`^http: TLS handshake error from (\S+): (.+?)\s*$`)
+
+// tlsHandshakeRemoteHost pulls the host from the "<host>:<port>" or
+// "[<ipv6>]:<port>" addr that net/http logs. Falls back to stripping
+// brackets if the addr can't be split.
+func tlsHandshakeRemoteHost(remote string) string {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return strings.Trim(remote, "[]")
+	}
+	return host
+}
 
 // Listener-side Accept errors that the badactor pipeline already
 // records at source (see protocolDetectingListener). Suppressing
@@ -167,7 +179,7 @@ func (w *incidentLogWriter) Write(p []byte) (int, error) {
 	suppressed := false
 	if rec := w.loadRec(); rec != nil {
 		if m := tlsHandshakeErrorRE.FindStringSubmatch(line); len(m) == 3 {
-			ip, reason := m[1], m[2]
+			ip, reason := tlsHandshakeRemoteHost(m[1]), m[2]
 			if cat, score := classifyTLSError(reason); score > 0 {
 				rec.RecordIncident(ip, cat, "tls handshake: "+reason, score)
 			}
