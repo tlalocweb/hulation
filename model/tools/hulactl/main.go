@@ -480,15 +480,14 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		var hash, shasum string
-		hash, shasum, err = utils.GenerateHulaHashFromPlaintextPass(password)
+		hash, err := utils.Argon2GenerateFromSecretDefaults(password)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error generating hash: %s\n", err.Error())
 			os.Exit(1)
 		}
 		// Verify before emitting — fail loud rather than print a
 		// hash that won't validate.
-		match, err := utils.Argon2CompareHashAndSecret(shasum, hash)
+		match, err := utils.Argon2CompareHashAndSecret(password, hash)
 		if err != nil || !match {
 			fmt.Fprintf(os.Stderr, "ERROR: hash verification failed: %v\n", err)
 			os.Exit(1)
@@ -1105,7 +1104,7 @@ func main() {
 			fmt.Printf("Passwords do not match.\n")
 			os.Exit(1)
 		}
-		hash, _, err := utils.GenerateHulaHashFromPlaintextPass(string(passwordb))
+		hash, err := utils.Argon2GenerateFromSecretDefaults(string(passwordb))
 		if err != nil {
 			fmt.Printf("Error generating hash: %s\n", err.Error())
 			os.Exit(1)

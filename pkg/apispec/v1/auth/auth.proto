@@ -22,15 +22,6 @@ service AuthService {
         option (annotations.noauth) = true;
     }
 
-    // Login with a secret (password) - used for providers like Keycloak
-    rpc LoginWithSecret(LoginWithSecretRequest) returns (LoginWithSecretResponse) {
-        option (google.api.http) = {
-            post: "/api/v1/auth/secret"
-            body: "*"
-        };
-        option (annotations.noauth) = true;
-    }
-
     // Login via OpenID Connect - first step in three-step process
     rpc LoginOIDC(LoginOIDCRequest) returns (LoginOIDCResponse) {
         option (google.api.http) = {
@@ -574,25 +565,6 @@ message LoginAdminResponse {
     bool totp_required = 3;
 }
 
-// Secret/password login messages
-message LoginWithSecretRequest {
-    string identity = 1;
-    string secret = 2;
-    string provider = 3;
-    optional string tenantId = 4;
-    optional string clientId = 5;
-}
-
-message LoginWithSecretResponse {
-    string token = 1;
-    optional string error = 2;
-    string provider = 3;
-    string providertype = 4;
-    string username = 5;
-    string email = 6;
-    bool totp_required = 7;
-}
-
 // OIDC login messages
 message LoginOIDCRequest {
     string username = 1;
@@ -740,19 +712,6 @@ message UpdateUserPasswordRequest {
 }
 
 message UpdateUserPasswordResponse {
-    string status = 1;
-    optional string error = 2;
-}
-
-// UpdatePassword messages - for provider interface
-message UpdatePasswordRequest {
-    string identity = 1; // User identity
-    string old_password = 2; // Current password for verification
-    string new_password = 3; // New password to set
-    string provider = 4; // Provider name
-}
-
-message UpdatePasswordResponse {
     string status = 1;
     optional string error = 2;
 }
@@ -1143,9 +1102,10 @@ message OpaqueLoginInitResponse {
     // Session id the server caches the per-login state under.
     // Returned to the client; client passes it back on Finish.
     string session_id = 2;
-    // legacy_available=true tells the client to fall back to
-    // LoginAdmin / LoginWithSecret. Set when the username has an
-    // argon2id hash but no OPAQUE record yet.
+    // legacy_available is vestigial — the legacy LoginAdmin /
+    // LoginWithSecret flows have been removed. Field kept on the
+    // wire for compat with older clients; servers always return
+    // false now.
     bool legacy_available = 3;
 }
 
@@ -1159,8 +1119,7 @@ message OpaqueLoginFinishResponse {
     // admintoken — populated for admin-provider logins (matches
     // LoginAdminResponse).
     string admintoken = 1;
-    // token — populated for internal-provider logins (matches
-    // LoginWithSecretResponse).
+    // token — populated for internal-provider (non-admin) logins.
     string token = 2;
     bool totp_required = 3;
     string error = 4;

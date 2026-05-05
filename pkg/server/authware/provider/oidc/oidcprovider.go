@@ -464,13 +464,6 @@ func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string, state stri
 	return jwtToken, nil
 }
 
-// LoginWithSecret is not the primary method for OIDC but can be used for resource owner password grant
-func (p *OIDCProvider) LoginWithSecret(ctx context.Context, req *authspec.LoginWithSecretRequest) (resp *authspec.LoginWithSecretResponse, err error) {
-	// OIDC providers typically don't support direct password login
-	// This could be implemented using resource owner password credentials grant if the IdP supports it
-	return nil, fmt.Errorf("direct password login not supported for OIDC provider '%s', use LoginOIDC instead", p.Name())
-}
-
 // ValidateToken validates an ID token from this provider
 func (p *OIDCProvider) ValidateToken(token string) (user *apiobjects.User, valid bool, err error) {
 	if p.verifier == nil {
@@ -503,11 +496,6 @@ func (p *OIDCProvider) ValidateToken(token string) (user *apiobjects.User, valid
 	}
 
 	return user, true, nil
-}
-
-// UpdatePassword is not supported for OIDC providers
-func (p *OIDCProvider) UpdatePassword(ctx context.Context, req *authspec.UpdatePasswordRequest) (resp *authspec.UpdatePasswordResponse, err error) {
-	return nil, fmt.Errorf("password management not supported for OIDC provider '%s'", p.Name())
 }
 
 // cleanupPendingAuths removes expired pending auth flows
