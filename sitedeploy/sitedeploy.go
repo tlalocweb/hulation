@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/client"
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/google/uuid"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
@@ -677,11 +678,15 @@ func (bm *BuildManager) StartupBuildAll(servers []*config.Server) {
 
 // getGitHead returns the current HEAD commit hash from the repo, or "".
 func getGitHead(repoDir string) string {
-	output, err := runGitOutput(repoDir, "rev-parse", "HEAD")
+	repo, err := gogit.PlainOpen(repoDir)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(output)
+	ref, err := repo.Head()
+	if err != nil {
+		return ""
+	}
+	return ref.Hash().String()
 }
 
 // Package-level global for the BuildManager

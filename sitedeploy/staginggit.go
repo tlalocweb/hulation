@@ -1,17 +1,28 @@
 package sitedeploy
 
 // Staging-side git verbs invoked by the operator via hulactl: stage,
-// commit, push. They operate against StagingSrcDir of the named server
-// (which by Stage 5b is the git working tree the long-lived staging
-// container serves from). All three refuse cleanly when the server
-// isn't `hula_build: staging` or when StagingSrcDir is not a git
-// working tree.
+// commit, push, pull, sync. They operate against StagingSrcDir of the
+// named server (which by Stage 5b is the git working tree the long-
+// lived staging container serves from). All refuse cleanly when the
+// server isn't `hula_build: staging` or when StagingSrcDir is not a
+// git working tree.
+//
+// All operations except the rebase inside StagingPull are go-git-
+// native. Rebase has no go-git equivalent (long-standing upstream
+// gap) so it remains a `git rebase` shell-out on a single, well-
+// scoped path.
 
 import (
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	gogitcfg "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
@@ -80,12 +91,15 @@ func StagingStage(ctx *StagingGitContext, paths []string) ([]string, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("nil context")
 	}
+	wt, err := openWorktree(ctx.WorkDir)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(paths) == 0 {
-		// `git add -A` stages additions, modifications, and deletions —
-		// the most useful default for "I'm done editing, prepare a
-		// commit." Operators wanting selective staging pass paths.
-		if err := runGit(ctx.WorkDir, "add", "-A"); err != nil {
+		// AddOptions{All: true} == `git add -A` — stages additions,
+		// modifications, and deletions in one call.
+		if err := wt.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
 			return nil, fmt.Errorf("git add -A: %w", err)
 		}
 		return []string{"."}, nil
@@ -99,19 +113,19 @@ func StagingStage(ctx *StagingGitContext, paths []string) ([]string, error) {
 		}
 		clean = append(clean, safe)
 	}
-
-	args := append([]string{"add", "--"}, clean...)
-	if err := runGit(ctx.WorkDir, args...); err != nil {
-		return nil, fmt.Errorf("git add: %w", err)
+	for _, p := range clean {
+		if _, err := wt.Add(p); err != nil {
+			return nil, fmt.Errorf("git add %s: %w", p, err)
+		}
 	}
 	log.Infof("sitedeploy: staging %s: staged %d path(s)", ctx.ServerID, len(clean))
 	return clean, nil
 }
 
-// StagingCommit runs `git commit -m <message>` and appends a
-// "Committed-by: Hula" trailer line on its own line. Returns the new
-// commit's short SHA on success. Refuses (with no error change to the
-// tree) when there is nothing staged.
+// StagingCommit creates a commit with `<message>\n\nCommitted-by: Hula`
+// as the body, signed with the operator-supplied (or fallback)
+// identity. Returns the new commit's short SHA on success. Refuses
+// (with no error change to the tree) when there is nothing staged.
 func StagingCommit(ctx *StagingGitContext, message, authorName, authorEmail string) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("nil context")
@@ -120,26 +134,32 @@ func StagingCommit(ctx *StagingGitContext, message, authorName, authorEmail stri
 		return "", fmt.Errorf("commit message is required")
 	}
 
+	repo, wt, err := openRepoAndWorktree(ctx.WorkDir)
+	if err != nil {
+		return "", err
+	}
+
 	// Quick bail-out when there's nothing to commit so we don't return
-	// the ambiguous "git commit nothing to commit, working tree clean"
-	// error from git.
-	out, err := runGitOutput(ctx.WorkDir, "diff", "--cached", "--name-only")
+	// the ambiguous "nothing to commit" error from go-git's commit
+	// path. Status(.Staged()) returns the set of files with index
+	// changes; if empty, we have nothing to commit.
+	status, err := wt.Status()
 	if err != nil {
 		return "", fmt.Errorf("checking staged changes: %w", err)
 	}
-	if strings.TrimSpace(out) == "" {
+	staged := false
+	for _, fs := range status {
+		if fs.Staging != gogit.Unmodified && fs.Staging != gogit.Untracked {
+			staged = true
+			break
+		}
+	}
+	if !staged {
 		return "", fmt.Errorf("nothing staged — run hulactl stage first")
 	}
 
 	body := strings.TrimRight(message, "\n") + "\n\nCommitted-by: Hula"
 
-	args := []string{"commit", "-m", body}
-	// Configure author identity inline so the commit is attributable
-	// even on a fresh container with no `git config user.email`. The
-	// caller (handler) supplies the operator's identity if it knows
-	// one; otherwise we fall back to the configured committer
-	// identity (root_git_autodeploy.committer.{name,email}), which
-	// itself falls back to "hula-staging".
 	name, email := authorName, authorEmail
 	if name == "" {
 		name = ctx.CommitterName()
@@ -147,22 +167,20 @@ func StagingCommit(ctx *StagingGitContext, message, authorName, authorEmail stri
 	if email == "" {
 		email = ctx.CommitterEmail()
 	}
-	args = append([]string{
-		"-c", "user.name=" + name,
-		"-c", "user.email=" + email,
-	}, args...)
+	now := time.Now()
+	sig := &object.Signature{Name: name, Email: email, When: now}
 
-	if err := runGit(ctx.WorkDir, args...); err != nil {
+	hash, err := wt.Commit(body, &gogit.CommitOptions{
+		Author:    sig,
+		Committer: sig,
+	})
+	if err != nil {
 		return "", fmt.Errorf("git commit: %w", err)
 	}
 
-	sha, err := runGitOutput(ctx.WorkDir, "rev-parse", "--short", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
-	}
-	sha = strings.TrimSpace(sha)
-	log.Infof("sitedeploy: staging %s: committed %s", ctx.ServerID, sha)
-	return sha, nil
+	short := shortSHA(repo, hash)
+	log.Infof("sitedeploy: staging %s: committed %s", ctx.ServerID, short)
+	return short, nil
 }
 
 // StagingPullResult captures everything a pull attempt produced —
@@ -194,6 +212,11 @@ type StagingPullResult struct {
 // On the rewind path, the returned error is non-nil AND the result is
 // non-nil. Callers (StagingSync in particular) inspect Rewound to
 // adjust their own behaviour.
+//
+// The fetch + status + reset steps are go-git-native; the rebase
+// itself shells out to `git rebase` because go-git has no native
+// rebase. This is the only shell-out left in the staging git verb
+// surface.
 func StagingPull(ctx *StagingGitContext) (*StagingPullResult, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("nil context")
@@ -202,43 +225,70 @@ func StagingPull(ctx *StagingGitContext) (*StagingPullResult, error) {
 		return nil, fmt.Errorf("only branch refs are pullable; ref.tag is read-only")
 	}
 
-	out, err := runGitOutput(ctx.WorkDir, "status", "--porcelain")
+	repo, wt, err := openRepoAndWorktree(ctx.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+
+	status, err := wt.Status()
 	if err != nil {
 		return nil, fmt.Errorf("checking working tree: %w", err)
 	}
-	if strings.TrimSpace(out) != "" {
+	if !status.IsClean() {
 		return nil, fmt.Errorf("working tree has uncommitted changes — run hulactl stage + hulactl commit first, or wipe staging_src_dir to re-seed")
 	}
 
-	repoURL, err := buildAuthURL(ctx.GAD.Repo, ctx.GAD.Creds)
-	if err != nil {
-		return nil, fmt.Errorf("building repo URL: %w", err)
-	}
-	if err := runGit(ctx.WorkDir, "remote", "set-url", "origin", repoURL); err != nil {
+	if err := setOriginURL(repo, ctx.GAD.Repo); err != nil {
 		return nil, fmt.Errorf("git remote set-url: %w", err)
 	}
 
-	beforeSHA, _ := runGitOutput(ctx.WorkDir, "rev-parse", "HEAD")
-	beforeSHA = strings.TrimSpace(beforeSHA)
-
-	if err := runGit(ctx.WorkDir, "fetch", "origin", ctx.GAD.Ref.Branch); err != nil {
-		return nil, fmt.Errorf("git fetch: %w", err)
+	beforeRef, _ := repo.Head()
+	var beforeSHA string
+	if beforeRef != nil {
+		beforeSHA = beforeRef.Hash().String()
 	}
 
-	// Rebase replays local commits on top of origin's tip. Clean
-	// FF when local has nothing; clean linear history when local has
+	auth, err := buildAuth(ctx.GAD.Creds)
+	if err != nil {
+		return nil, fmt.Errorf("building auth: %w", err)
+	}
+	branch := ctx.GAD.Ref.Branch
+	refSpec := gogitcfg.RefSpec(fmt.Sprintf(
+		"+refs/heads/%s:refs/remotes/origin/%s", branch, branch,
+	))
+	if err := repo.Fetch(&gogit.FetchOptions{
+		RemoteName: "origin",
+		Auth:       auth,
+		Force:      true,
+		RefSpecs:   []gogitcfg.RefSpec{refSpec},
+	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
+		return nil, fmt.Errorf("git fetch: %w", sanitizeAuthErr(err))
+	}
+
+	// Rebase replays local commits on top of origin's tip. Clean FF
+	// when local has nothing; clean linear history when local has
 	// commits and there are no conflicts; aborts cleanly on conflict.
 	//
-	// Inline -c user.{name,email} so rebase can set the committer
-	// identity when it rewrites local commits onto origin's tip. The
-	// staging container has no `git config user.email` baked in, so
-	// without these flags rebase fails with "empty ident name" the
-	// moment there's anything to replay. Same identity StagingCommit
-	// uses by default.
+	// SHELL-OUT NOTE: go-git has no native rebase. Wrapping `git
+	// rebase` is the pragmatic alternative — same operation, one
+	// well-isolated boundary. The buildAuthURL call below is also
+	// retained for that reason: the rebase shell-out can't take a
+	// go-git AuthMethod, so we embed creds in the origin URL just
+	// for that one invocation. setOriginURL above already pointed
+	// origin at the credentialed URL via buildAuthURL behavior in
+	// the parent flow; explicitly call it here too to keep it
+	// fresh in case auth rotated since clone time.
+	credURL, err := buildAuthURL(ctx.GAD.Repo, ctx.GAD.Creds)
+	if err != nil {
+		return nil, fmt.Errorf("building auth url for rebase shell-out: %w", err)
+	}
+	if err := runGit(ctx.WorkDir, "remote", "set-url", "origin", credURL); err != nil {
+		return nil, fmt.Errorf("git remote set-url: %w", err)
+	}
 	if err := runGit(ctx.WorkDir,
 		"-c", "user.name="+ctx.CommitterName(),
 		"-c", "user.email="+ctx.CommitterEmail(),
-		"rebase", "origin/"+ctx.GAD.Ref.Branch); err != nil {
+		"rebase", "origin/"+branch); err != nil {
 		// Conflict (or any other rebase failure). Best-effort
 		// cleanup: --abort handles the in-progress-rebase case;
 		// reset --hard belts-and-braces in case --abort missed
@@ -247,7 +297,10 @@ func StagingPull(ctx *StagingGitContext) (*StagingPullResult, error) {
 		_ = runGit(ctx.WorkDir, "rebase", "--abort")
 		rewound := false
 		if beforeSHA != "" {
-			if rwErr := runGit(ctx.WorkDir, "reset", "--hard", beforeSHA); rwErr == nil {
+			if rwErr := wt.Reset(&gogit.ResetOptions{
+				Mode:   gogit.HardReset,
+				Commit: plumbing.NewHash(beforeSHA),
+			}); rwErr == nil {
 				rewound = true
 				log.Warnf("sitedeploy: staging %s: rebase failed during pull — rewound to %s", ctx.ServerID, beforeSHA)
 			} else {
@@ -255,34 +308,26 @@ func StagingPull(ctx *StagingGitContext) (*StagingPullResult, error) {
 			}
 		}
 		return &StagingPullResult{
-				Branch:    ctx.GAD.Ref.Branch,
+				Branch:    branch,
 				Rewound:   rewound,
 				RewoundTo: beforeSHA,
-			}, fmt.Errorf("rebase origin/%s failed (likely conflict): %w", ctx.GAD.Ref.Branch, err)
+			}, fmt.Errorf("rebase origin/%s failed (likely conflict): %w", branch, err)
 	}
 
-	afterSHA, err := runGitOutput(ctx.WorkDir, "rev-parse", "--short", "HEAD")
+	afterRef, err := repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
-	afterSHA = strings.TrimSpace(afterSHA)
-
-	advanced := beforeSHA != ""
+	afterShort := shortSHA(repo, afterRef.Hash())
+	advanced := beforeSHA != "" && beforeSHA != afterRef.Hash().String()
 	if advanced {
-		shortBefore := beforeSHA
-		if len(shortBefore) > len(afterSHA) {
-			shortBefore = shortBefore[:len(afterSHA)]
-		}
-		advanced = shortBefore != afterSHA
-	}
-	if advanced {
-		log.Infof("sitedeploy: staging %s: pulled origin/%s — HEAD now %s", ctx.ServerID, ctx.GAD.Ref.Branch, afterSHA)
+		log.Infof("sitedeploy: staging %s: pulled origin/%s — HEAD now %s", ctx.ServerID, branch, afterShort)
 	} else {
-		log.Infof("sitedeploy: staging %s: already up to date with origin/%s at %s", ctx.ServerID, ctx.GAD.Ref.Branch, afterSHA)
+		log.Infof("sitedeploy: staging %s: already up to date with origin/%s at %s", ctx.ServerID, branch, afterShort)
 	}
 	return &StagingPullResult{
-		SHA:      afterSHA,
-		Branch:   ctx.GAD.Ref.Branch,
+		SHA:      afterShort,
+		Branch:   branch,
 		Advanced: advanced,
 	}, nil
 }
@@ -310,11 +355,15 @@ func StagingSync(ctx *StagingGitContext) (*StagingSyncResult, error) {
 		return nil, fmt.Errorf("nil context")
 	}
 
-	originalHEAD, err := runGitOutput(ctx.WorkDir, "rev-parse", "HEAD")
+	repo, wt, err := openRepoAndWorktree(ctx.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	originalRef, err := repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("recording pre-sync HEAD: %w", err)
 	}
-	originalHEAD = strings.TrimSpace(originalHEAD)
+	originalSHA := originalRef.Hash().String()
 
 	pullRes, err := StagingPull(ctx)
 	if err != nil {
@@ -336,14 +385,17 @@ func StagingSync(ctx *StagingGitContext) (*StagingSyncResult, error) {
 	if err != nil {
 		// Push failed AFTER pull advanced HEAD. Rewind so the served
 		// site reverts to its pre-sync state. The operator's commits
-		// (if any) are still recoverable at originalHEAD.
+		// (if any) are still recoverable at originalSHA.
 		rewound := false
-		if pullRes.Advanced && originalHEAD != "" {
-			if rwErr := runGit(ctx.WorkDir, "reset", "--hard", originalHEAD); rwErr == nil {
+		if pullRes.Advanced && originalSHA != "" {
+			if rwErr := wt.Reset(&gogit.ResetOptions{
+				Mode:   gogit.HardReset,
+				Commit: plumbing.NewHash(originalSHA),
+			}); rwErr == nil {
 				rewound = true
-				log.Warnf("sitedeploy: staging %s: push failed after pull — rewound to %s", ctx.ServerID, originalHEAD)
+				log.Warnf("sitedeploy: staging %s: push failed after pull — rewound to %s", ctx.ServerID, originalSHA)
 			} else {
-				log.Errorf("sitedeploy: staging %s: push failed AND rewind to %s also failed: %s", ctx.ServerID, originalHEAD, rwErr)
+				log.Errorf("sitedeploy: staging %s: push failed AND rewind to %s also failed: %s", ctx.ServerID, originalSHA, rwErr)
 			}
 		}
 		return &StagingSyncResult{
@@ -351,7 +403,7 @@ func StagingSync(ctx *StagingGitContext) (*StagingSyncResult, error) {
 			PullSHA:       pullRes.SHA,
 			Pulled:        pullRes.Advanced,
 			Rewound:       rewound,
-			RewoundTo:     originalHEAD,
+			RewoundTo:     originalSHA,
 			PushFailedErr: err.Error(),
 		}, fmt.Errorf("push: %w", err)
 	}
@@ -390,26 +442,35 @@ func StagingPush(ctx *StagingGitContext) (string, error) {
 		return "", fmt.Errorf("only branch refs are pushable; ref.tag is read-only")
 	}
 
-	repoURL, err := buildAuthURL(ctx.GAD.Repo, ctx.GAD.Creds)
+	repo, err := gogit.PlainOpen(ctx.WorkDir)
 	if err != nil {
-		return "", fmt.Errorf("building repo URL: %w", err)
+		return "", fmt.Errorf("open repo: %w", err)
 	}
-
-	// Refresh origin so new credentials take effect even if they
-	// rotated since clone time. Not destructive — same URL with
-	// possibly-different embedded creds.
-	if err := runGit(ctx.WorkDir, "remote", "set-url", "origin", repoURL); err != nil {
+	if err := setOriginURL(repo, ctx.GAD.Repo); err != nil {
 		return "", fmt.Errorf("git remote set-url: %w", err)
 	}
-
-	if err := runGit(ctx.WorkDir, "push", "origin", "HEAD:"+ctx.GAD.Ref.Branch); err != nil {
-		return "", fmt.Errorf("git push: %w", err)
+	auth, err := buildAuth(ctx.GAD.Creds)
+	if err != nil {
+		return "", fmt.Errorf("building auth: %w", err)
+	}
+	branch := ctx.GAD.Ref.Branch
+	if err := repo.Push(&gogit.PushOptions{
+		RemoteName: "origin",
+		Auth:       auth,
+		RefSpecs: []gogitcfg.RefSpec{
+			gogitcfg.RefSpec(fmt.Sprintf("HEAD:refs/heads/%s", branch)),
+		},
+	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
+		return "", fmt.Errorf("git push: %w", sanitizeAuthErr(err))
 	}
 
-	sha, _ := runGitOutput(ctx.WorkDir, "rev-parse", "--short", "HEAD")
-	sha = strings.TrimSpace(sha)
-	log.Infof("sitedeploy: staging %s: pushed %s to origin/%s", ctx.ServerID, sha, ctx.GAD.Ref.Branch)
-	return sha, nil
+	headRef, err := repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
+	}
+	short := shortSHA(repo, headRef.Hash())
+	log.Infof("sitedeploy: staging %s: pushed %s to origin/%s", ctx.ServerID, short, branch)
+	return short, nil
 }
 
 // sanitizeStagingPath rejects paths that escape workDir (e.g. ../,
@@ -434,4 +495,45 @@ func sanitizeStagingPath(workDir, p string) (string, error) {
 		return "", fmt.Errorf("path escapes staging dir")
 	}
 	return cleaned, nil
+}
+
+// openWorktree is the common path: open the repo, grab its worktree.
+// Returns a wrapped error so callers can pass it up unchanged.
+func openWorktree(dir string) (*gogit.Worktree, error) {
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open repo: %w", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("worktree: %w", err)
+	}
+	return wt, nil
+}
+
+// openRepoAndWorktree returns both for the (common) case where a verb
+// needs Repository-level ops AND worktree-level ops.
+func openRepoAndWorktree(dir string) (*gogit.Repository, *gogit.Worktree, error) {
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open repo: %w", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, nil, fmt.Errorf("worktree: %w", err)
+	}
+	return repo, wt, nil
+}
+
+// shortSHA returns the 7-char abbreviated form go's git tooling and
+// the previous shell-out flow both emit. go-git doesn't have a
+// disambiguating short-sha helper (CommitObject + Object.ShortHash
+// would do better), but a fixed 7-char prefix matches the operator-
+// visible logs and JSON responses that hulactl already prints.
+func shortSHA(_ *gogit.Repository, hash plumbing.Hash) string {
+	full := hash.String()
+	if len(full) >= 7 {
+		return full[:7]
+	}
+	return full
 }
