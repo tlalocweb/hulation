@@ -112,6 +112,9 @@ const (
 	CMD_SYNC                  = "sync"
 	CMD_SYNC_HELP             = "Pull then push in a single API call (with conflict rewind on either side)"
 	CMD_SYNC_USAGE            = "sync <server-id>\n\nEquivalent to `hulactl pull <id> && hulactl push <id>`, but in\none server-side operation. If the pull rebase conflicts, hula\nrewinds and reports the conflict — push is not attempted. If\nthe pull succeeds but the push is rejected, hula rewinds the\nworking tree to the pre-sync HEAD so the served site reverts\nto its known-good state, then reports the push failure."
+	CMD_CREATE_AGENT          = "create-agent"
+	CMD_CREATE_AGENT_HELP     = "Generate an mTLS-secured agent config yaml for hulaagent (Phase 1: offline)"
+	CMD_CREATE_AGENT_USAGE    = "create-agent [-c template.yaml] [--allow-<verb>=<site>[,opts]]... [--expires-in=DUR] [--hula-host=HOST] > agent.yaml\n\nProduces an agent yaml on stdout. Two ways to declare permissions:\n  1. Flag form: --allow-<verb>=<site>[,<opts>] (repeatable).\n  2. Template form: -c <yaml> with config.expires-in + sites.<id>.allow.\nThe two compose: flags override template entries.\n\nVerbs: build, staging-build, pull, push, sync, commit, push-file, get-file.\n--expires-in accepts Go durations (8760h), days (30d), or years (1yr).\n\nNote: Phase 1 is OFFLINE — each invocation generates a one-off Agent\nCA. Phase 2 will register the agent with a running hula server."
 )
 
 var commands []Command
@@ -155,6 +158,7 @@ func init() {
 		Command{CMD_PUSH, CMD_PUSH_HELP, CMD_PUSH_USAGE},
 		Command{CMD_PULL, CMD_PULL_HELP, CMD_PULL_USAGE},
 		Command{CMD_SYNC, CMD_SYNC_HELP, CMD_SYNC_USAGE},
+		Command{CMD_CREATE_AGENT, CMD_CREATE_AGENT_HELP, CMD_CREATE_AGENT_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

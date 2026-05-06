@@ -172,6 +172,8 @@ type HulactlConfig struct {
 	// the server falls back to "hula-staging <staging@hula.local>".
 	CommitAuthorName   string                  `flag:"author-name" usage:"committer name override for hulactl commit"`
 	CommitAuthorEmail  string                  `flag:"author-email" usage:"committer email override for hulactl commit"`
+	// create-agent — template-driven config (alternative to flag-form).
+	AgentTemplatePath string `flag:"c" usage:"path to a create-agent template yaml (alternative to --allow-* flags)"`
 	// Non-interactive auth — when set, `auth` skips the readline prompts.
 	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
 	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`
@@ -1813,6 +1815,9 @@ func main() {
 		default:
 			fmt.Printf("Synced: tree was already in sync with origin/%s at %s\n", out.Branch, out.PullSHA)
 		}
+
+	case CMD_CREATE_AGENT:
+		runCreateAgent(hulactlconfig, argz)
 
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
