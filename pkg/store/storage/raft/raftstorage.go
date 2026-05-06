@@ -323,6 +323,13 @@ func (s *RaftStorage) IsLeader() bool {
 	return s.raft.State() == raft.Leader
 }
 
+// RaftAlive reports whether the local Raft state machine is in any
+// non-shutdown state. Used by /readyz (HA Stage 3.8) to decide
+// whether to answer 200 vs 503.
+func (s *RaftStorage) RaftAlive() bool {
+	return s.raft.State() != raft.Shutdown
+}
+
 // RaftForTest exposes the underlying *raft.Raft so tests can
 // trigger snapshots, observe leadership, etc. Not intended for
 // production use; the production code talks through the

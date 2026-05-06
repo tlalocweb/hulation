@@ -45,6 +45,7 @@ import (
 	"net/http"
 	"strings"
 
+	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 )
@@ -98,13 +99,42 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"session_id": res.SessionID.String(),
 			"chat_token": res.ChatToken,
 			"expires_at": res.ExpiresAt,
 			"message_id": idOrEmpty(res.FirstMessage),
-		})
+		}
+		// HA Stage 3.8: pin the chat WS to THIS node so the in-
+		// process hub never has to fan out across the team. The
+		// widget opens its WS to the per-node hostname rather than
+		// the team-public hostname; round-robin / GeoDNS routing
+		// keeps working for visitor /v/* traffic, only chat
+		// stickiness is enforced.
+		if pinURL := chatPinURL(r); pinURL != "" {
+			resp["chat_url"] = pinURL
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+// chatPinURL returns wss://<node-hostname>/api/v1/chat/ws when the
+// current request was served by a team node with team.node_hostname
+// set. Empty string disables pinning — the widget falls back to
+// dialing the same host that served chat-start, which is correct
+// for solo deployments.
+func chatPinURL(r *http.Request) string {
+	cfg := hulaapp.GetConfig()
+	if cfg == nil || cfg.Team == nil || cfg.Team.NodeHostname == "" {
+		return ""
+	}
+	scheme := "wss"
+	// Mirror the chat-start request's scheme — handles staging
+	// fixtures that run cleartext WS via a TLS-terminating proxy.
+	if r.Header.Get("X-Forwarded-Proto") == "http" {
+		scheme = "ws"
+	}
+	return scheme + "://" + cfg.Team.NodeHostname + "/api/v1/chat/ws"
 }
 
 func idOrEmpty(m chatpkg.Message) string {

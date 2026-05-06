@@ -20,6 +20,7 @@ import (
 	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
+	"github.com/tlalocweb/hulation/pkg/server/readyz"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
 )
 
@@ -55,6 +56,11 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 
 	// /hulastatus — unauthenticated liveness probe.
 	srv.RegisterCustomHandler("/hulastatus", handler.WrapForNetHTTP(handler.Status))
+
+	// /readyz — HA Stage 3.8. External LBs poll this to drain
+	// nodes whose Raft is shutdown / lagging / leaderless. nil
+	// state ⇒ solo deployment; the handler returns 200.
+	srv.RegisterCustomHandler("/readyz", readyz.Handler(currentReadyzState()).ServeHTTP)
 
 	// Visitor tracking endpoints.
 	srv.RegisterCustomHandler(visitorPrefix+"/hello", handler.WrapForNetHTTP(handler.Hello))
