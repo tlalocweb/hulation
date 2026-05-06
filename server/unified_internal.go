@@ -63,6 +63,7 @@ func bootEnableInternalChannel(srv *unified.Server, cfg *config.Config) error {
 	registerLiveMembership(srv, cfg)
 	registerLiveStorageProxy(srv, bundle, cfg)
 	registerLiveRelay(srv, bundle, cfg)
+	registerLiveGossip(srv, bundle, cfg)
 	unifiedLog.Infof("HA internal channel enabled (team_id=%s node_id=%s ch_connected=%t)",
 		cfg.Team.TeamID, cfg.Team.NodeID, cfg.Team.CHConnected)
 	return nil
