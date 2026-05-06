@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+// MembershipService — internal-only RPC for joining/leaving the
+// Team's Raft cluster. Mounted on the unified listener behind the
+// Team-CA mTLS gate; never exposed on the public REST gateway.
+//
+// See HA_PLAN3.md §3 for the join handshake design.
+
+package hulation.v1.internalapi;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi;internalapispec";
+
+service MembershipService {
+  // Join is called by a new node asking to be added to the team.
+  // Receivers that are not the leader forward to the leader. The
+  // joining node's mTLS cert proves Team-CA membership; the
+  // bootstrap_token is a layered second factor verified inside
+  // the RPC.
+  rpc Join(JoinRequest) returns (JoinResponse);
+
+  // Leave is called by a node asking to be removed from the team.
+  // Graceful — the leader transfers leadership first if the leaver
+  // happens to be the current leader.
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+
+  // Status returns membership + leader + index info. Authenticated
+  // by mTLS (no bootstrap_token required).
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message JoinRequest {
+  string team_id          = 1;
+  string node_id          = 2;
+  string raft_addr        = 3;
+  string bootstrap_token  = 4;
+  bool   ch_connected     = 5;
+  string node_hostname    = 6;
+}
+
+message JoinResponse {
+  string leader_id     = 1;
+  string leader_addr   = 2;
+  uint64 last_index    = 3;
+}
+
+message LeaveRequest {
+  string team_id = 1;
+  string node_id = 2;
+}
+
+message LeaveResponse {
+  bool leadership_transferred = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  string leader_id    = 1;
+  string leader_addr  = 2;
+  uint64 last_index   = 3;
+  uint64 applied_index = 4;
+  bool   has_quorum   = 5;
+  repeated MemberInfo members = 6;
+}
+
+message MemberInfo {
+  string node_id      = 1;
+  string raft_addr    = 2;
+  string suffrage     = 3;   // "voter" | "nonvoter" | "staging"
+  bool   ch_connected = 4;
+  bool   is_leader    = 5;
+}

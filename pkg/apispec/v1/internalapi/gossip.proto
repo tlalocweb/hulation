@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+// GossipService — push-on-write + periodic anti-entropy for the
+// CRDT visitor / session / bad-actor layer (HA_PLAN3 §7). Stage
+// 3.7 fills in the merge logic; Stage 3.2 just lands the proto.
+
+package hulation.v1.internalapi;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi;internalapispec";
+
+service GossipService {
+  // Push fans out an immediate write delta to every peer. The push
+  // is fire-and-forget from the writer's perspective; missed pushes
+  // are healed by SyncDigest.
+  rpc Push(PushRequest) returns (PushResponse);
+
+  // SyncDigest exchanges per-bucket high-water HLCs between two
+  // peers. The peer with newer entries returns them in deltas.
+  rpc SyncDigest(SyncDigestRequest) returns (SyncDigestResponse);
+}
+
+message Delta {
+  // bucket identifies the CRDT register family
+  // ("visitors" | "sessions" | "badactor_flags" | ...).
+  string bucket = 1;
+  // key is the bucket-scoped key (e.g. "<server_id>/<visitor_id>").
+  string key = 2;
+  // payload is the proto-encoded CRDT register (LWW / monotone /
+  // tombstone). Type discriminator lives in the payload itself.
+  bytes  payload = 3;
+  // hlc carries the HLC timestamp for staleness comparison without
+  // having to decode the payload.
+  HLC    hlc = 4;
+}
+
+message HLC {
+  int64  wall_ms = 1;
+  uint32 counter = 2;
+  string node_id = 3;
+}
+
+message PushRequest {
+  string source_node_id = 1;
+  repeated Delta deltas = 2;
+}
+
+message PushResponse {
+  uint32 accepted = 1;
+  // remote_hlc is the receiver's current HLC after applying the
+  // deltas; the sender pulls its clock forward to max(local, remote).
+  HLC remote_hlc = 2;
+}
+
+message BucketDigest {
+  string bucket = 1;
+  HLC    high_water = 2;
+}
+
+message SyncDigestRequest {
+  string source_node_id = 1;
+  repeated BucketDigest digests = 2;
+}
+
+message SyncDigestResponse {
+  // deltas the responder believes the requester is missing.
+  repeated Delta deltas = 1;
+  HLC remote_hlc = 2;
+}

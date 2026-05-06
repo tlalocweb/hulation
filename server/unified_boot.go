@@ -163,6 +163,12 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("create unified server: %w", err)
 	}
 
+	// HA Stage 3: optionally turn on the team-only internal mTLS
+	// channel. No-op when team.pki is unset (solo deployments).
+	if err := bootEnableInternalChannel(srv, cfg); err != nil {
+		return nil, fmt.Errorf("enable internal channel: %w", err)
+	}
+
 	// Register services. Additional services (auth, site, staging,
 	// badactor, analytics) are registered by stage 0.7 as their
 	// implementations land.

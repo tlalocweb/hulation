@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+// ChatLookupService — non-CH nodes consult this endpoint on the
+// CH-connected peer to populate their local chat lookaside cache
+// (HA_PLAN3 §8.2). Stage 3.8 fills in the cache + invalidation
+// piggyback; Stage 3.2 just lands the proto.
+
+package hulation.v1.internalapi;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi;internalapispec";
+
+service ChatLookupService {
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse);
+}
+
+message GetSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+}
+
+message GetSessionResponse {
+  // payload is the proto-encoded chat.Session row. Empty when no
+  // such session exists.
+  bytes payload = 1;
+}
+
+message GetMessagesRequest {
+  string server_id  = 1;
+  string session_id = 2;
+  int64  since_ts   = 3;
+  uint32 limit      = 4;
+}
+
+message GetMessagesResponse {
+  // each payload is a proto-encoded chat.Message row.
+  repeated bytes payloads = 1;
+}
+
+message SearchMessagesRequest {
+  string server_id = 1;
+  string query     = 2;
+  uint32 limit     = 3;
+}
+
+message SearchMessagesResponse {
+  repeated bytes session_payloads = 1;
+}
