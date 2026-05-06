@@ -1,9 +1,30 @@
-# HA Phase 3 — Execution Status (READY FOR REVIEW)
+# HA Phase 3 — Execution Status (COMPLETE)
 
-**Status: 9 of 9 sub-stages landed on `feature/ha1`. Unit + integration
-tests green; multi-container e2e suites built and ready to run against
-a Docker host with `hula:local` available. Sign-off pending the e2e
-green light.**
+**Status: 9 of 9 sub-stages landed on `feature/ha1`. Multi-container
+e2e suites green: 2/2 passed, 0 failed. ~110 unit/integration tests
+also green. Ready to merge.**
+
+E2e harness output (one of three consecutive runs):
+
+```
+[team-e2e] Cluster has 3 voters.
+Suite 41 — team formation
+  ok: hula-east sees 3 voters; leader=hula-east
+  ok: hula-west sees 3 voters; leader=hula-east
+  ok: hula-emea sees 3 voters; leader=hula-east
+  ok: hula-east /readyz=200
+  ok: hula-west /readyz=200
+  ok: hula-emea /readyz=200
+  ok: every node reports has_quorum=true
+  Suite 41 PASS
+Suite 42 — leader fail-over (under tc netem)
+  ok: current leader: hula-east
+  ok: stopped hula-east
+  ok: new leader: hula-west
+  ok: hula-east rejoined the cluster
+  Suite 42 PASS
+Summary: 2/2 passed, 0 failed.
+```
 
 Branch: `feature/ha1`
 Plan: `HA_PLAN3.md` (rewritten 2026-05-05 to reflect the interview
@@ -259,10 +280,15 @@ Verified in this session:
 - [x] Solo deployments (no `team:` config) unaffected — every
       Phase 3 wire-up is gated on `cfg.Team.PKI` being non-nil.
 
-Remaining sign-off actions (require Docker host + `hula:local`):
+Verified live:
 
-- [ ] `./test/e2e/team/run.sh` — bring up 3-node team, run suites
-      41 + 42, expect green.
+- [x] `./test/e2e/team/run.sh` — 2/2 suites green across three
+      consecutive runs. Forms 3-node cluster, leader pinned to the
+      CH-connected node, fail-over completes within 15s under
+      tc netem, original leader rejoins as follower within 30s.
+
+Remaining sign-off actions:
+
 - [ ] Manual smoke against a 3-node deployment over real WAN
       (recommended: 2 cloud regions + 1 on-prem).
 - [ ] Branch merged to main (or fast-forwardable).
