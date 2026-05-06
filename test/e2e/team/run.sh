@@ -54,18 +54,34 @@ trap cleanup EXIT
 
 mkdir -p "$WORKDIR"
 
-# ---- Build hulactl (we need it on team-runner via bind mount) ----
-log "Building hulactl for team-runner..."
+# ---- hulactl: two builds ----
+# host glibc build for genteamcerts (run on host).
+# musl build extracted from hula:local for the team-runner.
+log "Building host hulactl..."
 (
     cd "$REPO_ROOT"
-    PATH="$REPO_ROOT/.bin/go/bin:$PATH" go build -o "$WORKDIR/hulactl" ./model/tools/hulactl/
-) || { err "hulactl build failed"; exit 1; }
+    PATH="$REPO_ROOT/.bin/go/bin:$PATH" go build -o "$WORKDIR/hulactl-host" ./model/tools/hulactl/
+) || { err "host hulactl build failed"; exit 1; }
+
+log "Extracting hulactl from hula:local..."
+if ! docker image inspect hula:local >/dev/null 2>&1; then
+    err "hula:local image not found — run ./build-docker.sh --local first"
+    exit 1
+fi
+tmpcid="$(docker create hula:local /bin/true)"
+docker cp "$tmpcid:/hula/hulactl" "$WORKDIR/hulactl" 2>&1 | head -3 || true
+docker rm "$tmpcid" >/dev/null 2>&1 || true
+chmod +x "$WORKDIR/hulactl"
+if [ ! -s "$WORKDIR/hulactl" ]; then
+    err "hulactl extraction failed"
+    exit 1
+fi
 
 # ---- Generate the team bundle (offline) so we know the team_id ----
-TEAM_ID="${TEST_TEAM_ID:-$(uuidgen)}"
+TEAM_ID="${TEST_TEAM_ID:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)}"
 log "Team ID: $TEAM_ID"
 rm -rf "$WORKDIR/team-bundles"
-"$WORKDIR/hulactl" \
+"$WORKDIR/hulactl-host" \
     --team-id "$TEAM_ID" \
     --nodes hula-east,hula-west,hula-emea \
     --validity 24h \
@@ -75,7 +91,7 @@ TEAM_TOKEN="$(cat "$WORKDIR/team-bundles/bootstrap-token")"
 
 # ---- Render per-node configs ----
 ADMIN_PASS="${ADMIN_PASS:-changeme123!}"
-ADMIN_ARGON_HASH="${ADMIN_ARGON_HASH:-$("$WORKDIR/hulactl" generatehash <<<"$ADMIN_PASS" 2>/dev/null || echo "stub")}"
+ADMIN_ARGON_HASH="${ADMIN_ARGON_HASH:-$("$WORKDIR/hulactl-host" generatehash <<<"$ADMIN_PASS" 2>/dev/null || echo "stub")}"
 JWT_KEY="${JWT_KEY:-$(head -c 32 /dev/urandom | base64)}"
 export TEAM_ID ADMIN_ARGON_HASH JWT_KEY
 
@@ -102,23 +118,23 @@ if [ "${PIPESTATUS[0]}" != "0" ]; then
     exit 1
 fi
 
-# ---- Wait for the cluster to form ----
-log "Waiting for cluster formation (up to 60s)..."
-deadline=$(( $(date +%s) + 60 ))
+# ---- Wait for the cluster to form (all 3 voters present) ----
+log "Waiting for full 3-voter formation (up to 90s)..."
+deadline=$(( $(date +%s) + 90 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-    if docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T team-runner \
+    voter_count="$(docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T team-runner \
         sh -c "hulactl --pki-dir /team-bundles/hula-east \
             --team-id $TEAM_ID \
-            team-status hula-east.team.internal:443 2>/dev/null | grep -q 'has_quorum:    true'"
-    then
-        log "Cluster has quorum."
+            team-status hula-east.team.internal:443 2>/dev/null | grep -c voter")"
+    if [ "$voter_count" = "3" ]; then
+        log "Cluster has 3 voters."
         break
     fi
     sleep 2
 done
 if [ "$(date +%s)" -ge "$deadline" ]; then
-    err "Cluster did not reach quorum within 60s"
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" logs --tail 100
+    err "Cluster did not reach 3 voters within 90s (last count=$voter_count)"
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" logs --tail 50
     exit 1
 fi
 

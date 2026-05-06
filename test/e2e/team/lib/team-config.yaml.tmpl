@@ -34,6 +34,17 @@ dbconfig:
     retries: 5
     delay_retry: 5
 
+servers:
+    # Minimal placeholder server. The team suites don't actually serve
+    # site traffic — they only exercise admin RPCs + Membership +
+    # /readyz. config.LoadConfig requires at least one server, so we
+    # define a synthetic one whose host matches this node.
+    - host: ${NODE_ID}.team.internal
+      id: team-placeholder
+      ssl:
+          cert: /var/hula/team-bundles/${NODE_ID}/cert.pem
+          key: /var/hula/team-bundles/${NODE_ID}/key.pem
+
 team:
     team_id: ${TEAM_ID}
     node_id: ${NODE_ID}

@@ -90,26 +90,41 @@ func TestAutoConfig_OperatorPinIDs(t *testing.T) {
 	}
 }
 
-// TestAutoConfig_MultiNodeFallsBackToSolo verifies Stage-2's
-// "parse but warn + fall back to solo" behaviour for
-// non-solo bootstrap modes — operators can write multi-node
-// config ahead of Stage 3 without breaking Stage-2 boot.
-func TestAutoConfig_MultiNodeFallsBackToSolo(t *testing.T) {
+// TestAutoConfig_MultiNode_RequiresBindAddr verifies HA Stage 3
+// behaviour: bootstrap=first-of-team and bootstrap=join honor the
+// operator-supplied bind_addr instead of falling back to loopback.
+// Missing bind_addr is now a hard error (was a warn-and-downgrade
+// in Stage 2).
+func TestAutoConfig_MultiNode_RequiresBindAddr(t *testing.T) {
 	dir := t.TempDir()
 	tc := &hulaconfig.TeamConfig{
 		DataDir:   dir,
 		Bootstrap: "first-of-team",
-		Peers: []hulaconfig.TeamPeer{
-			{ID: "node-a", RaftAddr: "10.0.0.1:8300"},
-			{ID: "node-b", RaftAddr: "10.0.0.2:8300"},
-		},
 	}
+	if _, err := raftbackend.AutoConfig(tc); err == nil {
+		t.Fatal("expected error when bind_addr missing for first-of-team")
+	}
+
+	tc.BindAddr = "node-a.team.internal:443"
+	tc.AdvertiseAddr = "node-a.team.internal:443"
 	cfg, err := raftbackend.AutoConfig(tc)
 	if err != nil {
 		t.Fatalf("AutoConfig: %v", err)
 	}
-	if cfg.BindAddr != "127.0.0.1:0" {
-		t.Fatalf("BindAddr = %q, want fallback loopback", cfg.BindAddr)
+	if cfg.BindAddr != "node-a.team.internal:443" {
+		t.Errorf("BindAddr = %q, want operator value", cfg.BindAddr)
+	}
+	if !cfg.Bootstrap {
+		t.Errorf("first-of-team should bootstrap")
+	}
+
+	tc.Bootstrap = "join"
+	cfg, err = raftbackend.AutoConfig(tc)
+	if err != nil {
+		t.Fatalf("AutoConfig (join): %v", err)
+	}
+	if cfg.Bootstrap {
+		t.Errorf("join should NOT bootstrap (peer adds us via Membership)")
 	}
 }
 

@@ -56,31 +56,46 @@ func AutoConfig(tc *hulaconfig.TeamConfig) (Config, error) {
 	}
 
 	bindAddr := tc.BindAddr
+	advertiseAddr := tc.AdvertiseAddr
 	bootstrapMode := strings.ToLower(strings.TrimSpace(tc.Bootstrap))
+	bootstrap := false
+	mode := "solo"
 	switch bootstrapMode {
 	case "", "solo":
 		// Pure solo. Force loopback if operator didn't set one.
 		if bindAddr == "" {
 			bindAddr = "127.0.0.1:0"
 		}
-	case "first-of-team", "join":
-		bootLog.Warnf("team.bootstrap = %q parsed but ignored — multi-node lands in HA Stage 3; falling back to solo", bootstrapMode)
+		bootstrap = true
+	case "first-of-team":
+		// Multi-node seed. Bootstrap a single-voter cluster; later
+		// joiners use AddVoter via MembershipService. Operator
+		// must set bind_addr and advertise_addr or we can't be
+		// reached by peers.
 		if bindAddr == "" {
-			bindAddr = "127.0.0.1:0"
+			return Config{}, fmt.Errorf("raftbackend: team.bind_addr required for bootstrap=first-of-team")
 		}
+		bootstrap = true
+		mode = "first-of-team"
+	case "join":
+		// Joining an existing cluster. Don't auto-bootstrap; the
+		// node sits idle until MembershipService.Join (run by
+		// hulactl team-join) adds us to the configuration.
+		if bindAddr == "" {
+			return Config{}, fmt.Errorf("raftbackend: team.bind_addr required for bootstrap=join")
+		}
+		bootstrap = false
+		mode = "join"
 	default:
 		return Config{}, fmt.Errorf("raftbackend: unknown team.bootstrap %q", bootstrapMode)
 	}
 
-	if len(tc.Peers) > 0 {
-		bootLog.Warnf("team.peers (%d entry/entries) parsed but ignored — multi-node lands in HA Stage 3", len(tc.Peers))
-	}
-
 	cfg := Config{
-		NodeID:    nodeID,
-		DataDir:   dataDir,
-		BindAddr:  bindAddr,
-		Bootstrap: true,
+		NodeID:        nodeID,
+		DataDir:       dataDir,
+		BindAddr:      bindAddr,
+		AdvertiseAddr: advertiseAddr,
+		Bootstrap:     bootstrap,
 	}
 	if tc.SnapshotInterval != "" {
 		d, err := time.ParseDuration(tc.SnapshotInterval)
@@ -93,7 +108,7 @@ func AutoConfig(tc *hulaconfig.TeamConfig) (Config, error) {
 		cfg.SnapshotThreshold = tc.SnapshotThreshold
 	}
 
-	bootLog.Infof("team config resolved (team_id=%s, node_id=%s, data_dir=%s, mode=solo)", teamID, nodeID, dataDir)
+	bootLog.Infof("team config resolved (team_id=%s, node_id=%s, data_dir=%s, mode=%s)", teamID, nodeID, dataDir, mode)
 	return cfg, nil
 }
 

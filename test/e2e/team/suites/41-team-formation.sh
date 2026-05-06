@@ -46,10 +46,15 @@ for n in hula-east hula-west hula-emea; do
     pass "$n sees 3 voters; leader=$leader"
 done
 
-# 2. /readyz on each node returns 200.
+# 2. /readyz on each node returns 200. The SNI gate requires a
+#    Team-CA-signed client cert when SNI ends in .team.internal, so
+#    we present the per-node cert. (Production LBs probe via the
+#    public hostname which doesn't trigger the gate.)
 for n in hula-east hula-west hula-emea; do
     code="$(dc exec -T team-runner sh -c "
-        curl -k -s -o /dev/null -w '%{http_code}' https://${n}.team.internal/readyz" 2>&1)"
+        apk add --quiet --no-cache curl 2>/dev/null
+        curl -k --cert /team-bundles/${n}/cert.pem --key /team-bundles/${n}/key.pem \
+            -s -o /dev/null -w '%{http_code}' https://${n}.team.internal/readyz" 2>&1 | tail -1)"
     if [ "$code" != "200" ]; then
         fail "$n /readyz returned $code, want 200"
     fi

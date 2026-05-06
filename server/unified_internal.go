@@ -47,9 +47,16 @@ func bootEnableInternalChannel(srv *unified.Server, cfg *config.Config) error {
 		return fmt.Errorf("team.pki is partial — ca_cert, node_cert, and node_key are all required")
 	}
 
-	bundle, err := pki.LoadBundle(p.CACert, p.NodeCert, p.NodeKey)
-	if err != nil {
-		return fmt.Errorf("load team pki bundle: %w", err)
+	// Reuse the bundle preloadFastSubsystems already loaded when it
+	// built the gRPC StreamLayer. Falls back to a fresh load only
+	// if the storage layer didn't get there first.
+	_, bundle := teamStreamLayerHandle()
+	if bundle == nil {
+		var err error
+		bundle, err = pki.LoadBundle(p.CACert, p.NodeCert, p.NodeKey)
+		if err != nil {
+			return fmt.Errorf("load team pki bundle: %w", err)
+		}
 	}
 	leaf, err := tls.X509KeyPair(bundle.Cert, bundle.Key)
 	if err != nil {
@@ -59,11 +66,22 @@ func bootEnableInternalChannel(srv *unified.Server, cfg *config.Config) error {
 	if err := srv.EnableInternalChannel(bundle.CAPool, &leaf); err != nil {
 		return fmt.Errorf("enable internal channel: %w", err)
 	}
-	registerInternalServiceStubs(srv)
+	// Mount the gRPC StreamLayer's RaftTransportService BEFORE
+	// any other internal-service registration: live impls below
+	// rely on the same gRPC server, and gRPC disallows post-Serve
+	// registration.
+	if sl, _ := teamStreamLayerHandle(); sl != nil {
+		internalspec.RegisterRaftTransportServiceServer(srv.GetInternalGRPCServer(), sl)
+	}
+	// Register live impls first; the fallback registers Unimplemented
+	// stubs only for services whose live deps weren't met. gRPC
+	// disallows duplicate registration so this ordering matters.
 	registerLiveMembership(srv, cfg)
+	seedBootstrapToken(cfg)
 	registerLiveStorageProxy(srv, bundle, cfg)
 	registerLiveRelay(srv, bundle, cfg)
 	registerLiveGossip(srv, bundle, cfg)
+	registerInternalServiceFallbacks(srv)
 	startPriorityLoop(context.Background(), cfg)
 	unifiedLog.Infof("HA internal channel enabled (team_id=%s node_id=%s ch_connected=%t)",
 		cfg.Team.TeamID, cfg.Team.NodeID, cfg.Team.CHConnected)
@@ -175,21 +193,34 @@ func (a raftClusterAdapter) Members() []membershipimpl.ClusterMember {
 	return out
 }
 
-// registerInternalServiceStubs registers UnimplementedXxxServer for
-// every internal service. Subsequent stages (3.3 RaftTransport, 3.4
-// Membership, 3.5 StorageProxy, 3.6 Relay, 3.7 Gossip, 3.8
-// ChatLookup) replace these stubs with real impls. The stubs
-// guarantee a clean Unimplemented response for any peer that ends
-// up calling a not-yet-built service.
-func registerInternalServiceStubs(srv *unified.Server) {
+// registerInternalServiceFallbacks installs Unimplemented stubs
+// ONLY for services whose live impl wasn't registered earlier in
+// boot. gRPC disallows post-Serve registration AND duplicate
+// registration, so each service ends up registered exactly once:
+// either the live impl (if its deps are met) or the stub (so
+// peers get a clean Unimplemented rather than a route-not-found).
+func registerInternalServiceFallbacks(srv *unified.Server) {
 	g := srv.GetInternalGRPCServer()
 	if g == nil {
 		return
 	}
-	internalspec.RegisterMembershipServiceServer(g, internalspec.UnimplementedMembershipServiceServer{})
-	internalspec.RegisterRaftTransportServiceServer(g, internalspec.UnimplementedRaftTransportServiceServer{})
-	internalspec.RegisterStorageProxyServiceServer(g, internalspec.UnimplementedStorageProxyServiceServer{})
-	internalspec.RegisterRelayServiceServer(g, internalspec.UnimplementedRelayServiceServer{})
-	internalspec.RegisterGossipServiceServer(g, internalspec.UnimplementedGossipServiceServer{})
-	internalspec.RegisterChatLookupServiceServer(g, internalspec.UnimplementedChatLookupServiceServer{})
+	info := g.GetServiceInfo()
+	if _, ok := info["hulation.v1.internalapi.MembershipService"]; !ok {
+		internalspec.RegisterMembershipServiceServer(g, internalspec.UnimplementedMembershipServiceServer{})
+	}
+	if _, ok := info["hulation.v1.internalapi.RaftTransportService"]; !ok {
+		internalspec.RegisterRaftTransportServiceServer(g, internalspec.UnimplementedRaftTransportServiceServer{})
+	}
+	if _, ok := info["hulation.v1.internalapi.StorageProxyService"]; !ok {
+		internalspec.RegisterStorageProxyServiceServer(g, internalspec.UnimplementedStorageProxyServiceServer{})
+	}
+	if _, ok := info["hulation.v1.internalapi.RelayService"]; !ok {
+		internalspec.RegisterRelayServiceServer(g, internalspec.UnimplementedRelayServiceServer{})
+	}
+	if _, ok := info["hulation.v1.internalapi.GossipService"]; !ok {
+		internalspec.RegisterGossipServiceServer(g, internalspec.UnimplementedGossipServiceServer{})
+	}
+	if _, ok := info["hulation.v1.internalapi.ChatLookupService"]; !ok {
+		internalspec.RegisterChatLookupServiceServer(g, internalspec.UnimplementedChatLookupServiceServer{})
+	}
 }

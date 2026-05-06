@@ -9,6 +9,7 @@ package membership
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"time"
 
@@ -116,7 +117,17 @@ func (s *Service) Join(ctx context.Context, req *internalspec.JoinRequest) (*int
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read bootstrap token: %v", err)
 	}
-	if subtle.ConstantTimeCompare([]byte(req.GetBootstrapToken()), stored) != 1 {
+	// Wire form is base64 (proto string fields require valid UTF-8;
+	// raw 32-byte tokens almost never qualify). Decode here; the
+	// FSM-stored value is the raw bytes.
+	caller, err := base64.StdEncoding.DecodeString(req.GetBootstrapToken())
+	if err != nil {
+		// Fall back to comparing the raw string — legacy callers
+		// might still ship undecoded bytes if they happen to be
+		// UTF-8 safe.
+		caller = []byte(req.GetBootstrapToken())
+	}
+	if subtle.ConstantTimeCompare(caller, stored) != 1 {
 		membershipLog.Warnf("Join refused: bad bootstrap_token from node_id=%q", req.GetNodeId())
 		return nil, status.Error(codes.Unauthenticated, "bad bootstrap token")
 	}
