@@ -194,6 +194,11 @@ func registerLegacyAPIRoutes(srv *unified.Server) {
 	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/pull", admin(handler.StagingPull))
 	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/sync", admin(handler.StagingSync))
 
+	// hulaagent management — Phase 2 ships create only; revoke/list
+	// land in Phase 6. Admin-only because issuing an agent grants
+	// long-lived API access to the team.
+	srv.RegisterCustomHandler("POST /api/agent/create", admin(handler.CreateAgent))
+
 	// Bad actor admin — only registered when the feature is enabled.
 	if badactor.IsEnabled() {
 		srv.RegisterCustomHandler("GET /api/badactor/list", admin(badactor.ListBadActors))

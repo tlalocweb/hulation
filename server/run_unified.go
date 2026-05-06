@@ -195,6 +195,14 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 				mode = conf.Team.Bootstrap
 			}
 			log.Infof("Raft storage online (node=%s, data_dir=%s, mode=%s)", rcfg.NodeID, rcfg.DataDir, mode)
+
+			// Persistent Agent CA — sibling of the team PKI but a
+			// separate trust root. Bootstrap as soon as we have a
+			// data_dir so /api/agent/create can sign certs without
+			// blocking on a separate ceremony.
+			if err := BootAgentCA(rcfg.DataDir); err != nil {
+				log.Warnf("agent: CA bootstrap failed (%s); /api/agent/create will 503", err.Error())
+			}
 		}
 	}
 

@@ -174,6 +174,10 @@ type HulactlConfig struct {
 	CommitAuthorEmail  string                  `flag:"author-email" usage:"committer email override for hulactl commit"`
 	// create-agent — template-driven config (alternative to flag-form).
 	AgentTemplatePath string `flag:"c" usage:"path to a create-agent template yaml (alternative to --allow-* flags)"`
+	// create-agent — bypass the server and mint a one-off CA locally.
+	// Default is server mode (Phase 2): hit /api/agent/create on the
+	// running hula and use its persistent Agent CA + registry.
+	AgentOffline bool `flag:"offline" usage:"create-agent: mint a one-off CA locally instead of calling the running hula (Phase 1 fallback; agents minted offline are NOT registered)"`
 	// Non-interactive auth — when set, `auth` skips the readline prompts.
 	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
 	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`

@@ -25,6 +25,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/tlalocweb/hulation/client"
 	"github.com/tlalocweb/hulation/pkg/agent/pki"
 )
 
@@ -112,8 +113,18 @@ func runCreateAgent(cfg *HulactlConfig, argz []string) {
 		expiresIn = pki.DefaultValidity
 	}
 
-	// Generate identity. Phase 1: one-off CA per invocation. Phase 2:
-	// pull the persistent Agent CA from the running hula.
+	// Server mode (Phase 2 default): hit the running hula's
+	// /api/agent/create endpoint, which signs the cert under the
+	// persistent Agent CA AND registers the agent in hula's FSM.
+	// Offline mode (Phase 1, kept for dev loops without a server) is
+	// opted in via --offline; it produces a one-off CA + leaf locally
+	// and DOES NOT register anywhere — agents minted offline are not
+	// usable against a running hula.
+	if !cfg.AgentOffline {
+		runCreateAgentServer(cfg, sites, expiresIn, hulaHost)
+		return
+	}
+
 	id, err := newAgentID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: agent id: %v\n", err)
@@ -150,6 +161,34 @@ func runCreateAgent(cfg *HulactlConfig, argz []string) {
 		os.Exit(1)
 	}
 	enc.Close()
+}
+
+// runCreateAgentServer executes the Phase-2 default path: POST the
+// request to the running hula and write the returned yaml to stdout.
+// Errors propagate verbatim so the operator sees the server's reason
+// (no admin token, validation failure, CA bootstrap pending, etc.).
+func runCreateAgentServer(cfg *HulactlConfig, sites map[string]siteAllow, expiresIn time.Duration, hulaHost string) {
+	clientSites := map[string]client.CreateAgentSiteAllow{}
+	for site, s := range sites {
+		clone := map[string]string{}
+		for verb, opts := range s.Allow {
+			clone[verb] = opts
+		}
+		clientSites[site] = client.CreateAgentSiteAllow{Allow: clone}
+	}
+	cli := GetHulactlClient(cfg)
+	resp, err := cli.CreateAgent(&client.CreateAgentRequest{
+		ExpiresInSeconds: int64(expiresIn.Seconds()),
+		Sites:            clientSites,
+		HulaHost:         hulaHost,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: create-agent: %v\n", err)
+		os.Exit(1)
+	}
+	// Server already rendered the yaml in stable-key order; emit
+	// verbatim so operators can `> agent.yaml` without surprises.
+	fmt.Print(resp.Yaml)
 }
 
 // parseCreateAgentArgs scans argz for --allow-<verb>=<site>[,<opts>]

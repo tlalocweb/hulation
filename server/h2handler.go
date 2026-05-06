@@ -221,6 +221,9 @@ func (h *H2Handler) setupRoutes() {
 	h.mux.Handle("POST /api/staging/{serverid}/git/push", wrapOpa(handler.StagingPush))
 	h.mux.Handle("POST /api/staging/{serverid}/git/pull", wrapOpa(handler.StagingPull))
 	h.mux.Handle("POST /api/staging/{serverid}/git/sync", wrapOpa(handler.StagingSync))
+
+	// hulaagent management (Phase 2: create only).
+	h.mux.Handle("POST /api/agent/create", wrapOpa(handler.CreateAgent))
 	// WebDAV: register without method so all WebDAV methods (PROPFIND, MKCOL, COPY, MOVE, etc.) match.
 	// The handler does its own Bearer token auth since http.ServeMux method patterns
 	// don't support non-standard HTTP methods.

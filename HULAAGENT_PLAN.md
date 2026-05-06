@@ -253,11 +253,47 @@ Target: <2MB stripped binary, <50ms cold startup.
 
 | Phase | Scope                                                                      | Status |
 | ----- | -------------------------------------------------------------------------- | ------ |
-| 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)    | THIS COMMIT |
-| 2     | Server-side `/api/v1/agent/create`, agent CA bootstrap, registry storage   |        |
+| 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)    | DONE   |
+| 2     | Server-side `/api/agent/create`, agent CA bootstrap, registry storage      | DONE   |
 | 3     | mTLS verification middleware + `agent_perms` request context               |        |
 | 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb       |        |
 | 5     | Remaining HLAP verbs                                                       |        |
 | 6     | `hulactl list-agents` / `revoke-agent` + e2e suite                         |        |
+
+## Phase 2 — what landed
+
+Concrete shape of the Phase-2 work that's already in main:
+
+- **`pkg/agent/pki/persist.go`**: `LoadOrCreateCA(dataDir)` reads
+  `<dataDir>/agent-ca.{pem,key}` if present, else generates a fresh
+  10-year Agent CA and writes both files (cert 0644, key 0600).
+- **`pkg/agent/registry/`**: bbolt-backed registry under
+  `_agents/by-id/<id>` (canonical) + `_agents/by-fingerprint/<sha256>`
+  (lookup index). `Put` writes both atomically via `storage.Batch`.
+  `Record.IsActive` and `Record.IsAllowed` are the consult-at-RPC-time
+  primitives Phase 3 / 5 will use.
+- **`POST /api/agent/create`** in `handler/agent.go`: admin-auth'd.
+  Mints an ID, signs a leaf under the persistent CA, writes the
+  registry record (canonical + fingerprint), renders the agent yaml
+  in stable-key order, returns it as a JSON-encapsulated string.
+- **`server/agent_boot.go::BootAgentCA`** runs in `run_unified.go`
+  right after `storage.SetGlobal` so the handler is usable as soon
+  as the HTTP listener accepts traffic.
+- **`hulactl create-agent`** now defaults to server mode (the new
+  `--offline` flag drops back to Phase-1 behaviour for dev loops
+  without a server). Output yaml is identical between modes.
+- **e2e suite 12a**: server-mode round-trip — yaml shape, PEM
+  presence, sites reflect `--allow-*`, direct curl 200, optional
+  `hula-agent --dump` of the produced yaml when the rust binary is
+  buildable on the host.
+
+What's deliberately NOT in Phase 2:
+
+- mTLS handshake-time validation against the registry. That's
+  Phase 3.
+- Hula serving the cert it's expected to authenticate against on
+  agent connections — Phase 3 wires the Agent CA into the unified
+  listener's ClientCAs alongside the existing trust roots.
+- `revoke-agent` / `list-agents` CLI surfaces. Phase 6.
 
 Each phase lands as its own PR.
