@@ -1,0 +1,147 @@
+# Multi-node team e2e overlay (HA Stage 3).
+#
+# Brought up under its own compose project so it doesn't fight the
+# single-hula stack:
+#
+#   docker compose -p hulateam -f test/e2e/team/docker-compose.team.yaml up
+#
+# Three hula nodes; only hula-east is configured to reach
+# ClickHouse. west + emea relay analytics events to east over the
+# internal mTLS gRPC channel (HA_PLAN3 §6).
+#
+# Bundle distribution: `team-runner` runs `genteamcerts` once at
+# project bring-up; per-node directories from /tmp/team-bundles
+# bind-mount into each hula's /var/hula/team-pki/ via the
+# `team-bundles` volume.
+#
+# Skeleton today — the per-stage suites (41, 42, 43, …) fill in
+# config templates + entrypoint orchestration as features land.
+
+services:
+  hula-clickhouse:
+    image: clickhouse/clickhouse-server:24.10-alpine
+    environment:
+      - CLICKHOUSE_DB=hula
+      - CLICKHOUSE_USER=hula
+      - CLICKHOUSE_PASSWORD=hula
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=hula --password=hula -q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      teamnet: {}
+
+  team-runner:
+    image: alpine:3.19
+    volumes:
+      - ${TEAM_E2E_ROOT}/workdir/hulactl:/usr/local/bin/hulactl:ro
+      - team-bundles:/team-bundles
+    environment:
+      - TEST_TEAM_ID=${TEST_TEAM_ID:-00000000-0000-0000-0000-000000000001}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache curl ca-certificates
+        update-ca-certificates 2>/dev/null || true
+        if [ ! -f /team-bundles/ca.pem ]; then
+          mkdir -p /team-bundles
+          hulactl genteamcerts \
+            --team-id "$$TEST_TEAM_ID" \
+            --nodes hula-east,hula-west,hula-emea \
+            --validity 24h \
+            --out /team-bundles
+        fi
+        # Block forever so the bundle volume stays populated and
+        # team-runner is available for `docker compose exec` in the
+        # suite scripts.
+        tail -f /dev/null
+    networks:
+      teamnet: {}
+
+  hula-east:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-clickhouse:
+        condition: service_healthy
+      team-runner:
+        condition: service_started
+    ports:
+      - "${EAST_HOST_PORT:-8443}:443"
+    volumes:
+      - team-bundles:/var/hula/team-bundles:ro
+      - hula-east-data:/var/hula/data
+    environment:
+      - HULA_NODE_ID=hula-east
+      - HULA_TEAM_PKI_DIR=/var/hula/team-bundles/hula-east
+      - HULA_BOOTSTRAP=first-of-team
+    extra_hosts:
+      - "hula-east.team.internal:127.0.0.1"
+    networks:
+      teamnet:
+        aliases: ["hula-east.team.internal"]
+
+  hula-west:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-east:
+        condition: service_started
+      team-runner:
+        condition: service_started
+    ports:
+      - "${WEST_HOST_PORT:-8444}:443"
+    volumes:
+      - team-bundles:/var/hula/team-bundles:ro
+      - hula-west-data:/var/hula/data
+    environment:
+      - HULA_NODE_ID=hula-west
+      - HULA_TEAM_PKI_DIR=/var/hula/team-bundles/hula-west
+      - HULA_BOOTSTRAP=join
+      - HULA_TEAM_PEER=hula-east.team.internal:443
+    extra_hosts:
+      - "hula-west.team.internal:127.0.0.1"
+    networks:
+      teamnet:
+        aliases: ["hula-west.team.internal"]
+
+  hula-emea:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-east:
+        condition: service_started
+      team-runner:
+        condition: service_started
+    ports:
+      - "${EMEA_HOST_PORT:-8445}:443"
+    volumes:
+      - team-bundles:/var/hula/team-bundles:ro
+      - hula-emea-data:/var/hula/data
+    environment:
+      - HULA_NODE_ID=hula-emea
+      - HULA_TEAM_PKI_DIR=/var/hula/team-bundles/hula-emea
+      - HULA_BOOTSTRAP=join
+      - HULA_TEAM_PEER=hula-east.team.internal:443
+    extra_hosts:
+      - "hula-emea.team.internal:127.0.0.1"
+    networks:
+      teamnet:
+        aliases: ["hula-emea.team.internal"]
+
+volumes:
+  team-bundles: {}
+  hula-east-data: {}
+  hula-west-data: {}
+  hula-emea-data: {}
+
+networks:
+  teamnet:
+    driver: bridge
