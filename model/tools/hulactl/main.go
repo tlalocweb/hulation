@@ -168,6 +168,10 @@ type HulactlConfig struct {
 	HostId             string                  `yaml:"hostid" flag:"hostid" usage:"hulation host id" default:"" env:"HULA_HOST_ID"` // needed in certain requests that emulate a visitor
 	Dangerous          bool                    `flag:"dangerous" usage:"allow syncing executables and security-sensitive files"`
 	AutoBuild          bool                    `flag:"autobuild" usage:"automatically trigger a staging build after changes are synced (staging-mount only)"`
+	// commit — author identity overrides for hulactl commit. When unset
+	// the server falls back to "hula-staging <staging@hula.local>".
+	CommitAuthorName   string                  `flag:"author-name" usage:"committer name override for hulactl commit"`
+	CommitAuthorEmail  string                  `flag:"author-email" usage:"committer email override for hulactl commit"`
 	// Non-interactive auth — when set, `auth` skips the readline prompts.
 	// Useful for scripted/automated auth flows (e.g., end-to-end tests).
 	AuthIdentity       string                  `flag:"identity" usage:"identity for non-interactive auth" env:"HULACTL_IDENTITY"`
@@ -1604,6 +1608,21 @@ func main() {
 		}
 		fmt.Printf("Uploaded %s to %s on server %s\n", localFile, remotePath, serverID)
 
+	case CMD_STAGING_GET:
+		if len(argz) < 4 {
+			fmt.Printf("Usage: %s\n", CMD_STAGING_GET_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		remotePath := argz[2]
+		localFile := argz[3]
+		client := GetHulactlClient(hulactlconfig)
+		if err := client.StagingDownload(serverID, remotePath, localFile); err != nil {
+			fmt.Printf("Error downloading file: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Downloaded %s from server %s to %s\n", remotePath, serverID, localFile)
+
 	case CMD_STAGING_MOUNT:
 		// Go's flag.Parse stops at the first non-flag arg, so `--autobuild`
 		// and `--dangerous` placed AFTER `staging-mount` aren't parsed as
@@ -1679,6 +1698,121 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Mount stopped.\n")
+
+	case CMD_STAGE:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: %s\n", CMD_STAGE_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		paths := append([]string{}, argz[2:]...)
+		hulaclient := GetHulactlClient(hulactlconfig)
+		out, err := hulaclient.StagingStageFiles(serverID, paths)
+		if err != nil {
+			fmt.Printf("Stage failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if len(out.Staged) == 0 {
+			fmt.Printf("Nothing staged.\n")
+		} else {
+			fmt.Printf("Staged:\n")
+			for _, p := range out.Staged {
+				fmt.Printf("  %s\n", p)
+			}
+		}
+
+	case CMD_COMMIT:
+		if len(argz) < 3 {
+			fmt.Printf("Usage: %s\n", CMD_COMMIT_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		// argz[2:] joined with spaces — lets the operator type
+		// `hulactl commit foo "fix typo"` OR `hulactl commit foo fix typo`.
+		message := strings.Join(argz[2:], " ")
+		hulaclient := GetHulactlClient(hulactlconfig)
+		out, err := hulaclient.StagingCommit(serverID, message,
+			hulactlconfig.CommitAuthorName, hulactlconfig.CommitAuthorEmail)
+		if err != nil {
+			fmt.Printf("Commit failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Committed %s\n", out.SHA)
+
+	case CMD_PUSH:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: %s\n", CMD_PUSH_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		hulaclient := GetHulactlClient(hulactlconfig)
+		out, err := hulaclient.StagingPush(serverID)
+		if err != nil {
+			fmt.Printf("Push failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Pushed %s to origin/%s\n", out.SHA, out.Branch)
+
+	case CMD_PULL:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: %s\n", CMD_PULL_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		hulaclient := GetHulactlClient(hulactlconfig)
+		out, err := hulaclient.StagingPull(serverID)
+		if err != nil {
+			// Hard failure (e.g. dirty tree, 400 from server).
+			fmt.Printf("Pull failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if out.Error != "" {
+			// Rebase conflict — server already rewound. Site is safe.
+			fmt.Printf("Pull failed (rewound to %s): %s\n", out.RewoundTo, out.Error)
+			os.Exit(1)
+		}
+		if out.Advanced {
+			fmt.Printf("Pulled origin/%s — HEAD now %s\n", out.Branch, out.SHA)
+		} else {
+			fmt.Printf("Already up to date with origin/%s at %s\n", out.Branch, out.SHA)
+		}
+
+	case CMD_SYNC:
+		if len(argz) < 2 {
+			fmt.Printf("Usage: %s\n", CMD_SYNC_USAGE)
+			os.Exit(1)
+		}
+		serverID := argz[1]
+		hulaclient := GetHulactlClient(hulactlconfig)
+		out, err := hulaclient.StagingSync(serverID)
+		if err != nil {
+			fmt.Printf("Sync failed: %s\n", err.Error())
+			os.Exit(1)
+		}
+		if out.Error != "" {
+			rewindNote := ""
+			if out.Rewound {
+				rewindNote = fmt.Sprintf(" (rewound to %s)", out.RewoundTo)
+			}
+			fmt.Printf("Sync failed during pull%s: %s\n", rewindNote, out.Error)
+			os.Exit(1)
+		}
+		if out.PushFailedErr != "" {
+			rewindNote := ""
+			if out.Rewound {
+				rewindNote = fmt.Sprintf(" — rewound to %s", out.RewoundTo)
+			}
+			fmt.Printf("Sync failed during push%s: %s\n", rewindNote, out.PushFailedErr)
+			os.Exit(1)
+		}
+		switch {
+		case out.Pulled && out.PushSHA != "":
+			fmt.Printf("Synced: pulled origin/%s (now %s), pushed %s\n", out.Branch, out.PullSHA, out.PushSHA)
+		case out.PushSHA != "":
+			fmt.Printf("Synced: nothing to pull, pushed %s to origin/%s\n", out.PushSHA, out.Branch)
+		default:
+			fmt.Printf("Synced: tree was already in sync with origin/%s at %s\n", out.Branch, out.PullSHA)
+		}
 
 	default:
 		fmt.Printf("Unknown command: %s\n", command)

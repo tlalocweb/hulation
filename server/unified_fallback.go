@@ -185,6 +185,15 @@ func registerLegacyAPIRoutes(srv *unified.Server) {
 	// Staging build (WebDAV registered separately below).
 	srv.RegisterCustomHandler("POST /api/staging/build", admin(handler.StagingBuild))
 
+	// Staging git verbs — operator round-trip from WebDAV-edited tree
+	// back to the upstream repo. Each refuses non-staging servers and
+	// servers whose StagingSrcDir isn't a git working tree.
+	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/stage", admin(handler.StagingStage))
+	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/commit", admin(handler.StagingCommit))
+	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/push", admin(handler.StagingPush))
+	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/pull", admin(handler.StagingPull))
+	srv.RegisterCustomHandler("POST /api/staging/{serverid}/git/sync", admin(handler.StagingSync))
+
 	// Bad actor admin — only registered when the feature is enabled.
 	if badactor.IsEnabled() {
 		srv.RegisterCustomHandler("GET /api/badactor/list", admin(badactor.ListBadActors))

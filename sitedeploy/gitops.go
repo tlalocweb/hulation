@@ -16,16 +16,25 @@ import (
 // CloneOrPull clones the repo if the target directory does not exist,
 // or pulls updates if it does. Returns the path to the repo directory.
 func CloneOrPull(gad *config.GitAutoDeployConfig) (string, error) {
-	repoDir := gad.DataDir
+	return CloneOrPullTo(gad, gad.DataDir)
+}
 
-	// Build the authenticated URL if credentials are provided
+// CloneOrPullTo is the same as CloneOrPull but lets the caller pick the
+// target directory. Used by the staging boot path to land the working
+// tree directly in StagingSrcDir (so WebDAV edits, `hulactl stage`, etc.
+// operate on a real git working tree). The standard production path
+// keeps using gad.DataDir via CloneOrPull.
+func CloneOrPullTo(gad *config.GitAutoDeployConfig, repoDir string) (string, error) {
+	if repoDir == "" {
+		return "", fmt.Errorf("repoDir is empty")
+	}
+
 	repoURL, err := buildAuthURL(gad.Repo, gad.Creds)
 	if err != nil {
 		return "", fmt.Errorf("building repo URL: %w", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) {
-		// Fresh clone
 		log.Infof("sitedeploy: cloning %s to %s", sanitizeURL(gad.Repo), repoDir)
 		if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 			return "", fmt.Errorf("creating parent dir: %w", err)
@@ -34,7 +43,6 @@ func CloneOrPull(gad *config.GitAutoDeployConfig) (string, error) {
 			return "", fmt.Errorf("git clone: %w", err)
 		}
 	} else {
-		// Pull updates
 		log.Infof("sitedeploy: pulling updates in %s", repoDir)
 		if err := gitPull(repoURL, repoDir, &gad.Ref); err != nil {
 			return "", fmt.Errorf("git pull: %w", err)
@@ -42,6 +50,24 @@ func CloneOrPull(gad *config.GitAutoDeployConfig) (string, error) {
 	}
 
 	return repoDir, nil
+}
+
+// IsGitWorkingTree returns true when dir contains a .git entry (file or
+// directory). Used by the staging git verbs to refuse cleanly when the
+// caller points at a non-repo directory (e.g. a stale install where
+// CloneOrPull was never run).
+func IsGitWorkingTree(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	// .git can be a directory (normal) or a file (worktrees, submodules);
+	// either is fine.
+	_ = info
+	return true
 }
 
 // gitClone performs a fresh clone of the repository.

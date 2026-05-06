@@ -39,6 +39,11 @@ services:
       - hula-staging-data:/var/hula/staging
       # Bind-mount the local test site repo (read-only) so hula can clone via file://
       - ${TEST_SITE_SRC}:/var/hula/testsite-repo:ro
+      # Writable bare clone of the test site — push target for the
+      # stage/commit/push e2e (suite 11.5). Created by setup.sh's
+      # prepare_test_site() under $WORKDIR/testsite-bare.git. Mounted
+      # rw because `git push` needs to update refs.
+      - ${TEST_SITE_BARE}:/var/hula/testsite-bare.git:rw
     environment:
       - GITHUB_AUTH_TOKEN=${GITHUB_AUTH_TOKEN}
       # Phase-4b chat suites (32-34) need /chat/start to issue

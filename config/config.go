@@ -411,6 +411,19 @@ type GitAutoDeployConfig struct {
 	// If true, hula will NOT automatically pull and build the site on startup.
 	// By default hula pulls and builds all root_git_autodeploy sites at startup.
 	NoPullOnStart bool `yaml:"no_pull_on_start,omitempty"`
+	// Committer identity used by the staging git verbs (hulactl
+	// commit / pull / sync). Both fields fall back to the
+	// hula-staging defaults when unset. Per-server so a tenant with
+	// multiple staging sites can attribute commits separately.
+	Committer *GitCommitter `yaml:"committer,omitempty"`
+}
+
+// GitCommitter is the committer identity hula uses for staging-side
+// git operations. Author identity for `hulactl commit` is overridden
+// inline via --author-name / --author-email; this is the fall-back.
+type GitCommitter struct {
+	Name  string `yaml:"name,omitempty" default:"hula-staging"`
+	Email string `yaml:"email,omitempty" default:"staging@hula.local"`
 }
 
 type Server struct {

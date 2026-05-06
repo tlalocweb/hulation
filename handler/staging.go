@@ -86,6 +86,253 @@ func StagingBuild(ctx RequestCtx) error {
 	})
 }
 
+// --- Staging git verbs (POST /api/staging/{serverid}/git/{stage,commit,push}) ---
+//
+// Edit-via-WebDAV → stage → commit → push is the round-trip the
+// operator uses to land a staging tweak into the upstream repo. The
+// three handlers below all share the same "is this a staging server
+// with a real git working tree?" precondition, encoded in
+// sitedeploy.NewStagingGitContext, and translate the sitedeploy errors
+// to HTTP statuses.
+//
+// All three are admin-only, mounted under the /api/staging prefix
+// alongside StagingBuild and the WebDAV surface.
+
+type stagingStageRequest struct {
+	Paths []string `json:"paths,omitempty"`
+}
+
+type stagingStageResponse struct {
+	Staged []string `json:"staged"`
+}
+
+type stagingCommitRequest struct {
+	Message     string `json:"message"`
+	AuthorName  string `json:"author_name,omitempty"`
+	AuthorEmail string `json:"author_email,omitempty"`
+}
+
+type stagingCommitResponse struct {
+	SHA string `json:"sha"`
+}
+
+type stagingPushResponse struct {
+	SHA    string `json:"sha"`
+	Branch string `json:"branch"`
+}
+
+type stagingPullResponse struct {
+	SHA       string `json:"sha,omitempty"`
+	Branch    string `json:"branch"`
+	Advanced  bool   `json:"advanced"`
+	Rewound   bool   `json:"rewound,omitempty"`
+	RewoundTo string `json:"rewound_to,omitempty"`
+	// Error is populated when the pull rebase failed and we rewound
+	// the working tree. The HTTP status stays 200 in that case
+	// because the rewind itself succeeded — the staging site is in
+	// a known-good state. Callers check this field, not the status.
+	Error string `json:"error,omitempty"`
+}
+
+type stagingSyncResponse struct {
+	Branch        string `json:"branch"`
+	PullSHA       string `json:"pull_sha,omitempty"`
+	Pulled        bool   `json:"pulled"`
+	PushSHA       string `json:"push_sha,omitempty"`
+	Rewound       bool   `json:"rewound,omitempty"`
+	RewoundTo     string `json:"rewound_to,omitempty"`
+	PushFailedErr string `json:"push_error,omitempty"`
+}
+
+// resolveStagingGitCtx is the shared precondition for the three git
+// verbs: server lookup → staging-profile check → git-repo check. Maps
+// the sitedeploy sentinel errors to the right HTTP code so the
+// handlers don't repeat themselves.
+func resolveStagingGitCtx(ctx RequestCtx, serverID string) (*sitedeploy.StagingGitContext, bool) {
+	if serverID == "" {
+		ctx.Status(http.StatusBadRequest).SendString("server id required")
+		return nil, false
+	}
+	cfg := hulation.GetConfig()
+	server := cfg.GetServerByID(serverID)
+	if server == nil {
+		ctx.Status(http.StatusNotFound).SendString("server not found: " + serverID)
+		return nil, false
+	}
+	gctx, err := sitedeploy.NewStagingGitContext(server)
+	if errors.Is(err, sitedeploy.ErrNotStaging) {
+		ctx.Status(http.StatusBadRequest).SendString("server is not a staging server (hula_build must be 'staging')")
+		return nil, false
+	}
+	if errors.Is(err, sitedeploy.ErrNotGitRepo) {
+		ctx.Status(http.StatusPreconditionFailed).SendString("staging_src_dir is not a git working tree — wipe it and restart hula to re-seed from origin")
+		return nil, false
+	}
+	if err != nil {
+		ctx.Status(http.StatusInternalServerError).SendString("staging git context: " + err.Error())
+		return nil, false
+	}
+	return gctx, true
+}
+
+// StagingStage handles POST /api/staging/{serverid}/git/stage.
+//
+// Body (optional): {"paths": [...]}. Empty/missing means stage all.
+func StagingStage(ctx RequestCtx) error {
+	gctx, ok := resolveStagingGitCtx(ctx, ctx.Param("serverid"))
+	if !ok {
+		return nil
+	}
+
+	var req stagingStageRequest
+	if body := ctx.Body(); len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			return ctx.Status(http.StatusBadRequest).SendString("bad request: " + err.Error())
+		}
+	}
+
+	staged, err := sitedeploy.StagingStage(gctx, req.Paths)
+	if err != nil {
+		return ctx.Status(http.StatusInternalServerError).SendString("stage failed: " + err.Error())
+	}
+	return ctx.SendJSON(stagingStageResponse{Staged: staged})
+}
+
+// StagingCommit handles POST /api/staging/{serverid}/git/commit.
+//
+// Body: {"message": "...", "author_name": "...", "author_email": "..."}.
+func StagingCommit(ctx RequestCtx) error {
+	gctx, ok := resolveStagingGitCtx(ctx, ctx.Param("serverid"))
+	if !ok {
+		return nil
+	}
+
+	var req stagingCommitRequest
+	if body := ctx.Body(); len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			return ctx.Status(http.StatusBadRequest).SendString("bad request: " + err.Error())
+		}
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		return ctx.Status(http.StatusBadRequest).SendString("commit message is required")
+	}
+
+	sha, err := sitedeploy.StagingCommit(gctx, req.Message, req.AuthorName, req.AuthorEmail)
+	if err != nil {
+		// Errors here are mostly user-driven (nothing staged, bad
+		// identity) — return as 400 so hulactl can surface them
+		// directly without the operator wading through 5xx noise.
+		return ctx.Status(http.StatusBadRequest).SendString("commit failed: " + err.Error())
+	}
+	return ctx.SendJSON(stagingCommitResponse{SHA: sha})
+}
+
+// StagingSync handles POST /api/staging/{serverid}/git/sync.
+//
+// One-shot pull-then-push. On a successful round-trip, returns 200 with
+// the new SHAs. On a half-applied failure (pull OK, push refused), we
+// rewind the working tree to the pre-sync HEAD so the served site
+// keeps working, return 502 with the rewind details, and surface the
+// underlying push error in the body.
+func StagingSync(ctx RequestCtx) error {
+	gctx, ok := resolveStagingGitCtx(ctx, ctx.Param("serverid"))
+	if !ok {
+		return nil
+	}
+
+	res, err := sitedeploy.StagingSync(gctx)
+	if err != nil {
+		// Two failure shapes — distinguished by PushFailedErr:
+		//   - empty: pull itself failed (dirty tree, or rebase
+		//     conflict that the pull already rewound). 400.
+		//   - non-empty: pull succeeded, push refused, sync rewound
+		//     so the served site is back at pre-sync HEAD. 502.
+		if res == nil || res.PushFailedErr == "" {
+			body := stagingSyncResponse{Branch: gctx.GAD.Ref.Branch}
+			if res != nil {
+				body.PullSHA = res.PullSHA
+				body.Rewound = res.Rewound
+				body.RewoundTo = res.RewoundTo
+			}
+			ctx.Status(http.StatusBadRequest)
+			return ctx.SendJSON(struct {
+				stagingSyncResponse
+				Error string `json:"error"`
+			}{
+				stagingSyncResponse: body,
+				Error:               err.Error(),
+			})
+		}
+		return ctx.Status(http.StatusBadGateway).SendJSON(stagingSyncResponse{
+			Branch:        res.Branch,
+			PullSHA:       res.PullSHA,
+			Pulled:        res.Pulled,
+			Rewound:       res.Rewound,
+			RewoundTo:     res.RewoundTo,
+			PushFailedErr: res.PushFailedErr,
+		})
+	}
+	return ctx.SendJSON(stagingSyncResponse{
+		Branch:  res.Branch,
+		PullSHA: res.PullSHA,
+		Pulled:  res.Pulled,
+		PushSHA: res.PushSHA,
+	})
+}
+
+// StagingPull handles POST /api/staging/{serverid}/git/pull.
+//
+// Rebases the staging working tree onto origin/<branch>. On a rebase
+// conflict we rewind --hard to the pre-pull HEAD so the served site
+// keeps working — the response carries Rewound=true + RewoundTo so
+// hulactl can surface what happened.
+func StagingPull(ctx RequestCtx) error {
+	gctx, ok := resolveStagingGitCtx(ctx, ctx.Param("serverid"))
+	if !ok {
+		return nil
+	}
+
+	res, err := sitedeploy.StagingPull(gctx)
+	if err != nil {
+		// Two failure shapes:
+		//   - res == nil: dirty tree refusal (no rewind needed). 400.
+		//   - res != nil: rebase failed and we rewound. 200 with
+		//     Rewound=true + Error set — the site is in a known-good
+		//     state, so the request itself wasn't "bad."
+		if res == nil {
+			return ctx.Status(http.StatusBadRequest).SendString("pull failed: " + err.Error())
+		}
+		return ctx.SendJSON(stagingPullResponse{
+			Branch:    res.Branch,
+			Rewound:   res.Rewound,
+			RewoundTo: res.RewoundTo,
+			Error:     err.Error(),
+		})
+	}
+	return ctx.SendJSON(stagingPullResponse{
+		SHA:      res.SHA,
+		Branch:   res.Branch,
+		Advanced: res.Advanced,
+	})
+}
+
+// StagingPush handles POST /api/staging/{serverid}/git/push.
+//
+// Pushes the current HEAD of StagingSrcDir to origin, using the branch
+// configured under root_git_autodeploy.ref.branch.
+func StagingPush(ctx RequestCtx) error {
+	gctx, ok := resolveStagingGitCtx(ctx, ctx.Param("serverid"))
+	if !ok {
+		return nil
+	}
+
+	sha, err := sitedeploy.StagingPush(gctx)
+	if err != nil {
+		return ctx.Status(http.StatusInternalServerError).SendString("push failed: " + err.Error())
+	}
+	return ctx.SendJSON(stagingPushResponse{SHA: sha, Branch: gctx.GAD.Ref.Branch})
+}
+
 // webdav handler cache per server
 var (
 	davHandlers   = make(map[string]*webdav.Handler)

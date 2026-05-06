@@ -182,7 +182,13 @@ func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProf
 
 	// Run protocol loop for initial setup (WORKDIR triggers source transfer).
 	// Loop until we see READY (staging mode entered) or an error.
-	repoDir := gad.DataDir
+	//
+	// repoDir is the host-side source the tarball is created from. We
+	// use StagingSrcDir directly so the bind-mount, the clone target,
+	// and the WebDAV-editable tree are all the same path. The tarball
+	// step then re-writes StagingSrcDir into itself (via the bind mount)
+	// — harmless, and it keeps the existing hulabuild protocol intact.
+	repoDir := gad.StagingSrcDir
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -391,9 +397,20 @@ func (sm *StagingManager) StopStaging(serverID string) error {
 }
 
 // StartupStaging starts staging containers for all servers configured with staging profiles.
+//
+// First-run seeding: if StagingSrcDir is empty (no .git), and the server
+// has a `repo:` configured under root_git_autodeploy and !NoPullOnStart,
+// CloneOrPull populates StagingSrcDir directly from the configured ref.
+// Subsequent restarts skip the clone — operators have been editing the
+// tree via WebDAV and we don't want to clobber their work.
+//
+// Source-of-truth shift: from this point on, StagingSrcDir IS the git
+// working tree and the location sitebuild.yaml is read from. The legacy
+// gad.DataDir path stays alive for the production-style ephemeral build
+// (`hulactl build`) which still clones into DataDir for one-shot builds.
 func (sm *StagingManager) StartupStaging(servers []*config.Server) {
 	for _, s := range servers {
-		if s.GitAutoDeploy == nil || s.GitAutoDeploy.NoPullOnStart {
+		if s.GitAutoDeploy == nil {
 			continue
 		}
 		if !isStagingProfile(s) {
@@ -401,7 +418,26 @@ func (sm *StagingManager) StartupStaging(servers []*config.Server) {
 		}
 
 		gad := s.GitAutoDeploy
-		siteBuildPath := filepath.Join(gad.DataDir, ".hula", "sitebuild.yaml")
+
+		// Auto-seed the staging working tree from git on first run.
+		// The clone runs ONLY when StagingSrcDir is empty — once the
+		// operator has been editing via WebDAV we never re-pull, since
+		// a pull would clobber unpushed edits. To refresh from git,
+		// they wipe StagingSrcDir and restart hula.
+		if gad.StagingSrcDir == "" {
+			log.Errorf("sitedeploy: staging startup: %s has empty staging_src_dir", s.ID)
+			continue
+		}
+		if !gad.NoPullOnStart && gad.Repo != "" && isDirEmpty(gad.StagingSrcDir) {
+			log.Infof("sitedeploy: staging startup: %s — seeding %s from %s",
+				s.ID, gad.StagingSrcDir, sanitizeURL(gad.Repo))
+			if _, err := CloneOrPullTo(gad, gad.StagingSrcDir); err != nil {
+				log.Errorf("sitedeploy: staging startup: clone for %s failed: %s", s.ID, err)
+				continue
+			}
+		}
+
+		siteBuildPath := filepath.Join(gad.StagingSrcDir, ".hula", "sitebuild.yaml")
 		data, err := os.ReadFile(siteBuildPath)
 		if err != nil {
 			log.Errorf("sitedeploy: staging startup: reading sitebuild.yaml for %s: %s", s.ID, err)
@@ -448,6 +484,28 @@ func (sm *StagingManager) Close() {
 	for _, id := range serverIDs {
 		sm.StopStaging(id)
 	}
+}
+
+// isDirEmpty returns true when dir does not exist, exists but is empty,
+// or contains a single .gitkeep / .keep placeholder. Used by the staging
+// auto-seed gate so the clone runs only when the operator hasn't placed
+// content of their own.
+func isDirEmpty(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Doesn't exist — counts as empty (CloneOrPullTo will mkdir).
+		return true
+	}
+	if len(entries) == 0 {
+		return true
+	}
+	if len(entries) == 1 {
+		name := entries[0].Name()
+		if name == ".gitkeep" || name == ".keep" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractWorkDir parses the WORKDIR path from a command list text.

@@ -296,6 +296,36 @@ prepare_test_site() {
     )
     # Export for the compose template
     export TEST_SITE_SRC="$src"
+
+    # --- Bare clone for stage/commit/push tests (suite 11.5) ---
+    # The new hulactl stage|commit|push verbs need a real push target.
+    # We can't push into the bind-mounted working tree (it's :ro and
+    # git refuses to push into a non-bare repo's checked-out branch),
+    # so we make a bare clone at $WORKDIR/testsite-bare.git that
+    # docker-compose binds in writable. testsite-staging's `repo:` is
+    # then pointed at this bare repo so auto-seed → edit → commit →
+    # push round-trip end-to-end.
+    local bare="$WORKDIR/testsite-bare.git"
+    if [ -d "$bare" ]; then
+        # Previous e2e runs left root-owned files inside the bare repo
+        # (the hula container pushed into it as root). Host-level `rm`
+        # can't touch those, so wipe via a short-lived alpine container
+        # that runs the rm as root.
+        docker run --rm -v "$WORKDIR:/work" alpine:3.19 \
+            rm -rf "/work/testsite-bare.git" >/dev/null 2>&1 || true
+    fi
+    if ! git clone --bare "$src" "$bare" 2>"$WORKDIR/bare-clone.err" >/dev/null; then
+        echo "ERROR: bare-repo prep failed" >&2
+        cat "$WORKDIR/bare-clone.err" >&2
+        exit 1
+    fi
+    rm -f "$WORKDIR/bare-clone.err"
+    # Bare clones from a non-bare working tree might end up with HEAD
+    # set to whatever was checked out. Make sure the default branch
+    # exists in the bare repo (CloneOrPull will ask for `main`).
+    (cd "$bare" && git symbolic-ref HEAD refs/heads/main 2>/dev/null || true)
+    export TEST_SITE_BARE="$bare"
+    echo "  prepared bare repo at $bare for staging push tests"
 }
 
 # --- Main ---

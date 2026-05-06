@@ -48,14 +48,18 @@ servers:
     # --- Staging site (long-lived container, webdav editable) ---
     # Note: no_pull_on_start is NOT set here — staging needs its container
     # running for staging-build, staging-update, and staging-mount tests.
+    #
+    # `repo:` points at the writable bare clone (testsite-bare.git, set up
+    # by setup.sh's prepare_test_site). Auto-seed clones FROM the bare repo
+    # into staging_src_dir on first boot, and `hulactl push testsite-staging`
+    # pushes BACK INTO the bare repo — exercising the full round-trip.
     - host: staging.test.local
       id: testsite-staging
       ssl:
           cert: /var/hula/certs/cert.pem
           key: /var/hula/certs/key.pem
       root_git_autodeploy:
-          # Local bind-mount of the test site repo (no GitHub access needed)
-          repo: file:///var/hula/testsite-repo
+          repo: file:///var/hula/testsite-bare.git
           ref:
               branch: main
           hula_build: staging

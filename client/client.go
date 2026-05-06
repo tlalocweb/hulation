@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tlalocweb/hulation/handler"
@@ -111,6 +112,12 @@ func (e *ClientError) Error() (ret string) {
 	}
 	if e.RootCause != nil {
 		ret = fmt.Sprintf("%s: %s", ret, e.RootCause.Error())
+	}
+	// Include the response body when the server gave us one. Without
+	// this, callers that print err.Error() see only "response 400"
+	// and lose the actual server-side reason.
+	if e.Body != "" {
+		ret = fmt.Sprintf("%s: %s", ret, strings.TrimSpace(e.Body))
 	}
 	return
 }
