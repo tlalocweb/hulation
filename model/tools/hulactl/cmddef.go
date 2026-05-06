@@ -79,6 +79,21 @@ const (
 	CMD_GENTEAMCERTS           = "genteamcerts"
 	CMD_GENTEAMCERTS_HELP      = "Generate a Team CA + per-node mTLS bundle + bootstrap token (HA Stage 3)"
 	CMD_GENTEAMCERTS_USAGE     = "hulactl genteamcerts --nodes <id1>,<id2>,... [--team-id <uuid>] [--validity 365d] [--out ./team-bundles]\nOffline ceremony — produces:\n  <out>/ca.pem            (deploy to every node)\n  <out>/ca.key            (operator-secured; do NOT deploy)\n  <out>/bootstrap-token   (32 random bytes, base64)\n  <out>/team-id\n  <out>/<node-id>/{cert.pem,key.pem,ca.pem}\nDistribute per-node bundles + bootstrap-token out-of-band (secrets manager)."
+	CMD_TEAM_INIT              = "team-init"
+	CMD_TEAM_INIT_HELP         = "Generate team_id + bootstrap_token bytes (offline ceremony)"
+	CMD_TEAM_INIT_USAGE        = "hulactl team-init\nOffline. Prints a fresh team_id (UUID) and bootstrap_token\n(base64). Operator stuffs both into the seed node's config\nbefore first boot. Doesn't talk to a running hula."
+	CMD_TEAM_JOIN              = "team-join"
+	CMD_TEAM_JOIN_HELP         = "Join this hula node to an existing team via the leader's MembershipService"
+	CMD_TEAM_JOIN_USAGE        = "hulactl team-join <leader-addr> --token <bootstrap-token> --pki-dir <dir>\n<leader-addr>           host:443 of any node already in the team\n--token                 the team's bootstrap_token (base64)\n--pki-dir               local dir holding ca.pem + cert.pem + key.pem (mTLS material)\n--node-id               override the joining node's id (default: hostname)\n--node-hostname         operator-provisioned per-node hostname for chat WS pinning"
+	CMD_TEAM_LEAVE             = "team-leave"
+	CMD_TEAM_LEAVE_HELP        = "Remove a node from the team via the leader's MembershipService"
+	CMD_TEAM_LEAVE_USAGE       = "hulactl team-leave <leader-addr> [<node-id>] --pki-dir <dir>\n<leader-addr>     host:443 of the leader (or any voter — they forward)\n<node-id>         the node to remove (default: this host's hostname)\n--pki-dir         local dir holding ca.pem + cert.pem + key.pem (mTLS material)"
+	CMD_TEAM_STATUS            = "team-status"
+	CMD_TEAM_STATUS_HELP       = "Print the team's membership table"
+	CMD_TEAM_STATUS_USAGE      = "hulactl team-status <node-addr> --pki-dir <dir> [--team-id <uuid>]\n<node-addr>    host:443 of any voter\n--pki-dir      local dir holding ca.pem + cert.pem + key.pem (mTLS material)\n--team-id      if set, hard-exit when the polled node belongs to a different team"
+	CMD_TEAM_ROTATE_TOKEN      = "team-rotate-bootstrap-token"
+	CMD_TEAM_ROTATE_TOKEN_HELP = "Generate a fresh bootstrap_token, write it to the team's Raft FSM"
+	CMD_TEAM_ROTATE_TOKEN_USAGE = "hulactl team-rotate-bootstrap-token <leader-addr> --pki-dir <dir>\nMust be run against the current leader. Existing nodes unaffected;\nupdate HULA_TEAM_BOOTSTRAP_TOKEN before issuing any new team-join."
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
@@ -150,6 +165,11 @@ func init() {
 		Command{CMD_FORGETOPAQUE, CMD_FORGETOPAQUE_HELP, CMD_FORGETOPAQUE_USAGE},
 		Command{CMD_ROTATECOOKIELESS, CMD_ROTATECOOKIELESS_HELP, CMD_ROTATECOOKIELESS_USAGE},
 		Command{CMD_GENTEAMCERTS, CMD_GENTEAMCERTS_HELP, CMD_GENTEAMCERTS_USAGE},
+		Command{CMD_TEAM_INIT, CMD_TEAM_INIT_HELP, CMD_TEAM_INIT_USAGE},
+		Command{CMD_TEAM_JOIN, CMD_TEAM_JOIN_HELP, CMD_TEAM_JOIN_USAGE},
+		Command{CMD_TEAM_LEAVE, CMD_TEAM_LEAVE_HELP, CMD_TEAM_LEAVE_USAGE},
+		Command{CMD_TEAM_STATUS, CMD_TEAM_STATUS_HELP, CMD_TEAM_STATUS_USAGE},
+		Command{CMD_TEAM_ROTATE_TOKEN, CMD_TEAM_ROTATE_TOKEN_HELP, CMD_TEAM_ROTATE_TOKEN_USAGE},
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
