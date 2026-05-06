@@ -90,6 +90,14 @@ type Config struct {
 	// Logger lets callers plug in their own hclog. Defaults to
 	// a wrapper around the hula tagged logger.
 	Logger hclog.Logger
+
+	// StreamLayer optionally replaces the default TCP transport
+	// (NewTCPTransportWithLogger) with a caller-supplied
+	// raft.StreamLayer. HA Stage 3 supplies a gRPC-over-mTLS
+	// stream layer here so all inter-node Raft traffic rides on
+	// the unified HTTPS port. nil → fall back to TCP for solo and
+	// dev/test deployments.
+	StreamLayer raft.StreamLayer
 }
 
 // applyDefaults fills in sensible defaults for unset fields.
@@ -188,30 +196,38 @@ func New(cfg Config) (*RaftStorage, error) {
 		return nil, fmt.Errorf("raftbackend: snapshot store: %w", err)
 	}
 
-	bindTCP, err := net.ResolveTCPAddr("tcp", cfg.BindAddr)
-	if err != nil {
-		_ = stable.Close()
-		_ = logStore.Close()
-		_ = fsm.close()
-		return nil, fmt.Errorf("raftbackend: resolve %s: %w", cfg.BindAddr, err)
-	}
-	advertise := bindTCP
-	if cfg.AdvertiseAddr != "" {
-		adv, err := net.ResolveTCPAddr("tcp", cfg.AdvertiseAddr)
+	var transport *raft.NetworkTransport
+	if cfg.StreamLayer != nil {
+		transport = raft.NewNetworkTransportWithLogger(
+			cfg.StreamLayer, 3, 10*time.Second, cfg.Logger.Named("transport"),
+		)
+	} else {
+		bindTCP, err := net.ResolveTCPAddr("tcp", cfg.BindAddr)
 		if err != nil {
 			_ = stable.Close()
 			_ = logStore.Close()
 			_ = fsm.close()
-			return nil, fmt.Errorf("raftbackend: resolve advertise %s: %w", cfg.AdvertiseAddr, err)
+			return nil, fmt.Errorf("raftbackend: resolve %s: %w", cfg.BindAddr, err)
 		}
-		advertise = adv
-	}
-	transport, err := raft.NewTCPTransportWithLogger(cfg.BindAddr, advertise, 3, 10*time.Second, cfg.Logger.Named("transport"))
-	if err != nil {
-		_ = stable.Close()
-		_ = logStore.Close()
-		_ = fsm.close()
-		return nil, fmt.Errorf("raftbackend: transport: %w", err)
+		advertise := bindTCP
+		if cfg.AdvertiseAddr != "" {
+			adv, err := net.ResolveTCPAddr("tcp", cfg.AdvertiseAddr)
+			if err != nil {
+				_ = stable.Close()
+				_ = logStore.Close()
+				_ = fsm.close()
+				return nil, fmt.Errorf("raftbackend: resolve advertise %s: %w", cfg.AdvertiseAddr, err)
+			}
+			advertise = adv
+		}
+		var terr error
+		transport, terr = raft.NewTCPTransportWithLogger(cfg.BindAddr, advertise, 3, 10*time.Second, cfg.Logger.Named("transport"))
+		if terr != nil {
+			_ = stable.Close()
+			_ = logStore.Close()
+			_ = fsm.close()
+			return nil, fmt.Errorf("raftbackend: transport: %w", terr)
+		}
 	}
 
 	rcfg := raft.DefaultConfig()
