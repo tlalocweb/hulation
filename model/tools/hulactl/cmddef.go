@@ -76,6 +76,9 @@ const (
 	CMD_ROTATECOOKIELESS       = "rotate-cookieless-salt"
 	CMD_ROTATECOOKIELESS_HELP  = "Replace the cookieless visitor-id salt for a server (Phase 4c.3)"
 	CMD_ROTATECOOKIELESS_USAGE = "hulactl --bolt <path> rotate-cookieless-salt <server_id>\nGenerates 32 fresh random bytes and stores them in the cookieless_salts\nbucket for <server_id>. Yesterday's visitors become unrecognisable today —\nthis is the correct behaviour for 'wipe everyone'. hula MUST be stopped\nfirst (Bolt single-writer)."
+	CMD_GENTEAMCERTS           = "genteamcerts"
+	CMD_GENTEAMCERTS_HELP      = "Generate a Team CA + per-node mTLS bundle + bootstrap token (HA Stage 3)"
+	CMD_GENTEAMCERTS_USAGE     = "hulactl genteamcerts --nodes <id1>,<id2>,... [--team-id <uuid>] [--validity 365d] [--out ./team-bundles]\nOffline ceremony — produces:\n  <out>/ca.pem            (deploy to every node)\n  <out>/ca.key            (operator-secured; do NOT deploy)\n  <out>/bootstrap-token   (32 random bytes, base64)\n  <out>/team-id\n  <out>/<node-id>/{cert.pem,key.pem,ca.pem}\nDistribute per-node bundles + bootstrap-token out-of-band (secrets manager)."
 	CMD_BUILDSITE             = "build"
 	CMD_BUILDSITE_HELP        = "Trigger a site build for a server"
 	CMD_BUILDSITE_USAGE       = "build <server-id>\nTriggers a site build and polls until complete"
@@ -146,6 +149,7 @@ func init() {
 		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},
 		Command{CMD_FORGETOPAQUE, CMD_FORGETOPAQUE_HELP, CMD_FORGETOPAQUE_USAGE},
 		Command{CMD_ROTATECOOKIELESS, CMD_ROTATECOOKIELESS_HELP, CMD_ROTATECOOKIELESS_USAGE},
+		Command{CMD_GENTEAMCERTS, CMD_GENTEAMCERTS_HELP, CMD_GENTEAMCERTS_USAGE},
 		Command{CMD_BUILDSITE, CMD_BUILDSITE_HELP, CMD_BUILDSITE_USAGE},
 		Command{CMD_BUILDSTATUS, CMD_BUILDSTATUS_HELP, CMD_BUILDSTATUS_USAGE},
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
