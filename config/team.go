@@ -81,6 +81,30 @@ type TeamConfig struct {
 	// out-of-band by the operator (HA_PLAN3 §3). Required for any
 	// `bootstrap` mode other than solo.
 	PKI *PKIConfig `yaml:"pki,omitempty"`
+
+	// CHConnected declares whether this node has direct ClickHouse
+	// access. When true (the "primary" node) the analytics relay
+	// receiver mounts here and writes events to CH directly. When
+	// false the relay drainer ships local visitor events to a
+	// CH-connected peer (HA_PLAN3 §6).
+	//
+	// Today exactly one node per team is CH-connected; the boot
+	// flow uses this flag to decide which RelayService side to
+	// register. Operators set it in config; later sub-stages may
+	// auto-probe instead.
+	CHConnected bool `yaml:"ch_connected,omitempty"`
+
+	// CHRelayPeer is the host:port of the CH-connected peer this
+	// node should relay events to. Only consulted when
+	// CHConnected is false. Empty disables the relay and visitor
+	// events stay buffered locally until eviction.
+	CHRelayPeer string `yaml:"ch_relay_peer,omitempty"`
+
+	// OutboxPath optionally overrides the location of the
+	// disk-overflow file. Default: <data_dir>/outbox/events.queue.
+	// Empty + non-empty data_dir → default. Empty + empty data_dir
+	// → memory-only outbox (events lost across restart).
+	OutboxPath string `yaml:"outbox_path,omitempty"`
 }
 
 // PKIConfig points at the cert + key files this node uses to talk
