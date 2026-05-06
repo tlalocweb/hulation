@@ -18,15 +18,17 @@ mkdir -p "$OUT_DIR"
 YAML_FILE="$OUT_DIR/test-agent.yaml"
 
 # --- 1. Server-mode create-agent emits a yaml ---
+# Capture stdout only — hulactl's package-level initialisation writes
+# log lines (with ANSI color codes) to stderr which would otherwise
+# contaminate the yaml and trip up the rust hula-agent's stricter
+# parser at step 4 below. Stderr is dropped intentionally; the API
+# checks below still cover the success path.
 ca_out=$(hulactl create-agent \
     --allow-build=testsite \
     --allow-staging-build=testsite-staging \
     --expires-in=30d \
-    --hula-host=hula.test.local:443 2>&1 || true)
+    --hula-host=hula.test.local:443 2>/dev/null || true)
 
-# hulactl writes the yaml to its stdout. Save the entire combined
-# output for inspection (Bash captures stderr too via 2>&1, but the
-# yaml itself goes to stdout — the runner shell sees both).
 echo "$ca_out" > "$YAML_FILE"
 
 if grep -q "^agent:" "$YAML_FILE" && grep -q "  id:" "$YAML_FILE"; then

@@ -434,6 +434,15 @@ type StagingSyncResult struct {
 // ref configured in root_git_autodeploy (branch only — pushing tags is
 // out of scope here). Auth credentials come from gad.Creds, the same
 // way CloneOrPull uses them.
+//
+// SHELL-OUT NOTE: like StagingPull's rebase below, this is a `git
+// push` shell-out rather than go-git's repo.Push. go-git's file://
+// transport returns nil success but silently fails to transfer
+// objects to a local bare repo (the e2e fixture's setup), and we
+// can't fix that from outside. Until upstream addresses it, push
+// remains shell-out so file:// fixtures and HTTPS production repos
+// behave identically — push, then verify HEAD advanced upstream.
+// All other ops in this file are go-git native.
 func StagingPush(ctx *StagingGitContext) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("nil context")
@@ -446,22 +455,18 @@ func StagingPush(ctx *StagingGitContext) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open repo: %w", err)
 	}
-	if err := setOriginURL(repo, ctx.GAD.Repo); err != nil {
+
+	credURL, err := buildAuthURL(ctx.GAD.Repo, ctx.GAD.Creds)
+	if err != nil {
+		return "", fmt.Errorf("building auth url: %w", err)
+	}
+	if err := runGit(ctx.WorkDir, "remote", "set-url", "origin", credURL); err != nil {
 		return "", fmt.Errorf("git remote set-url: %w", err)
 	}
-	auth, err := buildAuth(ctx.GAD.Creds)
-	if err != nil {
-		return "", fmt.Errorf("building auth: %w", err)
-	}
+
 	branch := ctx.GAD.Ref.Branch
-	if err := repo.Push(&gogit.PushOptions{
-		RemoteName: "origin",
-		Auth:       auth,
-		RefSpecs: []gogitcfg.RefSpec{
-			gogitcfg.RefSpec(fmt.Sprintf("HEAD:refs/heads/%s", branch)),
-		},
-	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
-		return "", fmt.Errorf("git push: %w", sanitizeAuthErr(err))
+	if err := runGit(ctx.WorkDir, "push", "origin", "HEAD:"+branch); err != nil {
+		return "", fmt.Errorf("git push: %w", err)
 	}
 
 	headRef, err := repo.Head()
