@@ -136,6 +136,13 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+// ErrNotLeader is the sentinel followers return when an admin
+// path tried to write through them and forwarding was unavailable
+// (no forwarder configured, or no leader currently elected). The
+// gRPC client interceptor in pkg/server/grpc treats this as a
+// retryable signal.
+var ErrNotLeader = errors.New("raftbackend: not leader")
+
 // RaftStorage implements storage.Storage on top of hashicorp/raft.
 type RaftStorage struct {
 	cfg Config
@@ -149,6 +156,7 @@ type RaftStorage struct {
 	logStore  *raftboltdb.BoltStore
 	stable    *raftboltdb.BoltStore
 	snaps     raft.SnapshotStore
+	forwarder LeaderForwarder
 }
 
 // New constructs and starts a RaftStorage. Returns once the
@@ -491,9 +499,12 @@ func (s *RaftStorage) Mutate(ctx context.Context, key string, fn storage.MutateF
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if !s.IsLeader() {
-		return s.forwardToLeader(ctx, "mutate", key)
-	}
+	// Mutate is read-modify-write. The local FSM read is consistent
+	// because every Raft commit has propagated; the CAS Command that
+	// follows is forwarded to the leader by applyAsLeader when we
+	// aren't leader. Concurrent writers on the leader cause CAS to
+	// lose the race and the existing retry loop re-runs fn against
+	// the newer local value.
 	for retry := 0; retry < s.cfg.MaxMutateRetries; retry++ {
 		current, err := s.fsm.localGet(key)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
@@ -555,18 +566,26 @@ func (s *RaftStorage) Watch(ctx context.Context, prefix string) (<-chan storage.
 
 // --- internals --------------------------------------------------
 
-// applyAsLeader marshals cmd and submits it to raft.Apply. Only
-// callable from the leader (Stage 2 has only solo so this is
-// always the leader; Stage 3 will route through forwardToLeader
-// for follower nodes).
+// applyAsLeader marshals cmd and submits it to raft.Apply. Solo
+// deployments hit the local raft path directly; multi-node
+// followers ship the already-encoded bytes to the leader via
+// LeaderForwarder (HA Stage 3.5). Encoding happens once per call
+// regardless of which path runs.
 func (s *RaftStorage) applyAsLeader(ctx context.Context, cmd *Command) error {
-	if !s.IsLeader() {
-		return s.forwardToLeader(ctx, "apply", cmd.GetKey())
-	}
 	data, err := encodeCommand(cmd)
 	if err != nil {
 		return err
 	}
+	if !s.IsLeader() {
+		return s.forwardToLeader(ctx, "apply", cmd.GetKey(), data)
+	}
+	return s.applyEncodedLocal(ctx, data)
+}
+
+// applyEncodedLocal is the leader-side path. Both the local
+// Mutate / Batch caller and the remote StorageProxyService.Apply
+// receiver land here.
+func (s *RaftStorage) applyEncodedLocal(ctx context.Context, data []byte) error {
 	timeout := s.cfg.ApplyTimeout
 	if dl, ok := ctx.Deadline(); ok {
 		if remain := time.Until(dl); remain < timeout && remain > 0 {
@@ -587,12 +606,54 @@ func (s *RaftStorage) applyAsLeader(ctx context.Context, cmd *Command) error {
 	return nil
 }
 
-// forwardToLeader is a Stage 3 placeholder. In solo mode every
-// node IS the leader, so this is unreachable; we return a clear
-// error so the call site is obvious if it does fire.
-func (s *RaftStorage) forwardToLeader(_ context.Context, op, key string) error {
-	leader, _ := s.raft.LeaderWithID()
-	return fmt.Errorf("raftbackend: %s on key %q must run on leader (current leader: %q) — multi-node forwarding lands in Stage 3", op, key, leader)
+// ApplyEncodedAsLeader is the public hook for the
+// StorageProxyService.Apply receiver (HA Stage 3.5). The follower
+// has already encoded the Command on its side; we re-validate
+// leader status and call raft.Apply with the bytes verbatim. The
+// FSM decodes via the same path solo writes use.
+func (s *RaftStorage) ApplyEncodedAsLeader(ctx context.Context, data []byte) (uint64, error) {
+	if err := s.checkOpen(); err != nil {
+		return 0, err
+	}
+	if !s.IsLeader() {
+		return 0, ErrNotLeader
+	}
+	if err := s.applyEncodedLocal(ctx, data); err != nil {
+		return 0, err
+	}
+	return s.raft.LastIndex(), nil
+}
+
+// LeaderForwarder ships an encoded RaftCommand from a follower to
+// the current leader. Stage 3.5's gRPC StorageProxyService.Apply
+// dialer plugs in here. Returning nil means the leader applied the
+// command successfully.
+type LeaderForwarder func(ctx context.Context, leaderID, leaderAddr string, encoded []byte) error
+
+// SetLeaderForwarder wires the multi-node forwarder. Safe to call
+// at any time during the storage's lifetime; the next non-leader
+// write picks it up. nil resets to the solo-only stub behaviour.
+func (s *RaftStorage) SetLeaderForwarder(f LeaderForwarder) {
+	s.mu.Lock()
+	s.forwarder = f
+	s.mu.Unlock()
+}
+
+func (s *RaftStorage) forwardToLeader(ctx context.Context, op, key string, encoded []byte) error {
+	addr, id := s.raft.LeaderWithID()
+	leaderAddr := string(addr)
+	leaderID := string(id)
+	s.mu.RLock()
+	f := s.forwarder
+	s.mu.RUnlock()
+	if f == nil {
+		return fmt.Errorf("raftbackend: %s on key %q must run on leader (current leader: %q): %w",
+			op, key, leaderAddr, ErrNotLeader)
+	}
+	if leaderAddr == "" {
+		return fmt.Errorf("raftbackend: %s on key %q: no leader yet", op, key)
+	}
+	return f(ctx, leaderID, leaderAddr, encoded)
 }
 
 // --- hclog ↔ tagged-log shim ------------------------------------

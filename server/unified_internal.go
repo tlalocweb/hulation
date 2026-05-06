@@ -13,12 +13,17 @@ package server
 // exactly as it did before HA Stage 3 landed.
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
 	"github.com/tlalocweb/hulation/config"
 	membershipimpl "github.com/tlalocweb/hulation/pkg/api/v1/membership"
+	storageproxyimpl "github.com/tlalocweb/hulation/pkg/api/v1/storageproxy"
 	internalspec "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
 	storagepkg "github.com/tlalocweb/hulation/pkg/store/storage"
@@ -56,8 +61,64 @@ func bootEnableInternalChannel(srv *unified.Server, cfg *config.Config) error {
 	}
 	registerInternalServiceStubs(srv)
 	registerLiveMembership(srv, cfg)
+	registerLiveStorageProxy(srv, bundle, cfg)
 	unifiedLog.Infof("HA internal channel enabled (team_id=%s node_id=%s)", cfg.Team.TeamID, cfg.Team.NodeID)
 	return nil
+}
+
+// registerLiveStorageProxy wires the receive side of HA Stage 3.5
+// (StorageProxyService.Apply on the leader) AND the dial side
+// (RaftStorage.SetLeaderForwarder when running as a follower).
+// Both sides reuse the same pkg/team/pki bundle that gated the
+// internal channel — peers must already have a Team-CA-signed cert
+// to even reach this RPC, so identity-of-the-peer is established
+// before any of this runs.
+func registerLiveStorageProxy(srv *unified.Server, bundle *pki.Bundle, cfg *config.Config) {
+	g := srv.GetInternalGRPCServer()
+	if g == nil {
+		return
+	}
+	rs, ok := storagepkg.Global().(*raftbackend.RaftStorage)
+	if !ok || rs == nil {
+		unifiedLog.Warnf("StorageProxyService stays at Unimplemented — storage.Global is not RaftStorage")
+		return
+	}
+
+	internalspec.RegisterStorageProxyServiceServer(g, storageproxyimpl.New(rs))
+
+	creds, err := storageProxyDialCreds(bundle, cfg)
+	if err != nil {
+		unifiedLog.Warnf("forwardToLeader will fail closed: %v", err)
+		return
+	}
+	rs.SetLeaderForwarder(buildLeaderForwarder(creds))
+}
+
+func storageProxyDialCreds(bundle *pki.Bundle, _ *config.Config) (credentials.TransportCredentials, error) {
+	cfg, err := pki.PeerDialTLSConfig(bundle)
+	if err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(cfg), nil
+}
+
+func buildLeaderForwarder(creds credentials.TransportCredentials) raftbackend.LeaderForwarder {
+	return func(ctx context.Context, _, leaderAddr string, encoded []byte) error {
+		dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		conn, err := grpc.DialContext(dialCtx, leaderAddr,
+			grpc.WithTransportCredentials(creds),
+			grpc.WithBlock(),
+		)
+		if err != nil {
+			return fmt.Errorf("dial leader %s: %w", leaderAddr, err)
+		}
+		defer conn.Close()
+
+		client := internalspec.NewStorageProxyServiceClient(conn)
+		_, err = client.Apply(ctx, &internalspec.ApplyRequest{Command: encoded})
+		return err
+	}
 }
 
 // registerLiveMembership swaps the stub MembershipService for the
