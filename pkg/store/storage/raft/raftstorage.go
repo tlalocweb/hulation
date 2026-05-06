@@ -321,6 +321,86 @@ func (s *RaftStorage) IsLeader() bool {
 // Storage interface only.
 func (s *RaftStorage) RaftForTest() *raft.Raft { return s.raft }
 
+// MemberInfo describes one node in the cluster as the Raft state
+// machine sees it. Returned by Members(); consumed by the
+// MembershipService.Status RPC and `hulactl team-status`.
+type MemberInfo struct {
+	NodeID    string
+	RaftAddr  string
+	Suffrage  string // "voter" | "nonvoter" | "staging"
+	IsLeader  bool
+}
+
+// LeaderInfo returns (id, address) of the current leader. Both are
+// empty when no leader is elected.
+func (s *RaftStorage) LeaderInfo() (string, string) {
+	addr, id := s.raft.LeaderWithID()
+	return string(id), string(addr)
+}
+
+// Members returns a snapshot of the cluster configuration. Nil
+// when the configuration cannot be fetched (e.g. closed storage).
+func (s *RaftStorage) Members() []MemberInfo {
+	f := s.raft.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return nil
+	}
+	cfg := f.Configuration()
+	leaderAddr, leaderID := s.raft.LeaderWithID()
+	out := make([]MemberInfo, 0, len(cfg.Servers))
+	for _, srv := range cfg.Servers {
+		mi := MemberInfo{
+			NodeID:   string(srv.ID),
+			RaftAddr: string(srv.Address),
+			IsLeader: srv.ID == leaderID && srv.Address == leaderAddr,
+		}
+		switch srv.Suffrage {
+		case raft.Voter:
+			mi.Suffrage = "voter"
+		case raft.Nonvoter:
+			mi.Suffrage = "nonvoter"
+		case raft.Staging:
+			mi.Suffrage = "staging"
+		default:
+			mi.Suffrage = "unknown"
+		}
+		out = append(out, mi)
+	}
+	return out
+}
+
+// LastIndex / AppliedIndex are exposed for /readyz catch-up
+// detection (HA_PLAN3 §11) and for the MembershipService.Status
+// RPC.
+func (s *RaftStorage) LastIndex() uint64    { return s.raft.LastIndex() }
+func (s *RaftStorage) AppliedIndex() uint64 { return s.raft.AppliedIndex() }
+
+// AddVoter adds a new node to the cluster as a full voter. Returns
+// an error from the Raft future when the apply fails (e.g. not
+// leader, server already present at a different address). Caller
+// is responsible for any auth-of-the-caller check (bootstrap-token
+// verification etc.) — this method is the bare cluster-edit.
+func (s *RaftStorage) AddVoter(nodeID, raftAddr string, prevIndex uint64, timeout time.Duration) error {
+	f := s.raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(raftAddr), prevIndex, timeout)
+	return f.Error()
+}
+
+// RemoveServer drops a node from the cluster configuration. Same
+// auth caveat as AddVoter.
+func (s *RaftStorage) RemoveServer(nodeID string, prevIndex uint64, timeout time.Duration) error {
+	f := s.raft.RemoveServer(raft.ServerID(nodeID), prevIndex, timeout)
+	return f.Error()
+}
+
+// LeadershipTransfer asks the current leader to transfer leadership
+// to the given target. Best-effort — if the target is unhealthy or
+// the transfer races with an election, the call returns the error
+// from the Raft future and the priority loop will retry next tick.
+func (s *RaftStorage) LeadershipTransfer(targetID, targetAddr string) error {
+	f := s.raft.LeadershipTransferToServer(raft.ServerID(targetID), raft.ServerAddress(targetAddr))
+	return f.Error()
+}
+
 // Close shuts the Raft node down cleanly. Safe to call multiple
 // times.
 func (s *RaftStorage) Close() error {

@@ -181,10 +181,15 @@ type HulactlConfig struct {
 	// forget-opaque-record — explicit Bolt file path. No autodiscovery.
 	BoltPath           string                  `flag:"bolt" usage:"path to a hula Bolt file (forget-opaque-record only)"`
 	// genteamcerts — offline cert ceremony for HA Stage 3.
-	TeamCertsTeamID   string `flag:"team-id" usage:"team UUID for genteamcerts (auto-generated if absent)"`
+	TeamCertsTeamID   string `flag:"team-id" usage:"team UUID for genteamcerts / team-status (auto-generated for genteamcerts if absent)"`
 	TeamCertsNodes    string `flag:"nodes" usage:"comma-separated node ids for genteamcerts"`
 	TeamCertsValidity string `flag:"validity" usage:"per-cert validity (Go duration, default 8760h)" default:"8760h"`
 	TeamCertsOut      string `flag:"out" usage:"output directory for genteamcerts bundle" default:"./team-bundles"`
+	// team-* — runtime cluster operations for HA Stage 3.
+	TeamToken         string `flag:"token" usage:"bootstrap_token (base64) for team-join"`
+	TeamPKIDir        string `flag:"pki-dir" usage:"directory holding ca.pem, cert.pem, key.pem for mTLS"`
+	TeamNodeID        string `flag:"node-id" usage:"node id for team-join (default: hostname)"`
+	TeamNodeHostname  string `flag:"node-hostname" usage:"operator-provisioned hostname for chat WS pinning"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -1265,6 +1270,21 @@ func main() {
 
 	case CMD_GENTEAMCERTS:
 		runGenTeamCerts(hulactlconfig)
+
+	case CMD_TEAM_INIT:
+		runTeamInit()
+
+	case CMD_TEAM_JOIN:
+		runTeamJoin(hulactlconfig, argz)
+
+	case CMD_TEAM_LEAVE:
+		runTeamLeave(hulactlconfig, argz)
+
+	case CMD_TEAM_STATUS:
+		runTeamStatus(hulactlconfig, argz)
+
+	case CMD_TEAM_ROTATE_TOKEN:
+		runTeamRotateToken(hulactlconfig, argz)
 
 	case CMD_SETPASSWORD:
 		// Always require fresh proof of the current password for

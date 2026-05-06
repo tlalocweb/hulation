@@ -15,10 +15,14 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	"github.com/tlalocweb/hulation/config"
+	membershipimpl "github.com/tlalocweb/hulation/pkg/api/v1/membership"
 	internalspec "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
+	storagepkg "github.com/tlalocweb/hulation/pkg/store/storage"
+	raftbackend "github.com/tlalocweb/hulation/pkg/store/storage/raft"
 	"github.com/tlalocweb/hulation/pkg/team/pki"
 )
 
@@ -51,8 +55,59 @@ func bootEnableInternalChannel(srv *unified.Server, cfg *config.Config) error {
 		return fmt.Errorf("enable internal channel: %w", err)
 	}
 	registerInternalServiceStubs(srv)
+	registerLiveMembership(srv, cfg)
 	unifiedLog.Infof("HA internal channel enabled (team_id=%s node_id=%s)", cfg.Team.TeamID, cfg.Team.NodeID)
 	return nil
+}
+
+// registerLiveMembership swaps the stub MembershipService for the
+// real one when a Raft-backed Storage is available. preloadFast-
+// Subsystems runs before BootUnifiedServer, so storage.Global() is
+// already populated by the time we hit this path. When the global
+// is nil (storage init failed; degraded mode) the stub stays in
+// place — Join calls return Unimplemented rather than crashing.
+func registerLiveMembership(srv *unified.Server, cfg *config.Config) {
+	g := srv.GetInternalGRPCServer()
+	if g == nil {
+		return
+	}
+	rs, ok := storagepkg.Global().(*raftbackend.RaftStorage)
+	if !ok || rs == nil {
+		unifiedLog.Warnf("MembershipService stays at Unimplemented — storage.Global is not RaftStorage")
+		return
+	}
+	svc := membershipimpl.New(raftClusterAdapter{rs}, rs, cfg.Team.TeamID)
+	internalspec.RegisterMembershipServiceServer(g, svc)
+}
+
+// raftClusterAdapter bridges *raftbackend.RaftStorage's accessor
+// methods (which return raftbackend.MemberInfo) to membership-
+// package's Cluster interface (which uses ClusterMember). Avoids a
+// pkg/api/v1/membership → pkg/store/storage/raft import.
+type raftClusterAdapter struct{ rs *raftbackend.RaftStorage }
+
+func (a raftClusterAdapter) IsLeader() bool                   { return a.rs.IsLeader() }
+func (a raftClusterAdapter) LeaderInfo() (string, string)     { return a.rs.LeaderInfo() }
+func (a raftClusterAdapter) LastIndex() uint64                { return a.rs.LastIndex() }
+func (a raftClusterAdapter) AppliedIndex() uint64             { return a.rs.AppliedIndex() }
+func (a raftClusterAdapter) AddVoter(id, addr string, prevIndex uint64, t time.Duration) error {
+	return a.rs.AddVoter(id, addr, prevIndex, t)
+}
+func (a raftClusterAdapter) RemoveServer(id string, prevIndex uint64, t time.Duration) error {
+	return a.rs.RemoveServer(id, prevIndex, t)
+}
+func (a raftClusterAdapter) Members() []membershipimpl.ClusterMember {
+	src := a.rs.Members()
+	out := make([]membershipimpl.ClusterMember, 0, len(src))
+	for _, m := range src {
+		out = append(out, membershipimpl.ClusterMember{
+			NodeID:   m.NodeID,
+			RaftAddr: m.RaftAddr,
+			Suffrage: m.Suffrage,
+			IsLeader: m.IsLeader,
+		})
+	}
+	return out
 }
 
 // registerInternalServiceStubs registers UnimplementedXxxServer for
