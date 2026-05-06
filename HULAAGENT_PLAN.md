@@ -255,7 +255,7 @@ Target: <2MB stripped binary, <50ms cold startup.
 | ----- | -------------------------------------------------------------------------- | ------ |
 | 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)    | DONE   |
 | 2     | Server-side `/api/agent/create`, agent CA bootstrap, registry storage      | DONE   |
-| 3     | mTLS verification middleware + `agent_perms` request context               |        |
+| 3     | mTLS verification middleware + `agent_perms` request context               | DONE   |
 | 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb       |        |
 | 5     | Remaining HLAP verbs                                                       |        |
 | 6     | `hulactl list-agents` / `revoke-agent` + e2e suite                         |        |
@@ -295,5 +295,42 @@ What's deliberately NOT in Phase 2:
   agent connections — Phase 3 wires the Agent CA into the unified
   listener's ClientCAs alongside the existing trust roots.
 - `revoke-agent` / `list-agents` CLI surfaces. Phase 6.
+
+## Phase 3 — what landed
+
+- **`pkg/agent/mtls/middleware.go`**: HTTP middleware that, after
+  the TLS handshake, examines `r.TLS.PeerCertificates`. When the
+  leaf chains to the Agent CA (via `cert.CheckSignatureFrom(ca)` —
+  not a DN-string compare; two CAs can share a DN) it fingerprints
+  the leaf, calls `registry.GetByFingerprint`, and either:
+  - 401 "agent not registered" if the fingerprint isn't in the
+    registry,
+  - 401 "agent revoked" / "agent expired" when `IsActive(now)` is
+    false,
+  - or attaches the live `*registry.Record` to the request context
+    via `RecordFromContext` for Phase-5 route handlers.
+  Non-agent traffic flows through untouched.
+- **`server/agent_boot.go::agentClientCAPool`**: assembles a
+  `*x509.CertPool` from the loaded Agent CA, passed through to
+  `unified.Config.ClientCAs` so Agent-CA-signed leaves complete
+  the TLS handshake on the public listener.
+- **`server/agent_boot.go::attachAgentMTLSMiddleware`**: wires the
+  middleware into `srv.AttachHTTPMiddleware` after `unified.NewServer`
+  returns. Lookup is bound to `storage.Global()`; degraded boot
+  (storage unavailable) returns 503 to agent traffic — refusing
+  agent calls during a degraded boot is the safe default.
+- **`pkg/agent/mtls/middleware_test.go`**: 7 cases covering the
+  five branches (no CA, no client cert, non-agent cert, missing
+  registry record, revoked, expired, active) plus a registry-
+  error path that asserts 503.
+
+What's deliberately NOT in Phase 3:
+
+- Per-route enforcement of `record.IsAllowed(site, verb)`. The
+  middleware attaches the record but doesn't gate any route — that
+  lands in Phase 5 alongside the HLAP-verb endpoints.
+- Agent-CA bundle reload. Phase 3 reads the CA once at boot; cert
+  rotation requires a hula restart. Hot-reload can land alongside
+  Phase 6's revoke/list flows when there's a need.
 
 Each phase lands as its own PR.

@@ -139,9 +139,18 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		addr = cfg.ListenOn
 	}
 
+	// hulaagent Phase 3: trust the Agent CA on the public listener so
+	// agents that present an Agent-CA-signed leaf complete the TLS
+	// handshake. The Phase-3 mTLS middleware (attached below) walks
+	// the request-time half — fingerprint lookup against the registry,
+	// revoke/expire checks. nil ClientCAs is fine (boot will skip the
+	// middleware too) when the Agent CA hasn't loaded yet.
+	clientCAs := agentClientCAPool()
+
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
 		GetCertificate: getCert,
+		ClientCAs:      clientCAs,
 		GRPCServerOptions: []grpc.ServerOption{
 			grpc.UnaryInterceptor(AdminBearerInterceptor()),
 		},
@@ -161,6 +170,14 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create unified server: %w", err)
+	}
+
+	// hulaagent Phase 3: attach the request-time agent-auth middleware
+	// when the Agent CA is loaded. The middleware is a no-op for any
+	// request that didn't present an Agent-CA-signed leaf — non-agent
+	// traffic flows untouched.
+	if clientCAs != nil {
+		attachAgentMTLSMiddleware(srv)
 	}
 
 	// HA Stage 3: optionally turn on the team-only internal mTLS
