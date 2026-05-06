@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+// RelayService — non-CH nodes ship pre-enriched analytics events
+// over here to a CH-connected peer (HA_PLAN3 §6). Stage 3.6 fills
+// in the receive-side commit path; Stage 3.2 just lands the proto.
+
+package hulation.v1.internalapi;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi;internalapispec";
+
+service RelayService {
+  rpc RecordEventBatch(RecordEventBatchRequest) returns (RecordEventBatchResponse);
+}
+
+message RecordEventBatchRequest {
+  // events are proto-encoded model.Event rows. The receiver must be
+  // CH-connected — non-CH receivers return FailedPrecondition.
+  repeated bytes events = 1;
+  string source_node_id = 2;
+}
+
+message RecordEventBatchResponse {
+  uint32 accepted = 1;
+  uint32 rejected = 2;
+}

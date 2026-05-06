@@ -39,6 +39,11 @@ var Buckets = []string{
 	"chat_acl",
 	"consent_log",
 	"cookieless_salts",
+	// _team holds HA Stage 3 cluster-coordination state:
+	// _team/bootstrap_token, _team/ch_connected/<node>, future
+	// _team/<feature>/... keys. Lives in the Raft FSM so every
+	// node has consistent values.
+	"_team",
 }
 
 // BucketUnrouted is where keys whose first segment doesn't match

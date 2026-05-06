@@ -1,0 +1,167 @@
+# Multi-node team e2e overlay (HA Stage 3).
+#
+# Brought up under its own compose project so it doesn't fight the
+# single-hula stack:
+#
+#   ./test/e2e/team/run.sh
+#     ↳ docker compose -p hulateam -f test/e2e/team/docker-compose.team.yaml up -d
+#
+# Three hula nodes; only hula-east is configured to reach
+# ClickHouse. west + emea relay analytics events to east over the
+# internal mTLS gRPC channel (HA_PLAN3 §6).
+#
+# The runner script generates the bundle + configs into ./workdir
+# before bringing up; this file just bind-mounts them in.
+
+services:
+  hula-clickhouse:
+    image: clickhouse/clickhouse-server:24.10-alpine
+    environment:
+      - CLICKHOUSE_DB=hula
+      - CLICKHOUSE_USER=hula
+      - CLICKHOUSE_PASSWORD=hula
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=hula --password=hula -q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      teamnet: {}
+
+  team-runner:
+    image: alpine:3.19
+    volumes:
+      - ${WORKDIR}/hulactl:/usr/local/bin/hulactl:ro
+      - ${WORKDIR}/team-bundles:/team-bundles:ro
+    environment:
+      - HULA_TEAM_BOOTSTRAP_TOKEN=${HULA_TEAM_BOOTSTRAP_TOKEN}
+      - TEST_TEAM_ID=${TEST_TEAM_ID}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl ca-certificates >/dev/null 2>&1 || true
+        # Block forever so the container is available for `docker
+        # compose exec` from the suite scripts.
+        tail -f /dev/null
+    networks:
+      teamnet: {}
+
+  hula-east:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-clickhouse:
+        condition: service_healthy
+    ports:
+      - "${EAST_HOST_PORT:-8443}:443"
+    volumes:
+      - ${WORKDIR}/team-bundles:/var/hula/team-bundles:ro
+      - ${WORKDIR}/configs/hula-east.yaml:/etc/hula/config.yaml:ro
+      - hula-east-data:/var/hula/data
+    environment:
+      - HULA_TEAM_BOOTSTRAP_TOKEN=${HULA_TEAM_BOOTSTRAP_TOKEN}
+    entrypoint: ["/hula/hula", "-config", "/etc/hula/config.yaml"]
+    networks:
+      teamnet:
+        aliases: ["hula-east.team.internal"]
+
+  hula-west:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-east:
+        condition: service_started
+    ports:
+      - "${WEST_HOST_PORT:-8444}:443"
+    volumes:
+      - ${WORKDIR}/team-bundles:/var/hula/team-bundles:ro
+      - ${WORKDIR}/configs/hula-west.yaml:/etc/hula/config.yaml:ro
+      - ${WORKDIR}/hulactl:/usr/local/bin/hulactl:ro
+      - hula-west-data:/var/hula/data
+    environment:
+      - HULA_TEAM_BOOTSTRAP_TOKEN=${HULA_TEAM_BOOTSTRAP_TOKEN}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Run hula in the background so we can call team-join after
+        # the unified listener is up.
+        /hula/hula -config /etc/hula/config.yaml &
+        HULA_PID=$$!
+        # Wait for the local listener.
+        for i in $$(seq 1 30); do
+          if /usr/local/bin/hulactl --pki-dir /var/hula/team-bundles/hula-west \
+                --team-id $${HULA_TEAM_ID:-} \
+                team-status hula-west.team.internal:443 >/dev/null 2>&1; then
+            break
+          fi
+          sleep 1
+        done
+        # Join via the seed node. Idempotent: re-issuing on an
+        # already-joined node returns AlreadyExists and we ignore.
+        /usr/local/bin/hulactl \
+            --token "$${HULA_TEAM_BOOTSTRAP_TOKEN}" \
+            --pki-dir /var/hula/team-bundles/hula-west \
+            --node-id hula-west \
+            --node-hostname hula-west.team.internal \
+            team-join hula-east.team.internal:443 \
+            >/dev/null 2>&1 || true
+        wait $$HULA_PID
+    networks:
+      teamnet:
+        aliases: ["hula-west.team.internal"]
+
+  hula-emea:
+    image: hula:local
+    restart: on-failure:3
+    depends_on:
+      hula-east:
+        condition: service_started
+    ports:
+      - "${EMEA_HOST_PORT:-8445}:443"
+    volumes:
+      - ${WORKDIR}/team-bundles:/var/hula/team-bundles:ro
+      - ${WORKDIR}/configs/hula-emea.yaml:/etc/hula/config.yaml:ro
+      - ${WORKDIR}/hulactl:/usr/local/bin/hulactl:ro
+      - hula-emea-data:/var/hula/data
+    environment:
+      - HULA_TEAM_BOOTSTRAP_TOKEN=${HULA_TEAM_BOOTSTRAP_TOKEN}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /hula/hula -config /etc/hula/config.yaml &
+        HULA_PID=$$!
+        for i in $$(seq 1 30); do
+          if /usr/local/bin/hulactl --pki-dir /var/hula/team-bundles/hula-emea \
+                --team-id $${HULA_TEAM_ID:-} \
+                team-status hula-emea.team.internal:443 >/dev/null 2>&1; then
+            break
+          fi
+          sleep 1
+        done
+        /usr/local/bin/hulactl \
+            --token "$${HULA_TEAM_BOOTSTRAP_TOKEN}" \
+            --pki-dir /var/hula/team-bundles/hula-emea \
+            --node-id hula-emea \
+            --node-hostname hula-emea.team.internal \
+            team-join hula-east.team.internal:443 \
+            >/dev/null 2>&1 || true
+        wait $$HULA_PID
+    networks:
+      teamnet:
+        aliases: ["hula-emea.team.internal"]
+
+volumes:
+  hula-east-data: {}
+  hula-west-data: {}
+  hula-emea-data: {}
+
+networks:
+  teamnet:
+    driver: bridge

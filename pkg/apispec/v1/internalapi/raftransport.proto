@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+// RaftTransportService wraps hashicorp/raft's transport contract in
+// a single bidirectional streaming RPC so Raft RPCs ride the same
+// unified HTTPS port as everything else. Stage 3.3 fills in the
+// stream codec; Stage 3.2 lands the proto + a stub.
+
+package hulation.v1.internalapi;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/internalapi;internalapispec";
+
+service RaftTransportService {
+  // Stream carries one Raft RPC per stream. The first frame is
+  // the request (AppendEntries / RequestVote / InstallSnapshot /
+  // TimeoutNow). The server replies with one or more frames
+  // depending on the RPC kind (InstallSnapshot streams chunks).
+  rpc Stream(stream RaftFrame) returns (stream RaftFrame);
+}
+
+message RaftFrame {
+  // kind discriminates the Raft RPC.
+  Kind kind = 1;
+
+  enum Kind {
+    KIND_UNSPECIFIED      = 0;
+    KIND_APPEND_ENTRIES   = 1;
+    KIND_REQUEST_VOTE     = 2;
+    KIND_INSTALL_SNAPSHOT = 3;
+    KIND_TIMEOUT_NOW      = 4;
+    KIND_RESPONSE         = 5;  // server-side reply payload
+    KIND_DATA             = 6;  // snapshot chunk
+    KIND_TRAILER          = 7;  // server-side stream finish
+  }
+
+  // payload carries an msgpack-encoded hashicorp/raft RPC struct.
+  // We use msgpack to stay wire-compatible with the upstream
+  // transport encoders without re-modelling 30+ fields here.
+  bytes payload = 2;
+}

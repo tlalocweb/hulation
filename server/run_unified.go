@@ -166,16 +166,36 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 	// that don't touch persistence still work).
 	if rcfg, err := raftbackend.AutoConfig(conf.Team); err != nil {
 		log.Warnf("storage: team config error (%s); ACL + goals + reports RPCs will 503", err.Error())
-	} else if rs, err := raftbackend.New(rcfg); err != nil {
-		log.Warnf("storage unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
 	} else {
-		waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
-		if err := rs.WaitLeader(waitCtx); err != nil {
-			log.Warnf("storage: solo bootstrap stalled (%s); ACL + goals + reports RPCs may 503", err.Error())
+		// HA Stage 3: when team.pki is configured, swap the TCP
+		// transport for the gRPC StreamLayer that rides on the
+		// unified HTTPS listener. Solo deployments leave PKI unset
+		// and keep the loopback TCP transport from Stage 2.
+		if sl, err := buildTeamStreamLayer(conf, rcfg.AdvertiseAddr); err != nil {
+			log.Warnf("storage: team stream layer init failed (%s); falling back to TCP transport", err.Error())
+		} else if sl != nil {
+			rcfg.StreamLayer = sl
+			saveTeamStreamLayer(sl)
+			log.Infof("storage: gRPC StreamLayer mounted (advertise=%s)", rcfg.AdvertiseAddr)
 		}
-		waitCancel()
-		storage.SetGlobal(rs)
-		log.Infof("Raft storage online (node=%s, data_dir=%s, mode=solo)", rcfg.NodeID, rcfg.DataDir)
+		rs, err := raftbackend.New(rcfg)
+		if err != nil {
+			log.Warnf("storage unavailable (%s); ACL + goals + reports RPCs will 503", err.Error())
+		} else {
+			if rcfg.Bootstrap {
+				waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+				if err := rs.WaitLeader(waitCtx); err != nil {
+					log.Warnf("storage: bootstrap stalled (%s); ACL + goals + reports RPCs may 503", err.Error())
+				}
+				waitCancel()
+			}
+			storage.SetGlobal(rs)
+			mode := "solo"
+			if conf.Team != nil && conf.Team.Bootstrap != "" && conf.Team.Bootstrap != "solo" {
+				mode = conf.Team.Bootstrap
+			}
+			log.Infof("Raft storage online (node=%s, data_dir=%s, mode=%s)", rcfg.NodeID, rcfg.DataDir, mode)
+		}
 	}
 
 	// Scheduled-report dispatcher. Runs on a 1-minute ticker + an

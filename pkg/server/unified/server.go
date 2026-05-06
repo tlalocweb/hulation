@@ -73,6 +73,17 @@ type Server struct {
 	// via SetIncidentRecorder; the protocol-detecting listener and
 	// TLS handshake error hook load it on each invocation.
 	incidents atomic.Value
+
+	// Internal team-only gRPC channel. Populated by
+	// EnableInternalChannel when HA Stage 3's PKI bundle loads.
+	// teamCAPool verifies peer client certs on internal SNIs;
+	// teamLeaf is presented as the server cert on those handshakes;
+	// internalGRPC hosts MembershipService, RaftTransportService,
+	// StorageProxyService, RelayService, GossipService,
+	// ChatLookupService.
+	teamCAPool   *x509.CertPool
+	teamLeaf     *tls.Certificate
+	internalGRPC *grpc.Server
 }
 
 // SetIncidentRecorder wires a recorder for protocol-peek and TLS
@@ -517,6 +528,17 @@ func (s *Server) grpcHandlerOrPassFunc() http.Handler {
 	core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 1. HIGHEST PRIORITY: Check if this is a gRPC request
 		if r.ProtoMajor == 2 && strings.Contains(r.Header.Get("Content-Type"), "application/grpc") {
+			// Route internal-only services to the team-channel
+			// gRPC server. The TLS layer has already required a
+			// Team-CA-signed client cert when SNI was internal,
+			// so by the time the request lands here, the peer is
+			// authenticated. For belt-and-suspenders, internal
+			// services additionally check peer cert chain in
+			// their own interceptor (added in 3.4).
+			if s.dispatchInternalGRPC(r.URL.Path) {
+				s.internalGRPC.ServeHTTP(w, r)
+				return
+			}
 			if s.grpcServer != nil {
 				s.grpcServer.ServeHTTP(w, r)
 			} else {
@@ -638,6 +660,9 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	// Stop gRPC server
 	s.grpcServer.GracefulStop()
+	if s.internalGRPC != nil {
+		s.internalGRPC.GracefulStop()
+	}
 
 	// Stop HTTP server
 	if s.httpServer != nil {
