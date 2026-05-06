@@ -180,6 +180,11 @@ type HulactlConfig struct {
 	NoOpaque           bool                    `flag:"no-opaque" usage:"disable OPAQUE on auth; use legacy plaintext flow only"`
 	// forget-opaque-record — explicit Bolt file path. No autodiscovery.
 	BoltPath           string                  `flag:"bolt" usage:"path to a hula Bolt file (forget-opaque-record only)"`
+	// genteamcerts — offline cert ceremony for HA Stage 3.
+	TeamCertsTeamID   string `flag:"team-id" usage:"team UUID for genteamcerts (auto-generated if absent)"`
+	TeamCertsNodes    string `flag:"nodes" usage:"comma-separated node ids for genteamcerts"`
+	TeamCertsValidity string `flag:"validity" usage:"per-cert validity (Go duration, default 8760h)" default:"8760h"`
+	TeamCertsOut      string `flag:"out" usage:"output directory for genteamcerts bundle" default:"./team-bundles"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -1257,6 +1262,9 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Rotated cookieless_salts[%s] (32 random bytes)\n", serverID)
+
+	case CMD_GENTEAMCERTS:
+		runGenTeamCerts(hulactlconfig)
 
 	case CMD_SETPASSWORD:
 		// Always require fresh proof of the current password for
