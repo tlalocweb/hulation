@@ -8,8 +8,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -62,8 +60,11 @@ func runTeamJoin(cfg *HulactlConfig, argz []string) {
 		os.Exit(1)
 	}
 
-	tok, err := base64.StdEncoding.DecodeString(cfg.TeamToken)
-	if err != nil {
+	// Validate base64 shape but ship the encoded form on the wire —
+	// proto string fields require valid UTF-8 and a 32-byte random
+	// secret almost certainly is not. The server decodes inside the
+	// Join RPC.
+	if _, err := base64.StdEncoding.DecodeString(cfg.TeamToken); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: --token is not valid base64: %v\n", err)
 		os.Exit(1)
 	}
@@ -90,7 +91,7 @@ func runTeamJoin(cfg *HulactlConfig, argz []string) {
 		TeamId:         teamID,
 		NodeId:         nodeID,
 		RaftAddr:       advertisedRaftAddr(cfg, leaderAddr),
-		BootstrapToken: string(tok),
+		BootstrapToken: cfg.TeamToken,
 		NodeHostname:   cfg.TeamNodeHostname,
 	})
 	if err != nil {
@@ -206,6 +207,11 @@ func runTeamRotateToken(cfg *HulactlConfig, argz []string) {
 // dialPeer opens an mTLS gRPC connection against a hula node's
 // unified listener. The PKI bundle dir must contain ca.pem,
 // cert.pem, and key.pem written by `hulactl genteamcerts`.
+//
+// Uses pki.PeerDialTLSConfig so the SNI fires the listener's
+// internal-channel gate AND the chain verification works across
+// every node-id (per-node SAN uniqueness would otherwise reject
+// legitimate peers).
 func dialPeer(addr, pkiDir string) (internalspec.MembershipServiceClient, *grpc.ClientConn, error) {
 	if pkiDir == "" {
 		return nil, nil, fmt.Errorf("--pki-dir is required (use the dir genteamcerts produced for this node)")
@@ -213,25 +219,13 @@ func dialPeer(addr, pkiDir string) (internalspec.MembershipServiceClient, *grpc.
 	caPath := filepath.Join(pkiDir, "ca.pem")
 	certPath := filepath.Join(pkiDir, "cert.pem")
 	keyPath := filepath.Join(pkiDir, "key.pem")
-	caPEM, err := os.ReadFile(caPath)
+	bundle, err := pki.LoadBundle(caPath, certPath, keyPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read %s: %w", caPath, err)
+		return nil, nil, fmt.Errorf("load pki bundle: %w", err)
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, nil, fmt.Errorf("ca.pem at %s is not a valid CERTIFICATE", caPath)
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	tlsCfg, err := pki.PeerDialTLSConfig(bundle)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load node cert+key: %w", err)
-	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      pool,
-		// SNI targets the team-internal name family so the unified
-		// listener's getConfigForClient gate kicks in on the server
-		// side and presents its team leaf cert.
-		ServerName: pickServerName(cert),
+		return nil, nil, fmt.Errorf("peer dial tls: %w", err)
 	}
 
 	dialCtx, cancel := context.WithTimeout(context.Background(), teamRPCDialTimeout)
@@ -245,35 +239,6 @@ func dialPeer(addr, pkiDir string) (internalspec.MembershipServiceClient, *grpc.
 		return nil, nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 	return internalspec.NewMembershipServiceClient(conn), conn, nil
-}
-
-// pickServerName extracts a *.team.internal SAN from the local
-// node's leaf cert. We use it as the SNI ServerName so the peer's
-// listener flips into internal-mTLS mode (HA_PLAN3 §4.1). Falls
-// back to "node.team.internal" if no SAN matches — the peer still
-// requires a Team-CA-signed client cert, so the connection is
-// secure either way; the SNI is just the trigger.
-func pickServerName(cert tls.Certificate) string {
-	if len(cert.Certificate) == 0 {
-		return "node.team.internal"
-	}
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return "node.team.internal"
-	}
-	for _, dns := range leaf.DNSNames {
-		if endsWith(dns, ".team.internal") {
-			return dns
-		}
-	}
-	return "node.team.internal"
-}
-
-func endsWith(s, suffix string) bool {
-	if len(s) < len(suffix) {
-		return false
-	}
-	return s[len(s)-len(suffix):] == suffix
 }
 
 // teamIDFromBundle reads <pki-dir>/../team-id (the file genteamcerts
