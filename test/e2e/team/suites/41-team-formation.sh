@@ -34,7 +34,8 @@ for n in hula-east hula-west hula-emea; do
     PKI_NODE="$n"
     out="$(run_ctl team-status "${n}.team.internal:443" 2>&1)" || \
         fail "team-status against $n returned an error"
-    voter_count="$(echo "$out" | grep -c 'voter')"
+    # -w to anchor on whole-word so "nonvoter" rows don't count.
+    voter_count="$(echo "$out" | grep -cw 'voter')"
     if [ "$voter_count" -ne 3 ]; then
         echo "$out"
         fail "$n reports $voter_count voters, want 3"

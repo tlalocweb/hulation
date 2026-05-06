@@ -63,10 +63,15 @@ type TeamConfig struct {
 	SnapshotThreshold uint64 `yaml:"snapshot_threshold,omitempty"`
 
 	// NodeHostname is the operator-provisioned per-node hostname used
-	// for chat WS pinning (HA_PLAN3 §8) AND as the SNI Server-Name
-	// presented when a peer dials this node on its internal channel.
-	// Solo deployments leave this empty; the unified listener falls
-	// back to the public hostname.
+	// for chat WS pinning (HA_PLAN3 §8) — the URL the chat handshake
+	// hands the visitor's browser to keep them on the same node for
+	// the lifetime of the conversation. Solo deployments leave this
+	// empty and chat falls back to the public hostname.
+	//
+	// Internal-channel SNI is a separate concern: peers dial each
+	// other with a fixed PeerSNI (see pkg/team/pki) so the unified
+	// listener routes the handshake on routing-state alone, not on
+	// per-node hostnames.
 	NodeHostname string `yaml:"node_hostname,omitempty"`
 
 	// BootstrapToken is the pre-shared secret a joining node presents

@@ -212,12 +212,11 @@ func (l *Loop) findPreferredCandidate(ctx context.Context) ClusterMember {
 	return ClusterMember{}
 }
 
-// encodeFlag serialises (timestamp, nodeID-of-writer) as the flag
-// value. Compact + parseable by flagFresh. Format:
-//   <unix_seconds>\n
-// Where unix_seconds is decimal. We intentionally avoid gob/proto
-// here — this is the value of a single bbolt key checked thousands
-// of times per cluster lifetime; bytes.Compare-friendly is fine.
+// encodeFlag serialises the freshness timestamp as the flag value.
+// Compact + parseable by flagFresh. Format: an RFC3339Nano string
+// in UTC. We intentionally avoid gob/proto here — this is the value
+// of a single bbolt key checked thousands of times per cluster
+// lifetime; a plain text timestamp is fine.
 func encodeFlag(t time.Time) []byte {
 	return []byte(t.Format(time.RFC3339Nano))
 }

@@ -29,6 +29,15 @@ pass()    { printf '  ok: %s\n' "$*"; }
 
 echo "Suite 42 — leader fail-over (under tc netem)"
 
+# Clean tc netem on any exit path. Without this, an early `fail`
+# leaves the impairment installed and breaks every later suite.
+cleanup_netem() {
+    dc exec -T team-runner sh -c "
+        tc qdisc del dev eth0 root 2>/dev/null || true
+    " >/dev/null 2>&1 || true
+}
+trap cleanup_netem EXIT
+
 # 1. Identify the current leader.
 PKI_NODE="hula-east"
 leader_out="$(dc exec -T team-runner /usr/local/bin/hulactl \
@@ -103,9 +112,6 @@ if [ "$joined" -ne 1 ]; then
 fi
 pass "$leader_id rejoined the cluster"
 
-# 6. Cleanup tc.
-dc exec -T team-runner sh -c "
-    tc qdisc del dev eth0 root 2>/dev/null || true
-" >/dev/null 2>&1 || true
+# 6. Cleanup tc — handled by the EXIT trap installed above.
 
 echo "  Suite 42 PASS"

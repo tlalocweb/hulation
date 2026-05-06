@@ -157,6 +157,12 @@ func GenerateNodeCert(ca *CA, teamID, nodeID, hostname string, validity time.Dur
 	dns := []string{
 		nodeID + SANInternalSuffix,
 		teamID + "/" + nodeID + SANInternalSuffix,
+		// PeerSNI — the fixed ServerName Stage 3 dialers present
+		// when reaching another team node. Including it here lets
+		// the stdlib hostname check pass without needing
+		// InsecureSkipVerify; chain verification still pins
+		// identity to a Team-CA-signed cert.
+		"peer" + SANInternalSuffix,
 	}
 	if hostname != "" && hostname != nodeID+SANInternalSuffix {
 		dns = append(dns, hostname)
