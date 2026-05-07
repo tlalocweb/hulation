@@ -44,6 +44,15 @@ services:
       # prepare_test_site() under $WORKDIR/testsite-bare.git. Mounted
       # rw because `git push` needs to update refs.
       - ${TEST_SITE_BARE}:/var/hula/testsite-bare.git:rw
+      # Self-contained generator fixtures (suite 07a) — bare clones of
+      # test/e2e/fixtures/sites/<name>-min/. Created by
+      # prepare_min_sites() under $WORKDIR/sites/<name>-bare.git. The
+      # whole sites/ dir is mounted as one entry so we don't have to
+      # touch this file when adding a new generator fixture; the
+      # corresponding server entries in hula-config still need the
+      # specific paths spelled out. setup.sh always creates the dir
+      # (empty when fixtures are absent) so this mount is unconditional.
+      - ${HULA_E2E_ROOT}/workdir/sites:/var/hula/min-sites:rw
     environment:
       - GITHUB_AUTH_TOKEN=${GITHUB_AUTH_TOKEN}
       # Phase-4b chat suites (32-34) need /chat/start to issue
@@ -93,7 +102,7 @@ services:
         update-ca-certificates >/dev/null 2>&1
         # Map test hostnames to the hula service IP.
         HULA_IP=$$(getent hosts hula | awk '{print $$1}')
-        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local" >> /etc/hosts
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local hugo-min.test.local mkdocs-min.test.local" >> /etc/hosts
         exec hulactl "$$@"
       - "--"
     depends_on:
@@ -162,7 +171,7 @@ services:
         fi
         update-ca-certificates >/dev/null 2>&1
         HULA_IP=$$(getent hosts hula | awk '{print $$1}')
-        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local" >> /etc/hosts
+        echo "$$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local hugo-min.test.local mkdocs-min.test.local" >> /etc/hosts
         exec "$$@"
       - "--"
     depends_on:

@@ -1,0 +1,12 @@
+# Explicit sitebuild.yaml so this fixture exercises the
+# "operator supplied a config" code path. The mkdocs-min sibling
+# fixture leaves this absent to exercise auto-detection.
+defs:
+  WORKDIR: /builder
+
+configs:
+  production:
+    commands: |
+      WORKDIR {{WORKDIR}}
+      HUGO --minify
+      FINALIZE {{WORKDIR}}/site/public

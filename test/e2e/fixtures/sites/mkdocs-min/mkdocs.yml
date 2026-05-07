@@ -1,0 +1,7 @@
+site_name: MkDocs Min
+docs_dir: docs
+# Use the built-in 'mkdocs' theme so this fixture doesn't depend on
+# mkdocs-material being preinstalled in the builder image (it is, but
+# coupling the test to that is needless).
+theme:
+  name: mkdocs

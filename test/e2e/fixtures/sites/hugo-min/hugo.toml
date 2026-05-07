@@ -1,0 +1,4 @@
+baseURL = '/'
+title = 'Hugo Min'
+languageCode = 'en-us'
+disableKinds = ['taxonomy', 'term']
