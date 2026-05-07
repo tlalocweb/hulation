@@ -4,6 +4,8 @@
 FROM ubuntu:22.04
 
 ARG HUGO_VERSION=0.147.6
+ARG MKDOCS_VERSION=1.6.1
+ARG MKDOCS_MATERIAL_VERSION=9.5.49
 ARG NODE_MAJOR=22
 ARG TARGETARCH
 
@@ -39,7 +41,9 @@ RUN npm install -g astro
 RUN npm install -g gatsby-cli
 
 # MkDocs
-RUN pip3 install --no-cache-dir mkdocs mkdocs-material
+RUN pip3 install --no-cache-dir \
+    mkdocs==${MKDOCS_VERSION} \
+    mkdocs-material==${MKDOCS_MATERIAL_VERSION}
 
 # Clean up npm cache
 RUN npm cache clean --force
