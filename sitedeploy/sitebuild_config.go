@@ -31,6 +31,7 @@ type SiteBuildConfig struct {
 	Defs         map[string]string        `yaml:"defs,omitempty"`
 	BuilderImage string                   `yaml:"builder_image,omitempty"`
 	Hugo         *HugoVersionConfig       `yaml:"hugo,omitempty"`
+	MkDocs       *MkDocsVersionConfig     `yaml:"mkdocs,omitempty"`
 	Configs      map[string]*BuildProfile `yaml:"configs"`
 }
 
@@ -42,10 +43,50 @@ type HugoVersionConfig struct {
 	Version string `yaml:"version,omitempty"`
 }
 
+// MkDocsVersionConfig specifies mkdocs and mkdocs-material version
+// requirements plus arbitrary extra pip packages. Non-nil values
+// drive a derived-image prebuild: the requested versions are
+// pip-installed FROM the base builder image, content-hash-cached the
+// same way operator-supplied DockerfilePrebuild blocks are.
+type MkDocsVersionConfig struct {
+	// Version pins mkdocs to an exact release (e.g., "1.6.1"). If set,
+	// AtLeast is ignored.
+	Version string `yaml:"version,omitempty"`
+	// AtLeast installs `mkdocs>=AtLeast` when Version is empty
+	// (e.g., "1.5.0"). pip resolves the upper bound.
+	AtLeast string `yaml:"at_least,omitempty"`
+	// Material pins mkdocs-material to an exact release (e.g.,
+	// "9.5.49"). Empty leaves the baked-in version in place.
+	Material string `yaml:"material,omitempty"`
+	// ExtraPackages is an arbitrary list of pip packages to install
+	// alongside mkdocs (e.g., "pymdown-extensions==10.11.2",
+	// "mkdocs-mermaid2-plugin", "mike==2.1.3"). Each entry is passed
+	// verbatim to `pip install` — full pip syntax (`==`, `>=`, extras,
+	// VCS URLs) is supported.
+	//
+	// SECURITY: ExtraPackages runs in the operator's trust domain.
+	// Anyone who can land a sitebuild.yaml change can install
+	// arbitrary code in the build container — same authority `RUN` and
+	// `dockerfile_prebuild` already grant. Treat changes to this field
+	// with the same review discipline as changes to a Dockerfile.
+	ExtraPackages []string `yaml:"extra_packages,omitempty"`
+}
+
+// IsZero reports whether the config requests no overrides — used to
+// short-circuit synth-prebuild generation for the common case.
+func (m *MkDocsVersionConfig) IsZero() bool {
+	if m == nil {
+		return true
+	}
+	return m.Version == "" && m.AtLeast == "" && m.Material == "" && len(m.ExtraPackages) == 0
+}
+
 // BuildProfile defines a named build configuration (e.g., "production", "staging").
 type BuildProfile struct {
 	// Hugo overrides the top-level hugo version config for this profile
 	Hugo *HugoVersionConfig `yaml:"hugo,omitempty"`
+	// MkDocs overrides the top-level mkdocs version config for this profile
+	MkDocs *MkDocsVersionConfig `yaml:"mkdocs,omitempty"`
 	// DockerfilePrebuild contains Dockerfile commands to extend the builder image.
 	// A derived image is built from these commands before running the build.
 	DockerfilePrebuild string `yaml:"dockerfile_prebuild,omitempty"`
@@ -264,6 +305,79 @@ func (c *SiteBuildConfig) ResolveHugoConfig(profile *BuildProfile) *HugoVersionC
 		return profile.Hugo
 	}
 	return c.Hugo
+}
+
+// ResolveMkDocsConfig returns the effective mkdocs version config,
+// with profile-level overrides taking precedence over top-level.
+func (c *SiteBuildConfig) ResolveMkDocsConfig(profile *BuildProfile) *MkDocsVersionConfig {
+	if profile.MkDocs != nil {
+		return profile.MkDocs
+	}
+	return c.MkDocs
+}
+
+// synthMkDocsPrebuild returns a Dockerfile fragment that pip-installs
+// the requested mkdocs / mkdocs-material / extra packages over the
+// base builder image. Empty when the config requests no overrides.
+//
+// The output is a single `RUN pip3 install` line so the derived image
+// has one extra layer. Versions go through pip's standard specifier
+// syntax — `version` becomes `==X`, `at_least` becomes `>=X`. We
+// don't pass --break-system-packages explicitly; both builder images
+// set ENV PIP_BREAK_SYSTEM_PACKAGES=1 (see builder-images/*/Dockerfile)
+// so the synth works uniformly across alpine and ubuntu bases.
+func synthMkDocsPrebuild(cfg *MkDocsVersionConfig) string {
+	if cfg.IsZero() {
+		return ""
+	}
+	var pkgs []string
+	switch {
+	case cfg.Version != "":
+		pkgs = append(pkgs, "mkdocs=="+cfg.Version)
+	case cfg.AtLeast != "":
+		pkgs = append(pkgs, "mkdocs>="+cfg.AtLeast)
+	}
+	if cfg.Material != "" {
+		pkgs = append(pkgs, "mkdocs-material=="+cfg.Material)
+	}
+	pkgs = append(pkgs, cfg.ExtraPackages...)
+	if len(pkgs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# synthesized from sitebuild.yaml mkdocs:\n")
+	b.WriteString("RUN pip3 install --no-cache-dir \\\n")
+	for i, p := range pkgs {
+		b.WriteString("    ")
+		b.WriteString(p)
+		if i < len(pkgs)-1 {
+			b.WriteString(" \\")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// EffectivePrebuild returns the Dockerfile prebuild fragment that
+// should be passed to buildDerivedImage for this profile, combining:
+//
+//  1. Synthesized mkdocs install lines (when MkDocsVersionConfig is set)
+//  2. The operator's explicit DockerfilePrebuild block (when set)
+//
+// In that order — synth first so operators can write follow-up RUN
+// lines that depend on the pinned versions. Returns empty string when
+// no derivation is needed.
+func (c *SiteBuildConfig) EffectivePrebuild(profile *BuildProfile) string {
+	var parts []string
+	if mkdocs := c.ResolveMkDocsConfig(profile); !mkdocs.IsZero() {
+		if synth := synthMkDocsPrebuild(mkdocs); synth != "" {
+			parts = append(parts, synth)
+		}
+	}
+	if profile.DockerfilePrebuild != "" {
+		parts = append(parts, profile.DockerfilePrebuild)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // BuilderImageName returns the full Docker image name for the builder.

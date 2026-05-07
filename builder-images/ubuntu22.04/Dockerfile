@@ -11,6 +11,11 @@ ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Allow pip to install into the system site-packages in derived
+# images without needing --break-system-packages on every line.
+# Honored by pip 23+ (ignored by older pip; harmless either way).
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

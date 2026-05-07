@@ -350,10 +350,12 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 		return
 	}
 
-	// Build derived image if prebuild commands exist
-	if profile.DockerfilePrebuild != "" {
+	// Build derived image when the profile (or its synthesized
+	// mkdocs version overrides) require additional layers on top of
+	// the base builder image.
+	if prebuild := siteCfg.EffectivePrebuild(profile); prebuild != "" {
 		bs.addLog("Building derived image for prebuild commands...")
-		_, err := builder.buildDerivedImage(ctx, imageName, profile.DockerfilePrebuild)
+		_, err := builder.buildDerivedImage(ctx, imageName, prebuild)
 		if err != nil {
 			bs.fail(fmt.Errorf("building derived image: %w", err))
 			return

@@ -256,7 +256,7 @@ Both go in the same file under `configs:`; Hula picks the one matching `hula_bui
 |-------|-------|--------|
 | **P0** | Pin builder-image versions (§2.4) | ✅ landed — `MKDOCS_VERSION=1.6.1`, `MKDOCS_MATERIAL_VERSION=9.5.49` via `ARG` in both Dockerfiles |
 | **P1** | Auto-detection (§2.1) + `--site-dir` defensive log (§2.2) + tests (§3.2) | ✅ landed — `DetectGenerator`, `defaultProfileFor` (production + staging shapes), `GetProfile(name, repoDir)` signature change, missing-`sitebuild.yaml` fallthrough in both build and staging paths, `hasMkdocsSiteDir` preflight in `cmdStaticGen`, full table-driven test suite |
-| **P2** | `MkDocsVersionConfig` + synth-prebuild integration (§2.3) | planned — aligned with hulation-docs M1 |
+| **P2** | `MkDocsVersionConfig` + synth-prebuild integration (§2.3) | ✅ landed — `MkDocsVersionConfig`, `ResolveMkDocsConfig`, `synthMkDocsPrebuild`, `EffectivePrebuild` (synth precedes operator prebuild), wired into both production and staging paths via `StartStaging(siteCfg, …)`, `ENV PIP_BREAK_SYSTEM_PACKAGES=1` on both base images |
 | **P3** | Builder-images README (§2.4) + cookbook entry in hulation-docs | planned — aligned with hulation-docs M3 |
 
 P0–P2 land before hulation-docs M4 — that's the gating dependency the docs PRD

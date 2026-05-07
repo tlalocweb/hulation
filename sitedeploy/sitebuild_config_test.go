@@ -277,6 +277,249 @@ func TestGetProfile_ExplicitConfigs_UnknownProfile(t *testing.T) {
 	}
 }
 
+func TestMkDocsVersionConfig_IsZero(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *MkDocsVersionConfig
+		want bool
+	}{
+		{"nil", nil, true},
+		{"empty struct", &MkDocsVersionConfig{}, true},
+		{"version set", &MkDocsVersionConfig{Version: "1.6.1"}, false},
+		{"at_least set", &MkDocsVersionConfig{AtLeast: "1.5.0"}, false},
+		{"material set", &MkDocsVersionConfig{Material: "9.5.49"}, false},
+		{"extras set", &MkDocsVersionConfig{ExtraPackages: []string{"pymdown-extensions"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.IsZero(); got != tc.want {
+				t.Errorf("IsZero: got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSynthMkDocsPrebuild(t *testing.T) {
+	cases := []struct {
+		name         string
+		cfg          *MkDocsVersionConfig
+		wantEmpty    bool
+		wantContains []string
+		wantMissing  []string
+	}{
+		{
+			name:      "zero -> empty",
+			cfg:       &MkDocsVersionConfig{},
+			wantEmpty: true,
+		},
+		{
+			name:         "version only",
+			cfg:          &MkDocsVersionConfig{Version: "1.6.1"},
+			wantContains: []string{"mkdocs==1.6.1", "pip3 install"},
+			wantMissing:  []string{"mkdocs-material"},
+		},
+		{
+			name:         "version + material",
+			cfg:          &MkDocsVersionConfig{Version: "1.6.1", Material: "9.5.49"},
+			wantContains: []string{"mkdocs==1.6.1", "mkdocs-material==9.5.49"},
+		},
+		{
+			name:         "at_least when version is empty",
+			cfg:          &MkDocsVersionConfig{AtLeast: "1.5.0"},
+			wantContains: []string{"mkdocs>=1.5.0"},
+			wantMissing:  []string{"mkdocs==", "mkdocs-material"},
+		},
+		{
+			name:         "version wins over at_least",
+			cfg:          &MkDocsVersionConfig{Version: "1.6.1", AtLeast: "1.5.0"},
+			wantContains: []string{"mkdocs==1.6.1"},
+			wantMissing:  []string{"mkdocs>="},
+		},
+		{
+			name:         "extras only",
+			cfg:          &MkDocsVersionConfig{ExtraPackages: []string{"pymdown-extensions==10.11.2", "mike==2.1.3"}},
+			wantContains: []string{"pymdown-extensions==10.11.2", "mike==2.1.3"},
+			wantMissing:  []string{"mkdocs==", "mkdocs>=", "mkdocs-material"},
+		},
+		{
+			name: "all fields combined",
+			cfg: &MkDocsVersionConfig{
+				Version:       "1.6.1",
+				Material:      "9.5.49",
+				ExtraPackages: []string{"pymdown-extensions==10.11.2"},
+			},
+			wantContains: []string{"mkdocs==1.6.1", "mkdocs-material==9.5.49", "pymdown-extensions==10.11.2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := synthMkDocsPrebuild(tc.cfg)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("expected empty, got:\n%s", got)
+				}
+				return
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("output missing %q:\n%s", sub, got)
+				}
+			}
+			for _, sub := range tc.wantMissing {
+				if strings.Contains(got, sub) {
+					t.Errorf("output should not contain %q:\n%s", sub, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSynthMkDocsPrebuild_DeterministicOrdering(t *testing.T) {
+	cfg := &MkDocsVersionConfig{
+		Version:       "1.6.1",
+		Material:      "9.5.49",
+		ExtraPackages: []string{"a", "b", "c"},
+	}
+	a := synthMkDocsPrebuild(cfg)
+	b := synthMkDocsPrebuild(cfg)
+	if a != b {
+		t.Errorf("synth not deterministic across calls — derived-image cache will miss\nfirst:\n%s\nsecond:\n%s", a, b)
+	}
+}
+
+func TestResolveMkDocsConfig(t *testing.T) {
+	top := &MkDocsVersionConfig{Version: "1.6.0"}
+	override := &MkDocsVersionConfig{Version: "1.6.1"}
+
+	cases := []struct {
+		name     string
+		topLevel *MkDocsVersionConfig
+		profile  *MkDocsVersionConfig
+		want     *MkDocsVersionConfig
+	}{
+		{"both nil", nil, nil, nil},
+		{"top only", top, nil, top},
+		{"profile only", nil, override, override},
+		{"profile overrides top", top, override, override},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &SiteBuildConfig{MkDocs: tc.topLevel}
+			p := &BuildProfile{MkDocs: tc.profile}
+			got := c.ResolveMkDocsConfig(p)
+			if got != tc.want {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEffectivePrebuild(t *testing.T) {
+	cases := []struct {
+		name         string
+		siteCfg      *SiteBuildConfig
+		profile      *BuildProfile
+		wantEmpty    bool
+		wantContains []string
+	}{
+		{
+			name:      "no mkdocs, no operator prebuild -> empty",
+			siteCfg:   &SiteBuildConfig{},
+			profile:   &BuildProfile{},
+			wantEmpty: true,
+		},
+		{
+			name:    "operator prebuild only",
+			siteCfg: &SiteBuildConfig{},
+			profile: &BuildProfile{
+				DockerfilePrebuild: "RUN apk add foo",
+			},
+			wantContains: []string{"RUN apk add foo"},
+		},
+		{
+			name: "mkdocs synth only",
+			siteCfg: &SiteBuildConfig{
+				MkDocs: &MkDocsVersionConfig{Version: "1.6.1"},
+			},
+			profile:      &BuildProfile{},
+			wantContains: []string{"mkdocs==1.6.1", "pip3 install"},
+		},
+		{
+			name: "synth before operator prebuild",
+			siteCfg: &SiteBuildConfig{
+				MkDocs: &MkDocsVersionConfig{Version: "1.6.1"},
+			},
+			profile: &BuildProfile{
+				DockerfilePrebuild: "RUN apk add foo",
+			},
+			wantContains: []string{"mkdocs==1.6.1", "RUN apk add foo"},
+		},
+		{
+			name:    "profile-level mkdocs overrides top-level",
+			siteCfg: &SiteBuildConfig{MkDocs: &MkDocsVersionConfig{Version: "1.6.0"}},
+			profile: &BuildProfile{
+				MkDocs: &MkDocsVersionConfig{Version: "1.6.1"},
+			},
+			wantContains: []string{"mkdocs==1.6.1"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.siteCfg.EffectivePrebuild(tc.profile)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("expected empty, got:\n%s", got)
+				}
+				return
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("missing %q:\n%s", sub, got)
+				}
+			}
+			// When both pieces are present, synth must precede operator prebuild.
+			if !tc.siteCfg.ResolveMkDocsConfig(tc.profile).IsZero() && tc.profile.DockerfilePrebuild != "" {
+				synthIdx := strings.Index(got, "pip3 install")
+				operatorIdx := strings.Index(got, tc.profile.DockerfilePrebuild)
+				if synthIdx < 0 || operatorIdx < 0 || synthIdx > operatorIdx {
+					t.Errorf("synth must precede operator prebuild; got:\n%s", got)
+				}
+			}
+		})
+	}
+}
+
+func TestEffectivePrebuild_YAMLRoundTrip(t *testing.T) {
+	const src = `
+mkdocs:
+  version: "1.6.1"
+  material: "9.5.49"
+  extra_packages:
+    - pymdown-extensions==10.11.2
+
+configs:
+  production:
+    commands: |
+      WORKDIR /builder
+      MKDOCS build --site-dir _hula_out
+      FINALIZE /builder/site/_hula_out
+`
+	cfg, err := ParseSiteBuildConfig([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	profile, err := cfg.GetProfile("production", "")
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	out := cfg.EffectivePrebuild(profile)
+	for _, want := range []string{"mkdocs==1.6.1", "mkdocs-material==9.5.49", "pymdown-extensions==10.11.2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("synth missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func equalSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

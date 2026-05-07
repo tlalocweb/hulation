@@ -108,7 +108,7 @@ func (sm *StagingManager) GetStagingContainer(serverID string) *StagingContainer
 }
 
 // StartStaging starts a long-lived staging container for the given server.
-func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProfile, imageName string) error {
+func (sm *StagingManager) StartStaging(server *config.Server, siteCfg *SiteBuildConfig, profile *BuildProfile, imageName string) error {
 	gad := server.GitAutoDeploy
 	ctx := context.Background()
 
@@ -144,9 +144,11 @@ func (sm *StagingManager) StartStaging(server *config.Server, profile *BuildProf
 		return err
 	}
 
-	// Build derived image if needed
-	if profile.DockerfilePrebuild != "" {
-		_, err := builder.buildDerivedImage(ctx, imageName, profile.DockerfilePrebuild)
+	// Build derived image when the profile (or its synthesized
+	// mkdocs version overrides) require additional layers on top of
+	// the base builder image.
+	if prebuild := siteCfg.EffectivePrebuild(profile); prebuild != "" {
+		_, err := builder.buildDerivedImage(ctx, imageName, prebuild)
 		if err != nil {
 			return fmt.Errorf("building derived image: %w", err)
 		}
@@ -472,7 +474,7 @@ func (sm *StagingManager) StartupStaging(servers []*config.Server) {
 		}
 
 		imageName := siteCfg.BuilderImageName()
-		if err := sm.StartStaging(s, profile, imageName); err != nil {
+		if err := sm.StartStaging(s, siteCfg, profile, imageName); err != nil {
 			log.Errorf("sitedeploy: staging startup failed for %s: %s", s.ID, err)
 		}
 	}
