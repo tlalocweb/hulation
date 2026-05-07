@@ -438,17 +438,23 @@ func (sm *StagingManager) StartupStaging(servers []*config.Server) {
 		}
 
 		siteBuildPath := filepath.Join(gad.StagingSrcDir, ".hula", "sitebuild.yaml")
+		var siteCfg *SiteBuildConfig
 		data, err := os.ReadFile(siteBuildPath)
-		if err != nil {
+		switch {
+		case err == nil:
+			siteCfg, err = ParseSiteBuildConfig(data)
+			if err != nil {
+				log.Errorf("sitedeploy: staging startup: parsing sitebuild.yaml for %s: %s", s.ID, err)
+				continue
+			}
+		case os.IsNotExist(err):
+			log.Infof("sitedeploy: staging startup: no sitebuild.yaml for %s; will auto-detect generator from repo markers", s.ID)
+			siteCfg = &SiteBuildConfig{BuilderImage: DefaultBuilderImage}
+		default:
 			log.Errorf("sitedeploy: staging startup: reading sitebuild.yaml for %s: %s", s.ID, err)
 			continue
 		}
-		siteCfg, err := ParseSiteBuildConfig(data)
-		if err != nil {
-			log.Errorf("sitedeploy: staging startup: parsing sitebuild.yaml for %s: %s", s.ID, err)
-			continue
-		}
-		profile, err := siteCfg.GetProfile(gad.HulaBuild)
+		profile, err := siteCfg.GetProfile(gad.HulaBuild, gad.StagingSrcDir)
 		if err != nil {
 			log.Errorf("sitedeploy: staging startup: profile error for %s: %s", s.ID, err)
 			continue

@@ -126,6 +126,16 @@ func (e *executor) cmdStaticGen(generator, args string) error {
 		cmdArgs = splitArgs(args)
 	}
 
+	// mkdocs writes to ./site/ relative to mkdocs.yml by default.
+	// With cmd.Dir == <workdir>/site, that lands at <workdir>/site/site
+	// which the rest of the COMMANDLIST won't pick up. Warn loudly when
+	// the operator hasn't supplied --site-dir / -d explicitly.
+	if generator == "mkdocs" && !hasMkdocsSiteDir(cmdArgs) {
+		e.proto.sendLog("[mkdocs] WARNING: no --site-dir / -d in args; mkdocs will write to %s/site, "+
+			"which downstream CP / FINALIZE steps may not pick up. "+
+			"Use 'MKDOCS build --site-dir _hula_out' (then FINALIZE _hula_out).", siteDir)
+	}
+
 	cmd := exec.Command(generator, cmdArgs...)
 	cmd.Dir = siteDir
 	cmd.Env = os.Environ()
@@ -457,4 +467,18 @@ func splitArgs(s string) []string {
 // shellQuote quotes a string for safe use in a shell command.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// hasMkdocsSiteDir returns true when args includes either --site-dir
+// or -d (with or without a `=value` suffix). Used by cmdStaticGen to
+// preflight mkdocs invocations whose default output dir would
+// collide with hulabuild's <workdir>/site source layout.
+func hasMkdocsSiteDir(args []string) bool {
+	for _, a := range args {
+		if a == "-d" || a == "--site-dir" ||
+			strings.HasPrefix(a, "-d=") || strings.HasPrefix(a, "--site-dir=") {
+			return true
+		}
+	}
+	return false
 }

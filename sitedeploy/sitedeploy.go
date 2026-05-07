@@ -292,25 +292,34 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 	}
 	bs.addLog(fmt.Sprintf("Repository ready at %s", repoDir))
 
-	// Step 2: Read and parse .hula/sitebuild.yaml
+	// Step 2: Read and parse .hula/sitebuild.yaml.
+	// A missing file is OK — GetProfile will auto-detect the
+	// generator from marker files in repoDir below. Other read
+	// errors (permission, IO) are fatal.
 	siteBuildPath := filepath.Join(repoDir, ".hula", "sitebuild.yaml")
+	var siteCfg *SiteBuildConfig
 	data, err := os.ReadFile(siteBuildPath)
-	if err != nil {
+	switch {
+	case err == nil:
+		siteCfg, err = ParseSiteBuildConfig(data)
+		if err != nil {
+			bs.fail(err)
+			log.Errorf("sitedeploy: build %s failed parsing sitebuild.yaml: %s", bs.BuildID, err)
+			return
+		}
+	case os.IsNotExist(err):
+		bs.addLog("No .hula/sitebuild.yaml found; will auto-detect generator from repo markers.")
+		siteCfg = &SiteBuildConfig{BuilderImage: DefaultBuilderImage}
+	default:
 		bs.fail(fmt.Errorf("reading sitebuild.yaml: %w", err))
 		log.Errorf("sitedeploy: build %s failed reading sitebuild.yaml: %s", bs.BuildID, err)
 		return
 	}
 
-	siteCfg, err := ParseSiteBuildConfig(data)
-	if err != nil {
-		bs.fail(err)
-		log.Errorf("sitedeploy: build %s failed parsing sitebuild.yaml: %s", bs.BuildID, err)
-		return
-	}
-
-	// Step 3: Resolve the build profile
+	// Step 3: Resolve the build profile (auto-detects from repoDir
+	// when siteCfg has no explicit configs).
 	profileName := gad.HulaBuild
-	profile, err := siteCfg.GetProfile(profileName)
+	profile, err := siteCfg.GetProfile(profileName, repoDir)
 	if err != nil {
 		bs.fail(err)
 		log.Errorf("sitedeploy: build %s failed resolving profile %s: %s", bs.BuildID, profileName, err)
@@ -563,7 +572,7 @@ func warnOnProfileMismatch(s *config.Server, repoDir string) {
 		log.Errorf("sitedeploy: parse sitebuild.yaml for %s: %s", s.ID, err)
 		return
 	}
-	profile, err := siteCfg.GetProfile(gad.HulaBuild)
+	profile, err := siteCfg.GetProfile(gad.HulaBuild, repoDir)
 	if err != nil {
 		log.Errorf("sitedeploy: profile %q not found in sitebuild.yaml for %s: %s", gad.HulaBuild, s.ID, err)
 		return

@@ -1,0 +1,290 @@
+package sitedeploy
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// touch creates an empty file at path, MkdirAll'ing parents.
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	f.Close()
+}
+
+func TestDetectGenerator_EmptyRepoDir(t *testing.T) {
+	d := DetectGenerator("")
+	if d.Generator != "" || d.Marker != "" || len(d.Ignored) != 0 {
+		t.Fatalf("expected empty detection for empty repoDir, got %+v", d)
+	}
+}
+
+func TestDetectGenerator_NoMarkers(t *testing.T) {
+	dir := t.TempDir()
+	d := DetectGenerator(dir)
+	if d.Generator != "" {
+		t.Fatalf("expected no generator detected in empty dir, got %+v", d)
+	}
+}
+
+func TestDetectGenerator_PerGenerator(t *testing.T) {
+	cases := []struct {
+		name       string
+		marker     string
+		wantGen    string
+		wantMarker string
+	}{
+		{"mkdocs.yml", "mkdocs.yml", "mkdocs", "mkdocs.yml"},
+		{"mkdocs.yaml", "mkdocs.yaml", "mkdocs", "mkdocs.yaml"},
+		{"astro.mjs", "astro.config.mjs", "astro", "astro.config.mjs"},
+		{"astro.ts", "astro.config.ts", "astro", "astro.config.ts"},
+		{"astro.js", "astro.config.js", "astro", "astro.config.js"},
+		{"gatsby.js", "gatsby-config.js", "gatsby", "gatsby-config.js"},
+		{"gatsby.ts", "gatsby-config.ts", "gatsby", "gatsby-config.ts"},
+		{"hugo.toml", "hugo.toml", "hugo", "hugo.toml"},
+		{"hugo.yaml", "hugo.yaml", "hugo", "hugo.yaml"},
+		{"config.toml", "config.toml", "hugo", "config.toml"},
+		{"config.yml", "config.yml", "hugo", "config.yml"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			touch(t, filepath.Join(dir, tc.marker))
+			d := DetectGenerator(dir)
+			if d.Generator != tc.wantGen {
+				t.Errorf("generator: got %q, want %q", d.Generator, tc.wantGen)
+			}
+			if d.Marker != tc.wantMarker {
+				t.Errorf("marker: got %q, want %q", d.Marker, tc.wantMarker)
+			}
+			if len(d.Ignored) != 0 {
+				t.Errorf("ignored: got %v, want []", d.Ignored)
+			}
+		})
+	}
+}
+
+func TestDetectGenerator_PrecedenceMkdocsOverHugo(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml"))
+	touch(t, filepath.Join(dir, "hugo.toml"))
+	touch(t, filepath.Join(dir, "config.toml"))
+
+	d := DetectGenerator(dir)
+	if d.Generator != "mkdocs" {
+		t.Fatalf("expected mkdocs to win precedence over hugo, got %q", d.Generator)
+	}
+	if d.Marker != "mkdocs.yml" {
+		t.Errorf("marker: got %q, want mkdocs.yml", d.Marker)
+	}
+	want := []string{"config.toml", "hugo.toml"}
+	got := append([]string(nil), d.Ignored...)
+	sort.Strings(got)
+	if !equalSlices(got, want) {
+		t.Errorf("ignored: got %v, want %v", got, want)
+	}
+}
+
+func TestDetectGenerator_PrefersYmlOverYaml(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml"))
+	touch(t, filepath.Join(dir, "mkdocs.yaml"))
+
+	d := DetectGenerator(dir)
+	if d.Marker != "mkdocs.yml" {
+		t.Errorf("expected mkdocs.yml to win over mkdocs.yaml, got %q", d.Marker)
+	}
+	if len(d.Ignored) != 1 || d.Ignored[0] != "mkdocs.yaml" {
+		t.Errorf("ignored: got %v, want [mkdocs.yaml]", d.Ignored)
+	}
+}
+
+func TestDetectGenerator_FullPrecedenceOrder(t *testing.T) {
+	// All four generators present. mkdocs wins; the rest go into Ignored.
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml"))
+	touch(t, filepath.Join(dir, "astro.config.mjs"))
+	touch(t, filepath.Join(dir, "gatsby-config.js"))
+	touch(t, filepath.Join(dir, "hugo.toml"))
+
+	d := DetectGenerator(dir)
+	if d.Generator != "mkdocs" {
+		t.Fatalf("expected mkdocs to win, got %q", d.Generator)
+	}
+	want := []string{"astro.config.mjs", "gatsby-config.js", "hugo.toml"}
+	got := append([]string(nil), d.Ignored...)
+	sort.Strings(got)
+	if !equalSlices(got, want) {
+		t.Errorf("ignored: got %v, want %v", got, want)
+	}
+}
+
+func TestDefaultProfileFor_Production(t *testing.T) {
+	cases := []struct {
+		gen          string
+		wantContains []string
+	}{
+		{"mkdocs", []string{"MKDOCS build --strict --site-dir _hula_out", "FINALIZE /builder/site/_hula_out"}},
+		{"hugo", []string{"HUGO --minify", "FINALIZE /builder/site/public"}},
+		{"astro", []string{"ASTRO build", "FINALIZE /builder/site/dist"}},
+		{"gatsby", []string{"GATSBY build", "FINALIZE /builder/site/public"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.gen, func(t *testing.T) {
+			p := defaultProfileFor(tc.gen, false)
+			if p == nil {
+				t.Fatalf("nil profile for %q", tc.gen)
+			}
+			if p.IsStaging() {
+				t.Errorf("production profile reports IsStaging=true")
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(p.Commands, sub) {
+					t.Errorf("Commands missing %q:\n%s", sub, p.Commands)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultProfileFor_Staging(t *testing.T) {
+	cases := []struct {
+		gen          string
+		wantServeDir string
+		wantBuildCmd string
+	}{
+		{"mkdocs", "/builder/site/_hula_out", "MKDOCS build --site-dir _hula_out"},
+		{"hugo", "/builder/site/public", "HUGO"},
+		{"astro", "/builder/site/dist", "ASTRO build"},
+		{"gatsby", "/builder/site/public", "GATSBY build"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.gen, func(t *testing.T) {
+			p := defaultProfileFor(tc.gen, true)
+			if p == nil {
+				t.Fatalf("nil profile for %q", tc.gen)
+			}
+			if !p.IsStaging() {
+				t.Errorf("staging profile reports IsStaging=false")
+			}
+			if p.ServeDir != tc.wantServeDir {
+				t.Errorf("ServeDir: got %q, want %q", p.ServeDir, tc.wantServeDir)
+			}
+			if p.BuildCommand != tc.wantBuildCmd {
+				t.Errorf("BuildCommand: got %q, want %q", p.BuildCommand, tc.wantBuildCmd)
+			}
+			// Staging profiles must not FINALIZE — see ValidateCommandListForStaging.
+			if strings.Contains(p.Commands, "FINALIZE") {
+				t.Errorf("staging profile must not contain FINALIZE:\n%s", p.Commands)
+			}
+		})
+	}
+}
+
+func TestDefaultProfileFor_UnknownGenerator(t *testing.T) {
+	if p := defaultProfileFor("jekyll", false); p != nil {
+		t.Errorf("expected nil profile for unknown generator, got %+v", p)
+	}
+}
+
+func TestGetProfile_AutoDetectMkdocs(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml"))
+
+	cfg := &SiteBuildConfig{}
+	p, err := cfg.GetProfile("production", dir)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if !strings.Contains(p.Commands, "MKDOCS") {
+		t.Errorf("expected mkdocs default profile, got:\n%s", p.Commands)
+	}
+}
+
+func TestGetProfile_AutoDetectStagingShape(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml"))
+
+	cfg := &SiteBuildConfig{}
+	p, err := cfg.GetProfile("staging", dir)
+	if err != nil {
+		t.Fatalf("GetProfile staging: %v", err)
+	}
+	if !p.IsStaging() {
+		t.Errorf("expected staging-shaped profile, got Commands:\n%s", p.Commands)
+	}
+}
+
+func TestGetProfile_NoMarker_ReturnsErrNoBuilderDetected(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &SiteBuildConfig{}
+	_, err := cfg.GetProfile("production", dir)
+	if !errors.Is(err, ErrNoBuilderDetected) {
+		t.Fatalf("expected ErrNoBuilderDetected, got %v", err)
+	}
+}
+
+func TestGetProfile_EmptyRepoDir_ReturnsErrNoBuilderDetected(t *testing.T) {
+	cfg := &SiteBuildConfig{}
+	_, err := cfg.GetProfile("production", "")
+	if !errors.Is(err, ErrNoBuilderDetected) {
+		t.Fatalf("expected ErrNoBuilderDetected, got %v", err)
+	}
+}
+
+func TestGetProfile_ExplicitConfigsBeatAutoDetection(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "mkdocs.yml")) // would auto-detect mkdocs
+	cfg := &SiteBuildConfig{
+		Configs: map[string]*BuildProfile{
+			"production": {Commands: "WORKDIR /builder\nRUN echo custom\nFINALIZE /builder/site\n"},
+		},
+	}
+	p, err := cfg.GetProfile("production", dir)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if strings.Contains(p.Commands, "MKDOCS") {
+		t.Errorf("auto-detection ran despite explicit configs; got:\n%s", p.Commands)
+	}
+	if !strings.Contains(p.Commands, "RUN echo custom") {
+		t.Errorf("expected operator-defined commands, got:\n%s", p.Commands)
+	}
+}
+
+func TestGetProfile_ExplicitConfigs_UnknownProfile(t *testing.T) {
+	cfg := &SiteBuildConfig{
+		Configs: map[string]*BuildProfile{
+			"production": {Commands: "WORKDIR /b\nFINALIZE /b/site\n"},
+		},
+	}
+	_, err := cfg.GetProfile("nonexistent", "")
+	if err == nil {
+		t.Fatal("expected error for missing profile")
+	}
+	if errors.Is(err, ErrNoBuilderDetected) {
+		t.Errorf("explicit configs should not return ErrNoBuilderDetected, got: %v", err)
+	}
+}
+
+func equalSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
