@@ -63,10 +63,11 @@ type TeamConfig struct {
 	SnapshotThreshold uint64 `yaml:"snapshot_threshold,omitempty"`
 
 	// NodeHostname is the operator-provisioned per-node hostname used
-	// for chat WS pinning (HA_PLAN3 §8) AND as the SNI Server-Name
-	// presented when a peer dials this node on its internal channel.
-	// Solo deployments leave this empty; the unified listener falls
-	// back to the public hostname.
+	// for chat WS pinning (HA_PLAN3 §8). It does NOT control the SNI
+	// used on the internal peer mTLS channel — those dials present a
+	// fixed pki.PeerSNI and authenticate via Team-CA chain check, not
+	// hostname match. Solo deployments leave this empty; the unified
+	// listener falls back to the public hostname.
 	NodeHostname string `yaml:"node_hostname,omitempty"`
 
 	// BootstrapToken is the pre-shared secret a joining node presents
