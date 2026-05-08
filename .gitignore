@@ -26,7 +26,7 @@ ch_*
 model/tools/setupdb/setupdb
 model/tools/testclickhouse/testclickhouse
 .DS_Store
-hulation
+/hulation
 cert.pem
 key.pem
 model/tools/timertest/timertest
@@ -34,15 +34,19 @@ model/tools/hulactl/hulactl
 model/tools/tviewtest/tviewtest
 test_ch_data
 test_ch_logs
-hula
+/hula
 
 # Dev environment
 .bin/
 .external/
 .gopath/
 env.sh
-hulactl
-hulabuild
+# Anchored to repo root: these patterns are meant for the compiled
+# binaries dropped at the top of the tree by `make`. Without the
+# leading `/`, `hulabuild` would also match the `model/tools/hulabuild/`
+# directory and silently ignore any new files added to it.
+/hulactl
+/hulabuild
 .cache/
 builder-images/hulabuild-linux
 testclickhouse

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/client"
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/google/uuid"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
@@ -291,25 +292,34 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 	}
 	bs.addLog(fmt.Sprintf("Repository ready at %s", repoDir))
 
-	// Step 2: Read and parse .hula/sitebuild.yaml
+	// Step 2: Read and parse .hula/sitebuild.yaml.
+	// A missing file is OK — GetProfile will auto-detect the
+	// generator from marker files in repoDir below. Other read
+	// errors (permission, IO) are fatal.
 	siteBuildPath := filepath.Join(repoDir, ".hula", "sitebuild.yaml")
+	var siteCfg *SiteBuildConfig
 	data, err := os.ReadFile(siteBuildPath)
-	if err != nil {
+	switch {
+	case err == nil:
+		siteCfg, err = ParseSiteBuildConfig(data)
+		if err != nil {
+			bs.fail(err)
+			log.Errorf("sitedeploy: build %s failed parsing sitebuild.yaml: %s", bs.BuildID, err)
+			return
+		}
+	case os.IsNotExist(err):
+		bs.addLog("No .hula/sitebuild.yaml found; will auto-detect generator from repo markers.")
+		siteCfg = &SiteBuildConfig{BuilderImage: DefaultBuilderImage}
+	default:
 		bs.fail(fmt.Errorf("reading sitebuild.yaml: %w", err))
 		log.Errorf("sitedeploy: build %s failed reading sitebuild.yaml: %s", bs.BuildID, err)
 		return
 	}
 
-	siteCfg, err := ParseSiteBuildConfig(data)
-	if err != nil {
-		bs.fail(err)
-		log.Errorf("sitedeploy: build %s failed parsing sitebuild.yaml: %s", bs.BuildID, err)
-		return
-	}
-
-	// Step 3: Resolve the build profile
+	// Step 3: Resolve the build profile (auto-detects from repoDir
+	// when siteCfg has no explicit configs).
 	profileName := gad.HulaBuild
-	profile, err := siteCfg.GetProfile(profileName)
+	profile, err := siteCfg.GetProfile(profileName, repoDir)
 	if err != nil {
 		bs.fail(err)
 		log.Errorf("sitedeploy: build %s failed resolving profile %s: %s", bs.BuildID, profileName, err)
@@ -340,10 +350,12 @@ func (bm *BuildManager) executeBuild(server *config.Server, bs *BuildState, args
 		return
 	}
 
-	// Build derived image if prebuild commands exist
-	if profile.DockerfilePrebuild != "" {
+	// Build derived image when the profile (or its synthesized
+	// mkdocs version overrides) require additional layers on top of
+	// the base builder image.
+	if prebuild := siteCfg.EffectivePrebuild(profile); prebuild != "" {
 		bs.addLog("Building derived image for prebuild commands...")
-		_, err := builder.buildDerivedImage(ctx, imageName, profile.DockerfilePrebuild)
+		_, err := builder.buildDerivedImage(ctx, imageName, prebuild)
 		if err != nil {
 			bs.fail(fmt.Errorf("building derived image: %w", err))
 			return
@@ -562,7 +574,7 @@ func warnOnProfileMismatch(s *config.Server, repoDir string) {
 		log.Errorf("sitedeploy: parse sitebuild.yaml for %s: %s", s.ID, err)
 		return
 	}
-	profile, err := siteCfg.GetProfile(gad.HulaBuild)
+	profile, err := siteCfg.GetProfile(gad.HulaBuild, repoDir)
 	if err != nil {
 		log.Errorf("sitedeploy: profile %q not found in sitebuild.yaml for %s: %s", gad.HulaBuild, s.ID, err)
 		return
@@ -677,11 +689,15 @@ func (bm *BuildManager) StartupBuildAll(servers []*config.Server) {
 
 // getGitHead returns the current HEAD commit hash from the repo, or "".
 func getGitHead(repoDir string) string {
-	output, err := runGitOutput(repoDir, "rev-parse", "HEAD")
+	repo, err := gogit.PlainOpen(repoDir)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(output)
+	ref, err := repo.Head()
+	if err != nil {
+		return ""
+	}
+	return ref.Hash().String()
 }
 
 // Package-level global for the BuildManager

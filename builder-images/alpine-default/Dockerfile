@@ -4,7 +4,14 @@
 FROM alpine:3.19
 
 ARG HUGO_VERSION=0.147.6
+ARG MKDOCS_VERSION=1.6.1
+ARG MKDOCS_MATERIAL_VERSION=9.5.49
 ARG TARGETARCH
+
+# Allow pip to install into the system site-packages in derived
+# images without needing --break-system-packages on every line.
+# Honored by pip 23+ (ignored by older pip; harmless either way).
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # System packages
 RUN apk add --no-cache \
@@ -34,7 +41,9 @@ RUN npm install -g astro
 RUN npm install -g gatsby-cli
 
 # MkDocs
-RUN pip3 install --no-cache-dir --break-system-packages mkdocs mkdocs-material
+RUN pip3 install --no-cache-dir --break-system-packages \
+    mkdocs==${MKDOCS_VERSION} \
+    mkdocs-material==${MKDOCS_MATERIAL_VERSION}
 
 # Clean up npm cache
 RUN npm cache clean --force

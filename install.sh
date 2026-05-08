@@ -66,7 +66,22 @@ else
 fi
 
 # Create data directories
-mkdir -p ch_data ch_logs hula_certs public
+mkdir -p ch_data ch_logs hula_certs public ch_config/config.d
+
+# Drop the recommended ClickHouse config.d override that suppresses
+# system_log tables (metric_log, trace_log, query_log, etc.). See
+# operations/troubleshooting.md "ClickHouse data directory growing
+# fast" in hulation-docs for the full rationale. Operators who want
+# CH-side observability should delete the file or comment out the
+# specific tables they need.
+if [ ! -f ch_config/config.d/hula-defaults.xml ]; then
+    echo "Downloading ClickHouse config.d/hula-defaults.xml..."
+    curl -fsSL "${HULA_REPO_BASE}/docker-example-clickhouse-config.xml" \
+        -o ch_config/config.d/hula-defaults.xml || {
+        echo "Note: failed to download CH config; CH will run with verbose"
+        echo "system tables and ch_data/ will grow ~150 MB per 15 min idle."
+    }
+fi
 
 # Install hulactl CLI tool
 echo "Installing hulactl CLI..."
@@ -78,7 +93,7 @@ INSTALL_DIR="${HULA_DIR}" curl -fsSL "${HULA_REPO_BASE}/installtools.sh" | bash 
 echo ""
 echo "Pulling ${HULA_IMAGE}..."
 docker pull "${HULA_IMAGE}"
-docker pull clickhouse/clickhouse-server:latest
+docker pull clickhouse/clickhouse-server:26.4
 
 # Start unless told not to
 if [ "${HULA_NO_START}" = "1" ]; then

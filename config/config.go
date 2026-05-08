@@ -411,6 +411,19 @@ type GitAutoDeployConfig struct {
 	// If true, hula will NOT automatically pull and build the site on startup.
 	// By default hula pulls and builds all root_git_autodeploy sites at startup.
 	NoPullOnStart bool `yaml:"no_pull_on_start,omitempty"`
+	// Committer identity used by the staging git verbs (hulactl
+	// commit / pull / sync). Both fields fall back to the
+	// hula-staging defaults when unset. Per-server so a tenant with
+	// multiple staging sites can attribute commits separately.
+	Committer *GitCommitter `yaml:"committer,omitempty"`
+}
+
+// GitCommitter is the committer identity hula uses for staging-side
+// git operations. Author identity for `hulactl commit` is overridden
+// inline via --author-name / --author-email; this is the fall-back.
+type GitCommitter struct {
+	Name  string `yaml:"name,omitempty" default:"hula-staging"`
+	Email string `yaml:"email,omitempty" default:"staging@hula.local"`
 }
 
 type Server struct {
@@ -437,6 +450,13 @@ type Server struct {
 	CORS              *CORSConfig `yaml:"cors,omitempty"`
 	SSL               *SSLConfig  `yaml:"ssl,omitempty"`
 	CSP               CSP         `yaml:"csp,omitempty"`
+	// HSTS lets the operator override the global tunables.hsts_*
+	// defaults for this specific virtual host. nil = inherit
+	// tunables wholesale. Useful when one server in the multi-vhost
+	// stack has a special policy (longer max-age before submitting to
+	// the preload list, no includeSubDomains because a subdomain
+	// serves HTTP-only content, etc.).
+	HSTS              *HSTSConfig `yaml:"hsts,omitempty"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...

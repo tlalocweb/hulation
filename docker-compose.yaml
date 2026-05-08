@@ -1,11 +1,19 @@
 version: "3"
 services:
     hulation-clickhouse:
-      image: clickhouse/clickhouse-server:latest
+      # Pinned to major.minor — `:latest` floats and a CH bump landed
+      # the broken-IPv6-fallback regression that the listen_host
+      # override in ch_config/config.d works around. See
+      # docs/operations/clickhouse-disk.md "Network listen host".
+      image: clickhouse/clickhouse-server:26.4
       container_name: hulation-clickhouse
       volumes:
         - ./ch_data:/var/lib/clickhouse
         - ./ch_logs:/var/log/clickhouse-server
+        # Suppress chatty system_log tables (metric_log, trace_log,
+        # query_log, etc.) — defaults can fill ch_data/ with ~150 MB
+        # per 15 min from idle alone. See ch_config/config.d/*.xml.
+        - ./ch_config/config.d:/etc/clickhouse-server/config.d:ro
       environment:
         - CLICKHOUSE_DB=hula
         - CLICKHOUSE_USER=hula

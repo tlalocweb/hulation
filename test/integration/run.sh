@@ -191,7 +191,7 @@ echo "--- Step 7: Write docker-compose ---"
 cat > "$WORKDIR/docker-compose.yaml" <<DCEOF
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.4
     container_name: ${COMPOSE_PROJECT}-clickhouse
     environment:
       CLICKHOUSE_USER: hula

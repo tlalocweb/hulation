@@ -140,6 +140,17 @@ gen_credentials() {
 # openssl-generated cert that we treat as our own root CA for curl trust.
 gen_certs() {
     mkdir -p "$WORKDIR/certs"
+    # Hostnames the test certs must cover. Adding a new server entry
+    # in fixtures/hula-config.yaml.tmpl with its own host means adding
+    # it here too — otherwise curl from the test-runner fails with
+    # "subjectAltName does not match hostname".
+    local cert_hosts=(
+        "$HULA_HOST"
+        "$SITE_HOST"
+        "$STAGING_HOST"
+        "hugo-min.test.local"
+        "mkdocs-min.test.local"
+    )
     if command -v mkcert >/dev/null 2>&1; then
         echo "--- Generating TLS certs with mkcert ---"
         local caroot
@@ -147,17 +158,22 @@ gen_certs() {
         cp "$caroot/rootCA.pem" "$WORKDIR/certs/rootCA.pem"
         cd "$WORKDIR/certs"
         mkcert -cert-file cert.pem -key-file key.pem \
-            "$HULA_HOST" "$SITE_HOST" "$STAGING_HOST" 2>/dev/null
+            "${cert_hosts[@]}" 2>/dev/null
     else
         echo "--- Generating self-signed TLS cert with openssl (mkcert not installed) ---"
         cd "$WORKDIR/certs"
-        # Create a self-signed cert with SANs for all three hostnames.
-        # The "root CA" trusted by curl is the same self-signed cert.
+        # Comma-joined SAN list for openssl's -addext. The "root CA"
+        # trusted by curl is the same self-signed cert.
+        local san_list=""
+        for h in "${cert_hosts[@]}"; do
+            [ -n "$san_list" ] && san_list+=,
+            san_list+="DNS:$h"
+        done
         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
             -nodes -days 30 \
             -keyout key.pem -out cert.pem \
             -subj "/CN=hula-e2e-test" \
-            -addext "subjectAltName=DNS:$HULA_HOST,DNS:$SITE_HOST,DNS:$STAGING_HOST" \
+            -addext "subjectAltName=$san_list" \
             >/dev/null 2>&1
         cp cert.pem rootCA.pem
     fi
@@ -296,6 +312,92 @@ prepare_test_site() {
     )
     # Export for the compose template
     export TEST_SITE_SRC="$src"
+
+    # --- Bare clone for stage/commit/push tests (suite 11.5) ---
+    # The new hulactl stage|commit|push verbs need a real push target.
+    # We can't push into the bind-mounted working tree (it's :ro and
+    # git refuses to push into a non-bare repo's checked-out branch),
+    # so we make a bare clone at $WORKDIR/testsite-bare.git that
+    # docker-compose binds in writable. testsite-staging's `repo:` is
+    # then pointed at this bare repo so auto-seed → edit → commit →
+    # push round-trip end-to-end.
+    local bare="$WORKDIR/testsite-bare.git"
+    if [ -d "$bare" ]; then
+        # Previous e2e runs left root-owned files inside the bare repo
+        # (the hula container pushed into it as root). Host-level `rm`
+        # can't touch those, so wipe via a short-lived alpine container
+        # that runs the rm as root.
+        docker run --rm -v "$WORKDIR:/work" alpine:3.19 \
+            rm -rf "/work/testsite-bare.git" >/dev/null 2>&1 || true
+    fi
+    if ! git clone --bare "$src" "$bare" 2>"$WORKDIR/bare-clone.err" >/dev/null; then
+        echo "ERROR: bare-repo prep failed" >&2
+        cat "$WORKDIR/bare-clone.err" >&2
+        exit 1
+    fi
+    rm -f "$WORKDIR/bare-clone.err"
+    # Bare clones from a non-bare working tree might end up with HEAD
+    # set to whatever was checked out. Make sure the default branch
+    # exists in the bare repo (CloneOrPull will ask for `main`).
+    (cd "$bare" && git symbolic-ref HEAD refs/heads/main 2>/dev/null || true)
+    export TEST_SITE_BARE="$bare"
+    echo "  prepared bare repo at $bare for staging push tests"
+}
+
+# --- Self-contained builder fixtures (suite 07a) ---
+# Each entry under fixtures/sites/<name>-min/ is initialised as its own
+# git repo and bare-cloned. The bare repos are bind-mounted into the
+# hula container at /var/hula/<name>-min-bare.git so the suite can
+# trigger production builds against them via hulactl. Independent of
+# tlaloc-hula-test-site — these run with no external dependencies.
+prepare_min_sites() {
+    # Always ensure the bind-mount target exists, even when no
+    # fixtures are present — docker-compose mounts $WORKDIR/sites
+    # unconditionally, and a missing path produces a confusing
+    # bind-mount error rather than an empty directory.
+    mkdir -p "$WORKDIR/sites"
+    local fixtures_root="$HULA_E2E_ROOT/fixtures/sites"
+    if [ ! -d "$fixtures_root" ]; then
+        echo "  no min-site fixtures (skipping)"
+        return 0
+    fi
+    for fixture in "$fixtures_root"/*-min; do
+        [ -d "$fixture" ] || continue
+        local name
+        name="$(basename "$fixture")"
+        local src="$WORKDIR/sites/$name"
+        local bare="$WORKDIR/sites/$name-bare.git"
+
+        # Wipe any prior run via short-lived alpine container — the
+        # hula container pushes back as root so host `rm` can't touch
+        # those files. Same trick prepare_test_site uses.
+        if [ -d "$src" ] || [ -d "$bare" ]; then
+            docker run --rm -v "$WORKDIR/sites:/work" alpine:3.19 \
+                rm -rf "/work/$name" "/work/$name-bare.git" >/dev/null 2>&1 || true
+        fi
+        mkdir -p "$src"
+        # Copy fixture contents into a fresh dir (cp -a preserves the
+        # nested .hula/ when one exists). Then init + commit.
+        (cd "$fixture" && tar c .) | (cd "$src" && tar x)
+        (
+            cd "$src"
+            git init -q
+            git config user.email "e2e@test.local"
+            git config user.name "e2e test"
+            git checkout -q -b main 2>/dev/null || git symbolic-ref HEAD refs/heads/main
+            git add .
+            git commit -q -m "e2e: initial $name fixture"
+        )
+        if ! git clone --bare "$src" "$bare" 2>"$WORKDIR/sites/$name-clone.err" >/dev/null; then
+            echo "ERROR: bare-repo prep failed for $name" >&2
+            cat "$WORKDIR/sites/$name-clone.err" >&2
+            exit 1
+        fi
+        rm -f "$WORKDIR/sites/$name-clone.err"
+        (cd "$bare" && git symbolic-ref HEAD refs/heads/main 2>/dev/null || true)
+        echo "  prepared min-site fixture: $name (bare at $bare)"
+    done
+    export MIN_SITES_ROOT="$WORKDIR/sites"
 }
 
 # --- Main ---
@@ -309,6 +411,7 @@ e2e_setup() {
     load_env
     preflight
     prepare_test_site
+    prepare_min_sites
     build_all
     gen_credentials
     gen_certs

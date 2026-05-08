@@ -171,7 +171,11 @@ func TestNodeCert_SANIncludesTeamAndNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"n1" + SANInternalSuffix, "t1/n1" + SANInternalSuffix}
+	want := []string{
+		"n1" + SANInternalSuffix,
+		"t1/n1" + SANInternalSuffix,
+		"peer" + SANInternalSuffix,
+	}
 	for _, w := range want {
 		found := false
 		for _, dns := range cert.DNSNames {

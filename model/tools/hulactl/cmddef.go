@@ -109,9 +109,30 @@ const (
 	CMD_STAGING_UPDATE        = "staging-update"
 	CMD_STAGING_UPDATE_HELP   = "Upload a file to the staging site via WebDAV"
 	CMD_STAGING_UPDATE_USAGE  = "staging-update <server-id> <local-file> <remote-path>"
+	CMD_STAGING_GET           = "staging-get"
+	CMD_STAGING_GET_HELP      = "Download a file from the staging site via WebDAV"
+	CMD_STAGING_GET_USAGE     = "staging-get <server-id> <remote-path> <local-file>\n\nMirror of staging-update — fetches <remote-path> off the staging\nserver and writes it to <local-file>. Atomic via temp+rename."
 	CMD_STAGING_MOUNT         = "staging-mount"
 	CMD_STAGING_MOUNT_HELP    = "Mount a local folder synced to a staging site via WebDAV"
 	CMD_STAGING_MOUNT_USAGE   = "staging-mount <server-id> <folder-mount-point>\nSyncs local folder with remote staging directory. Runs until CTRL-C.\nFlags:\n  --autobuild  trigger a staging build automatically after changes are synced\n  --dangerous  allow syncing executables and security-sensitive files"
+	CMD_STAGE                 = "stage"
+	CMD_STAGE_HELP            = "Stage edits in a staging server's git working tree (requires hula_build: staging)"
+	CMD_STAGE_USAGE           = "stage <server-id> [<path> ...]\n\nWith no <path> arguments, stages every change (`git add -A`).\nWith one or more <path> arguments, stages only those paths.\nPaths must stay inside the staging working tree (no ..).\nThe server refuses if the named server isn't `hula_build: staging`\nor if its staging_src_dir isn't a git working tree."
+	CMD_COMMIT                = "commit"
+	CMD_COMMIT_HELP           = "Commit staged edits in a staging server's git working tree"
+	CMD_COMMIT_USAGE          = "commit <server-id> <message>\n\nCommits whatever's currently staged. Hula appends a\n`Committed-by: Hula` trailer to the message on its own line.\nFlags:\n  --author-name   override the committer name (default: hula-staging)\n  --author-email  override the committer email"
+	CMD_PUSH                  = "push"
+	CMD_PUSH_HELP             = "Push a staging server's HEAD to origin on the configured branch"
+	CMD_PUSH_USAGE            = "push <server-id>\n\nPushes HEAD of staging_src_dir to origin/<branch>, where <branch>\nis whatever's set under root_git_autodeploy.ref.branch in the\nhula config. Auth credentials come from the same root_git_autodeploy.creds\nblock CloneOrPull uses, so make sure those env vars are still in scope."
+	CMD_PULL                  = "pull"
+	CMD_PULL_HELP             = "Pull origin/<branch> updates into a staging server's working tree (rebase on top, rewind on conflict)"
+	CMD_PULL_USAGE            = "pull <server-id>\n\nFetches origin/<branch> and rebases the staging working tree on\ntop. Refuses if the working tree has uncommitted edits (commit\nthem first). On a rebase conflict, hula automatically rewinds\nthe tree to the pre-pull HEAD so the served site keeps working;\nyou'll see a 'rewound to <SHA>' notice in the output."
+	CMD_SYNC                  = "sync"
+	CMD_SYNC_HELP             = "Pull then push in a single API call (with conflict rewind on either side)"
+	CMD_SYNC_USAGE            = "sync <server-id>\n\nEquivalent to `hulactl pull <id> && hulactl push <id>`, but in\none server-side operation. If the pull rebase conflicts, hula\nrewinds and reports the conflict — push is not attempted. If\nthe pull succeeds but the push is rejected, hula rewinds the\nworking tree to the pre-sync HEAD so the served site reverts\nto its known-good state, then reports the push failure."
+	CMD_CREATE_AGENT          = "create-agent"
+	CMD_CREATE_AGENT_HELP     = "Generate an mTLS-secured agent config yaml for hulaagent (Phase 1: offline)"
+	CMD_CREATE_AGENT_USAGE    = "create-agent [-c template.yaml] [--allow-<verb>=<site>[,opts]]... [--expires-in=DUR] [--hula-host=HOST] > agent.yaml\n\nProduces an agent yaml on stdout. Two ways to declare permissions:\n  1. Flag form: --allow-<verb>=<site>[,<opts>] (repeatable).\n  2. Template form: -c <yaml> with config.expires-in + sites.<id>.allow.\nThe two compose: flags override template entries.\n\nVerbs: build, staging-build, pull, push, sync, commit, push-file, get-file.\n--expires-in accepts Go durations (8760h), days (30d), or years (1yr).\n\nNote: Phase 1 is OFFLINE — each invocation generates a one-off Agent\nCA. Phase 2 will register the agent with a running hula server."
 )
 
 var commands []Command
@@ -154,7 +175,14 @@ func init() {
 		Command{CMD_BUILDS, CMD_BUILDS_HELP, CMD_BUILDS_USAGE},
 		Command{CMD_STAGING_BUILD, CMD_STAGING_BUILD_HELP, CMD_STAGING_BUILD_USAGE},
 		Command{CMD_STAGING_UPDATE, CMD_STAGING_UPDATE_HELP, CMD_STAGING_UPDATE_USAGE},
+		Command{CMD_STAGING_GET, CMD_STAGING_GET_HELP, CMD_STAGING_GET_USAGE},
 		Command{CMD_STAGING_MOUNT, CMD_STAGING_MOUNT_HELP, CMD_STAGING_MOUNT_USAGE},
+		Command{CMD_STAGE, CMD_STAGE_HELP, CMD_STAGE_USAGE},
+		Command{CMD_COMMIT, CMD_COMMIT_HELP, CMD_COMMIT_USAGE},
+		Command{CMD_PUSH, CMD_PUSH_HELP, CMD_PUSH_USAGE},
+		Command{CMD_PULL, CMD_PULL_HELP, CMD_PULL_USAGE},
+		Command{CMD_SYNC, CMD_SYNC_HELP, CMD_SYNC_USAGE},
+		Command{CMD_CREATE_AGENT, CMD_CREATE_AGENT_HELP, CMD_CREATE_AGENT_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:

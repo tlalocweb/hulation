@@ -70,7 +70,7 @@ func registerLiveGossip(srv *unified.Server, bundle *pki.Bundle, cfg *config.Con
 	}
 	tlsCreds := credentials.NewTLS(creds)
 	sender := newGRPCSender(tlsCreds)
-	peers := raftPeerProvider{selfNodeID: cfg.Team.NodeID}
+	peers := raftPeerProvider{localNodeID: cfg.Team.NodeID}
 
 	engine, err := gossip.NewEngine(store, peers, sender, gossip.EngineConfig{})
 	if err != nil {
@@ -84,12 +84,9 @@ func registerLiveGossip(srv *unified.Server, bundle *pki.Bundle, cfg *config.Con
 // raftPeerProvider returns the team's voter set MINUS the local
 // node by reading storage.Global() at request time. Decoupled from
 // the gossip package via the PeerProvider interface so we don't
-// import raftbackend there. selfNodeID is captured at construction
-// from cfg.Team.NodeID so the skip-self filter works on followers
-// too — a leader-only check would let followers gossip to themselves
-// every anti-entropy tick.
+// import raftbackend there.
 type raftPeerProvider struct {
-	selfNodeID string
+	localNodeID string
 }
 
 func (p raftPeerProvider) Peers(_ context.Context) ([]gossip.Peer, error) {
@@ -100,7 +97,12 @@ func (p raftPeerProvider) Peers(_ context.Context) ([]gossip.Peer, error) {
 	members := rs.Members()
 	out := make([]gossip.Peer, 0, len(members))
 	for _, m := range members {
-		if m.NodeID == p.selfNodeID {
+		// Skip self — the local clock maintained by Store.Clock()
+		// already speaks for the local node. Compare by NodeID
+		// (configured) rather than leadership: a follower that's
+		// not the leader is otherwise erroneously treated as a
+		// remote peer and would attempt to gossip with itself.
+		if m.NodeID == p.localNodeID {
 			continue
 		}
 		out = append(out, gossip.Peer{NodeID: m.NodeID, RaftAddr: m.RaftAddr})

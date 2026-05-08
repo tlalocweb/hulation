@@ -78,6 +78,27 @@ type Tunables struct {
 	IPInfoCacheTTL           string `yaml:"ipinfo_cache_ttl" default:"168h" env:"HULA_IPINFO_CACHE_TTL" usage:"How long an IP-info entry stays valid before re-lookup (default 7 days)"`
 	IPInfoRateLimitPerMinute int    `yaml:"ipinfo_rate_limit_per_minute" default:"40" env:"HULA_IPINFO_RATE_LIMIT_PER_MINUTE" usage:"Outbound rate limit for the ip-api.com lookup. Free tier is 45/min; we default to 40 to leave headroom."`
 	IPInfoUseHTTPS           bool   `yaml:"ipinfo_use_https" env:"HULA_IPINFO_USE_HTTPS" usage:"Use HTTPS for ip-api.com lookups (requires Pro plan)"`
+
+	// HSTS — Strict-Transport-Security response header. Browsers cache the
+	// directive and refuse plain-HTTP for the configured max-age, even if
+	// the operator's DNS or server later allows it. Sane defaults
+	// recommended by every modern security scanner: enabled, 1-year
+	// max-age, includeSubDomains. Preload (which submits the host to the
+	// browser-bundled HSTS list) stays opt-in — once preloaded a host
+	// cannot easily revert.
+	//
+	// All four are overridable per-virtualhost via Server.HSTS in the
+	// hula config. config.BuildHSTSHeader merges the override (if any)
+	// over these tunables; the runtime middleware lives in
+	// server/hsts_middleware.go.
+	//
+	// Note: like ProxyProtocolEnabled, HSTSEnabled / HSTSIncludeSubDomains
+	// have no `default:"true"` tag because conftagz can't apply boolean
+	// defaults — they're set in init() below before the YAML decode.
+	HSTSEnabled           bool   `yaml:"hsts_enabled" env:"HULA_HSTS_ENABLED" usage:"Emit Strict-Transport-Security header on HTTPS responses (default: true)"`
+	HSTSMaxAge            string `yaml:"hsts_max_age" default:"8760h" env:"HULA_HSTS_MAX_AGE" usage:"HSTS max-age (Go duration; default 1 year). Browsers will refuse plain-HTTP for this duration."`
+	HSTSIncludeSubDomains bool   `yaml:"hsts_include_subdomains" env:"HULA_HSTS_INCLUDE_SUBDOMAINS" usage:"Add 'includeSubDomains' to the HSTS header (default: true). Set false if any subdomain serves HTTP-only content."`
+	HSTSPreload           bool   `yaml:"hsts_preload" env:"HULA_HSTS_PRELOAD" usage:"Add 'preload' to the HSTS header (default: false). Opt-in — preloaded hosts cannot easily revert from HTTPS-only."`
 }
 
 var globalTunables Tunables
@@ -102,6 +123,7 @@ var (
 	backingSyncPollInterval time.Duration
 	backingSyncStaleTimeout time.Duration
 	ipInfoCacheTTL          time.Duration
+	hstsMaxAge              time.Duration
 )
 
 // init applies default values from struct tags so tune.GetX() returns
@@ -117,6 +139,11 @@ var (
 // `go test` for any binary that transitively imports this package.
 func init() {
 	globalTunables.ProxyProtocolEnabled = true
+	// HSTS: default-on, includeSubDomains-on, preload-off. See HSTS
+	// field comments above for why these aren't expressible as
+	// `default:"true"` struct tags.
+	globalTunables.HSTSEnabled = true
+	globalTunables.HSTSIncludeSubDomains = true
 	opts := &conftagz.ConfTagOpts{
 		OrderOfOps: []int{conftagz.DEFAULTTAGS, conftagz.ENVTAGS, conftagz.TESTTAGS},
 	}
@@ -156,6 +183,7 @@ func parseDurationTunables() {
 	backingSyncPollInterval = parse("backing_sync_poll_interval", globalTunables.BackingSyncPollInterval)
 	backingSyncStaleTimeout = parse("backing_sync_stale_timeout", globalTunables.BackingSyncStaleTimeout)
 	ipInfoCacheTTL = parse("ipinfo_cache_ttl", globalTunables.IPInfoCacheTTL)
+	hstsMaxAge = parse("hsts_max_age", globalTunables.HSTSMaxAge)
 }
 
 // SetupTunables initializes tunables from YAML config node
@@ -163,6 +191,8 @@ func parseDurationTunables() {
 func SetupTunables(node yaml.Node) error {
 	// Set defaults for bool fields (conftagz doesn't support default tag for bools)
 	globalTunables.ProxyProtocolEnabled = true // Default enabled - auto-detect mode works with or without PROXY header
+	globalTunables.HSTSEnabled = true          // Default enabled - browsers expect HSTS on HTTPS-only sites
+	globalTunables.HSTSIncludeSubDomains = true
 
 	// Decode YAML node into struct (will override defaults if specified)
 	if err := node.Decode(&globalTunables); err != nil {
@@ -300,3 +330,24 @@ func GetIPInfoCacheMaxBytes() int64 {
 func GetIPInfoCacheTTL() time.Duration  { return ipInfoCacheTTL }
 func GetIPInfoRateLimit() int           { return globalTunables.IPInfoRateLimitPerMinute }
 func GetIPInfoUseHTTPS() bool           { return globalTunables.IPInfoUseHTTPS }
+
+// ==================== HSTS Getters ====================
+
+// GetHSTSEnabled is the global on/off switch for the
+// Strict-Transport-Security header. When false, the middleware emits no
+// header even if a per-virtualhost override sets specific values.
+func GetHSTSEnabled() bool { return globalTunables.HSTSEnabled }
+
+// GetHSTSMaxAge returns the parsed default max-age. The middleware
+// formats this as `max-age=<seconds>` after applying per-virtualhost
+// overrides.
+func GetHSTSMaxAge() time.Duration { return hstsMaxAge }
+
+// GetHSTSIncludeSubDomains returns the global default for the
+// `includeSubDomains` directive. Per-virtualhost config can override.
+func GetHSTSIncludeSubDomains() bool { return globalTunables.HSTSIncludeSubDomains }
+
+// GetHSTSPreload returns the global default for the `preload`
+// directive. Off by default — once a host is preloaded by the
+// browser HSTS list, it cannot easily revert.
+func GetHSTSPreload() bool { return globalTunables.HSTSPreload }

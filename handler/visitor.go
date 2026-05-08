@@ -305,8 +305,15 @@ func HelloIframe(ctx RequestCtx) error {
 	}
 
 	hostconf, host, _, err := GetHostConfigFromUrl(thisurl)
-	if err != nil {
-		log.Errorf("error getting host config from URL: %s", err.Error())
+	if err != nil || hostconf == nil {
+		// Scanners and probes routinely hit /v/iframe with the wrong
+		// Host header (or a malformed/empty one). Returning 400
+		// instead of falling through avoids the nil-deref in SetCSP /
+		// hostconf.ID below.
+		if err != nil {
+			log.Errorf("error getting host config from URL: %s", err.Error())
+		}
+		return ctx.Status(400).SendString("unknown host")
 	}
 
 	SetCSP(ctx, hostconf)

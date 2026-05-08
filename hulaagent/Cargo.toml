@@ -1,0 +1,31 @@
+[package]
+name = "hulaagent"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight mTLS sidecar for hula. Local apps drive a hula server via a unix-socket text protocol (HLAP)."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "hula-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Single-threaded tokio for low memory + fast startup; we don't need
+# the multi-thread scheduler for what is essentially a few concurrent
+# unix-socket clients fanning into one outbound HTTP connection.
+tokio = { version = "1", default-features = false, features = ["rt", "net", "io-util", "macros", "signal", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+clap = { version = "4", features = ["derive"] }
+# rustls + reqwest go in once we wire the actual mTLS calls (Phase 4).
+# Holding off until then to keep the Phase-1 binary tiny.
+
+[profile.release]
+# Aggressive size reduction — hulaagent is a sidecar; small binary
+# and fast startup matter more than raw throughput.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

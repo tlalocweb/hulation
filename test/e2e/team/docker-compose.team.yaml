@@ -95,6 +95,10 @@ services:
         HULA_PID=$$!
         # Wait for the local listener.
         for i in $$(seq 1 30); do
+          # No --team-id here: the env var is unset in this container
+          # and `--team-id` followed by an empty value would swallow
+          # the next arg. The bundle's CA already pins this PKI to
+          # one team, so the safety claim is satisfied.
           if /usr/local/bin/hulactl --pki-dir /var/hula/team-bundles/hula-west \
                 team-status hula-west.team.internal:443 >/dev/null 2>&1; then
             break
@@ -137,6 +141,7 @@ services:
         /hula/hula -config /etc/hula/config.yaml &
         HULA_PID=$$!
         for i in $$(seq 1 30); do
+          # See hula-west note above on why --team-id is omitted here.
           if /usr/local/bin/hulactl --pki-dir /var/hula/team-bundles/hula-emea \
                 team-status hula-emea.team.internal:443 >/dev/null 2>&1; then
             break

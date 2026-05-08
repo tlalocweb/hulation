@@ -1,0 +1,4 @@
+# Cargo build output. Cargo.lock IS committed because hulaagent is a
+# binary — pinning the dependency tree means anyone building from a
+# fresh clone gets the exact tree we tested against.
+target/

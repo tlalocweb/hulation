@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<!--
+    Recommended config.d override for single-node hula deployments.
+
+    Two unrelated fixes bundled in one drop-in:
+
+    1) IPv4 listen wildcard. The upstream entrypoint emits
+       <listen_host>::</listen_host> only. On hosts where IPv6 is
+       disabled / unsupported, the [::] bind fails and CH ends up
+       listening on 127.0.0.1 only — the native TCP port (9000) is
+       then unreachable from any sibling container on the docker
+       bridge, even though the HTTP healthcheck (which runs over
+       loopback inside the container) reports healthy. Adding
+       <listen_host>0.0.0.0</listen_host> is additive: the [::] bind
+       is still attempted and logs a warning, but 0.0.0.0 succeeds.
+
+    2) System-log suppression. ClickHouse defaults are tuned for busy
+       multi-tenant clusters. They enable a dozen self-observability
+       tables (metric_log, trace_log, text_log, part_log, query_log,
+       asynchronous_metric_log, processors_profile_log, etc.) that on
+       a low-traffic single-tenant install accumulate ~150 MB per
+       15 minutes from idle alone — orders of magnitude larger than
+       the user analytics they exist to observe. The `<X remove="1"/>`
+       form is ClickHouse's documented override syntax: it nulls out
+       entries declared in the shipped /etc/clickhouse-server/config.xml
+       so the corresponding tables are never created. Delete a single
+       line + restart to re-enable any one log for short-term
+       debugging.
+
+    See operations/troubleshooting.md (ClickHouse data directory
+    growing fast) for the full issue description.
+-->
+<clickhouse>
+    <listen_host>0.0.0.0</listen_host>
+
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <part_log remove="1"/>
+    <query_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <session_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <histogram_metric_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <crash_log remove="1"/>
+    <backup_log remove="1"/>
+    <error_log remove="1"/>
+
+    <logger>
+        <level>warning</level>
+        <size>50M</size>
+        <count>3</count>
+    </logger>
+</clickhouse>
