@@ -450,6 +450,13 @@ type Server struct {
 	CORS              *CORSConfig `yaml:"cors,omitempty"`
 	SSL               *SSLConfig  `yaml:"ssl,omitempty"`
 	CSP               CSP         `yaml:"csp,omitempty"`
+	// HSTS lets the operator override the global tunables.hsts_*
+	// defaults for this specific virtual host. nil = inherit
+	// tunables wholesale. Useful when one server in the multi-vhost
+	// stack has a special policy (longer max-age before submitting to
+	// the preload list, no includeSubDomains because a subdomain
+	// serves HTTP-only content, etc.).
+	HSTS              *HSTSConfig `yaml:"hsts,omitempty"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
