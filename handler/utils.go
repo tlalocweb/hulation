@@ -159,7 +159,13 @@ func AreWeServingThePage(ctx RequestCtx, hostconf *config.Server) bool {
 }
 
 // SetCSP sets the Content-Security-Policy header from the server config.
+// nil hostconf is tolerated (no header written) — callers that hit the
+// unknown-host path should bail out before reaching here, but a stray
+// nil shouldn't crash the listener with a panic.
 func SetCSP(ctx RequestCtx, hostconf *config.Server) {
+	if hostconf == nil {
+		return
+	}
 	cspmap := hostconf.GetCSPMap()
 	policy := ""
 	for k, v := range cspmap {

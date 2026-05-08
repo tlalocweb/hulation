@@ -10,7 +10,7 @@
 
 services:
   hula-clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.4
     restart: on-failure:3
     environment:
       - CLICKHOUSE_DB=hula

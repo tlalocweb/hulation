@@ -88,7 +88,7 @@ if [ "${DO_PULL}" = true ]; then
     echo "Pulling images..."
     docker pull "${HULA_IMAGE}"
     if [ "${START_CLICKHOUSE}" = true ]; then
-        docker pull clickhouse/clickhouse-server:latest
+        docker pull clickhouse/clickhouse-server:26.4
     fi
 fi
 
@@ -102,7 +102,15 @@ if [ "${START_CLICKHOUSE}" = true ]; then
     else
         echo "Starting ClickHouse..."
         docker rm -f "${CH_CONTAINER_NAME}" 2>/dev/null || true
-        mkdir -p "${SCRIPT_DIR}/ch_data" "${SCRIPT_DIR}/ch_logs"
+        mkdir -p "${SCRIPT_DIR}/ch_data" "${SCRIPT_DIR}/ch_logs" "${SCRIPT_DIR}/ch_config/config.d"
+        # Mount config.d only when the operator dropped a config in.
+        # install.sh does this on first install; existing installs that
+        # never had this dir keep CH defaults.
+        ch_config_args=()
+        if [ -d "${SCRIPT_DIR}/ch_config/config.d" ] && \
+           [ -n "$(ls -A "${SCRIPT_DIR}/ch_config/config.d" 2>/dev/null)" ]; then
+            ch_config_args=(-v "${SCRIPT_DIR}/ch_config/config.d":/etc/clickhouse-server/config.d:ro)
+        fi
         docker run -d \
             --name "${CH_CONTAINER_NAME}" \
             --network "${NETWORK_NAME}" \
@@ -110,12 +118,13 @@ if [ "${START_CLICKHOUSE}" = true ]; then
             --ulimit nofile=262144:262144 \
             -v "${SCRIPT_DIR}/ch_data":/var/lib/clickhouse \
             -v "${SCRIPT_DIR}/ch_logs":/var/log/clickhouse-server \
+            "${ch_config_args[@]}" \
             -e CLICKHOUSE_DB=hula \
             -e CLICKHOUSE_USER=hula \
             -e CLICKHOUSE_PASSWORD=hula \
             -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
             --restart unless-stopped \
-            clickhouse/clickhouse-server:latest
+            clickhouse/clickhouse-server:26.4
 
         # Wait for ClickHouse to be ready
         echo -n "Waiting for ClickHouse..."

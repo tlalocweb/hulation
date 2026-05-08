@@ -88,8 +88,9 @@ type Tunables struct {
 	// cannot easily revert.
 	//
 	// All four are overridable per-virtualhost via Server.HSTS in the
-	// hula config. EffectiveHSTSHeader() merges the override (if any)
-	// over these tunables.
+	// hula config. config.BuildHSTSHeader merges the override (if any)
+	// over these tunables; the runtime middleware lives in
+	// server/hsts_middleware.go.
 	//
 	// Note: like ProxyProtocolEnabled, HSTSEnabled / HSTSIncludeSubDomains
 	// have no `default:"true"` tag because conftagz can't apply boolean
