@@ -96,7 +96,6 @@ services:
         # Wait for the local listener.
         for i in $$(seq 1 30); do
           if /usr/local/bin/hulactl --pki-dir /var/hula/team-bundles/hula-west \
-                --team-id $${HULA_TEAM_ID:-} \
                 team-status hula-west.team.internal:443 >/dev/null 2>&1; then
             break
           fi
