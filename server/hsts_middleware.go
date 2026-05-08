@@ -20,6 +20,7 @@ package server
 import (
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/pkg/tune"
@@ -56,7 +57,11 @@ func hstsMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 
 			var override *config.HSTSConfig
 			if cfg != nil {
-				host := stripPort(r.Host)
+				// Host header is case-insensitive per RFC 7230 §5.4
+				// but Config.byServer / byAllAlias map keys come
+				// from raw config strings — lowercase here so a
+				// mixed-case Host header still resolves.
+				host := strings.ToLower(stripPort(r.Host))
 				if s := cfg.GetServer(host); s != nil {
 					override = s.HSTS
 				} else if s := cfg.GetServerByAnyAlias(host); s != nil {

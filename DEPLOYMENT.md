@@ -314,7 +314,7 @@ services:
       - DB_PASSWORD=change-me
 
   hula-clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.4
     container_name: hula-clickhouse
     restart: unless-stopped
     cap_add:
@@ -803,7 +803,7 @@ services:
         condition: service_healthy
 
   hula-clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.4
     container_name: hula-clickhouse
     restart: unless-stopped
     volumes:
@@ -962,7 +962,7 @@ spec:
     spec:
       containers:
         - name: clickhouse
-          image: clickhouse/clickhouse-server:latest
+          image: clickhouse/clickhouse-server:26.4
           ports:
             - containerPort: 9000
               name: native

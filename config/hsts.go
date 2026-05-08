@@ -1,7 +1,8 @@
 package config
 
 // HTTP Strict Transport Security helpers. The runtime middleware in
-// pkg/server/unified consults BuildHSTSHeader to produce the
+// server/hsts_middleware.go (package server, attached from
+// server/unified_boot.go) consults BuildHSTSHeader to produce the
 // per-response value, given a resolved per-vhost override (if any) and
 // the global tunables.
 
@@ -70,9 +71,12 @@ func BuildHSTSHeader(override *HSTSConfig, defaults HSTSDefaults) string {
 
 	maxAge := defaults.MaxAge
 	if override != nil && override.MaxAge != "" {
-		// Parse fault-tolerant: a malformed override falls back to
-		// the default rather than emitting a broken header. Logging
-		// happens at the boot path (resolveHSTSDefaults below).
+		// Parse fault-tolerant: a malformed override silently falls
+		// back to the default rather than emitting a broken header.
+		// We don't log here — BuildHSTSHeader is called per-request
+		// from the middleware hot path, so any noisy logging would
+		// repeat on every request. Validate vhost MaxAge values at
+		// config-load time if you want a one-shot warning.
 		if d, err := time.ParseDuration(override.MaxAge); err == nil && d > 0 {
 			maxAge = d
 		}

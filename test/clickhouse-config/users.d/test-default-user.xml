@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  Test-only override: the upstream clickhouse/clickhouse-server image
+  ships a users.d/default-user.xml that locks the default user to
+  ::1 / 127.0.0.1 only. The Go test process connects from the host
+  through the docker bridge, which arrives at the container from a
+  non-loopback IP and auth fails with code 516.
+
+  This file restores the pre-lockdown behavior (default user reachable
+  from any IP, no password) for the disposable hulation-test-clickhouse
+  container only. Never copy this file into a production install.
+-->
+<clickhouse>
+  <users>
+    <default>
+      <password></password>
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </default>
+  </users>
+</clickhouse>
