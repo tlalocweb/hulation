@@ -58,6 +58,18 @@ build_one() {
         fail "$generator output contains fixture marker '$marker'" \
             "marker missing — build may have served a stale or wrong tree"
     fi
+
+    # Strict-Transport-Security header (HSTS). Defaults: max-age=31536000
+    # seconds (1 year) with includeSubDomains. Configured via tunables /
+    # per-vhost; see config/hsts.go.
+    local headers
+    headers=$(curl_test -I "https://$host:443/" 2>&1 || true)
+    if echo "$headers" | grep -qiE "^Strict-Transport-Security:.*max-age=31536000.*includeSubDomains"; then
+        pass "$generator emits HSTS header with 1y max-age + includeSubDomains"
+    else
+        fail "$generator emits HSTS header" \
+            "header dump: $(echo "$headers" | grep -i 'strict-transport' | head -1)"
+    fi
 }
 
 build_one "hugo-min"   "hugo-min.test.local"   "hugo-min-marker-9876"   "hugo"

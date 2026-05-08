@@ -369,12 +369,20 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// arrives in stage 4b.4.
 	registerChatPublic(srv, cfg)
 
-	// CORS — must be the OUTERMOST middleware (attached last, so
-	// the most-recently-attached-runs-first ordering puts it on
-	// top). It needs to see OPTIONS preflights before auth/proxy
-	// middleware drops them, and add Access-Control-* headers to
-	// every response regardless of which handler produced it.
+	// CORS — must be among the OUTERMOST middleware. CORS needs to
+	// see OPTIONS preflights before auth/proxy middleware drops them,
+	// and add Access-Control-* headers to every response regardless
+	// of which handler produced it.
 	srv.AttachHTTPMiddleware(CORSMiddleware(cfg))
+
+	// HSTS — Strict-Transport-Security header on every HTTPS response.
+	// Reads global defaults from pkg/tune and per-virtualhost
+	// overrides from cfg.Servers[].HSTS. Attached after CORS so it's
+	// OUTERMOST: header-setting middlewares need to fire even when an
+	// inner middleware (e.g. unified_static.go's static-host shortcut)
+	// bypasses `next` and serves directly. See
+	// server/hsts_middleware.go.
+	srv.AttachHTTPMiddleware(hstsMiddleware(cfg))
 
 	// Per-server static TLS certs. Each configured server can ship its
 	// own cert+key; the unified server's SNI selector maps Host →
