@@ -58,9 +58,11 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 	srv.RegisterCustomHandler("/hulastatus", handler.WrapForNetHTTP(handler.Status))
 
 	// /readyz — HA Stage 3.8. External LBs poll this to drain
-	// nodes whose Raft is shutdown / lagging / leaderless. nil
-	// state ⇒ solo deployment; the handler returns 200.
-	srv.RegisterCustomHandler("/readyz", readyz.Handler(currentReadyzState()).ServeHTTP)
+	// nodes whose Raft is shutdown / lagging / leaderless. The state
+	// is nil only when cfg.Team is unset (true solo deployment); in
+	// team mode a not-yet-initialised RaftStorage reports unhealthy
+	// instead of masquerading as 200.
+	srv.RegisterCustomHandler("/readyz", readyz.Handler(currentReadyzState(cfg)).ServeHTTP)
 
 	// Visitor tracking endpoints.
 	srv.RegisterCustomHandler(visitorPrefix+"/hello", handler.WrapForNetHTTP(handler.Hello))
