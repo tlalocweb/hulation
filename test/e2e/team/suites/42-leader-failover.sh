@@ -55,6 +55,12 @@ dc exec -T team-runner sh -c "
     tc qdisc add dev eth0 root netem delay 150ms loss 5% 2>/dev/null || true
 " >/dev/null 2>&1 || true
 
+# Cleanup-on-exit so a `fail` between here and the explicit cleanup
+# at the end of the suite doesn't leave the impairment in place for
+# subsequent suites. tc qdisc del is idempotent here (errors when no
+# qdisc exists; we suppress).
+trap 'dc exec -T team-runner sh -c "tc qdisc del dev eth0 root 2>/dev/null || true" >/dev/null 2>&1 || true' EXIT
+
 # 3. Stop the current leader.
 dc stop "$leader_id" >/dev/null 2>&1 || fail "failed to stop $leader_id"
 pass "stopped $leader_id"
