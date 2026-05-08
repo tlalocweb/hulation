@@ -41,35 +41,36 @@ func PeerDialTLSConfig(b *Bundle) (*tls.Config, error) {
 	}
 	pool := b.CAPool
 
+	// InsecureSkipVerify is intentionally set: stdlib's hostname check
+	// would reject every cross-node dial because PeerSNI ("peer.team.
+	// internal") is a generic SNI gate-trigger, while node certs have
+	// SANs scoped to their own node id (e.g. hula-west.team.internal).
+	// The chain check that actually authenticates the peer happens in
+	// VerifyConnection below — we verify the leaf + intermediates
+	// against the Team CA pool ourselves. CodeQL flags the literal
+	// `InsecureSkipVerify: true` token; the handshake is NOT skipping
+	// verification, it's relocating it.
 	cfg := &tls.Config{
 		Certificates:       []tls.Certificate{leaf},
 		ServerName:         PeerSNI,
 		RootCAs:            pool,
-		InsecureSkipVerify: true,
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			if len(rawCerts) == 0 {
+		InsecureSkipVerify: true, //nolint:gosec // see comment above
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
 				return errors.New("no peer cert")
 			}
-			peerCert, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("parse peer cert: %w", err)
-			}
+			peerCert := cs.PeerCertificates[0]
 			opts := x509.VerifyOptions{
 				Roots:     pool,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			}
-			for _, b := range rawCerts[1:] {
-				inter, perr := x509.ParseCertificate(b)
-				if perr != nil {
-					return perr
-				}
+			for _, inter := range cs.PeerCertificates[1:] {
 				if opts.Intermediates == nil {
 					opts.Intermediates = x509.NewCertPool()
 				}
 				opts.Intermediates.AddCert(inter)
 			}
-			_, err = peerCert.Verify(opts)
-			if err != nil {
+			if _, err := peerCert.Verify(opts); err != nil {
 				return fmt.Errorf("peer chain: %w", err)
 			}
 			return nil

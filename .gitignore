@@ -47,3 +47,4 @@ hulabuild
 builder-images/hulabuild-linux
 testclickhouse
 gen-hash
+hulaagent/target/
