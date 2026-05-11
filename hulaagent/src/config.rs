@@ -89,6 +89,10 @@ impl AgentConfig {
     /// `site`. The option string registered for the verb is what
     /// hulaagent will send on the wire; HLAP callers do not get to
     /// override it.
+    ///
+    /// Used by step-2 verb dispatch (BUILD onwards); step-1 only
+    /// routes on `verb` and rejects every envelope as `unknown_verb`.
+    #[allow(dead_code)]
     pub fn is_allowed(&self, site: &str, verb: &str) -> Option<&str> {
         self.sites
             .get(site)
