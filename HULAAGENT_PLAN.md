@@ -16,9 +16,9 @@ plays for HA Stage 3.
 ## Architecture at a glance
 
 ```
-+----------------+     unix-socket (HLAP)        +----------+   mTLS    +-------+
-|  local app(s)  | ---------------------------> | hulaagent | -------> | hula  |
-+----------------+    (text protocol)            +----------+           +-------+
++----------------+   unix-socket (HLAP)            +----------+  mTLS  +-------+
+|  local app(s)  | -----------------------------> | hulaagent | -----> | hula  |
++----------------+   JSON-Lines, multiplexed      +----------+         +-------+
                                                                          |
                                                                   agent registry
                                                                   (cert ID → perms)
@@ -155,52 +155,200 @@ v1. Operators who need flexibility issue multiple agents.
 
 ## HLAP — Hula Local Agent Protocol
 
-Plain text, line-oriented, on a unix-socket. The local app and the
-agent send single-line commands and receive one or more response
-lines terminated by a blank line.
+Newline-delimited JSON ("JSON Lines") over a unix-socket. One JSON
+object per line, separated by single `\n` (no CRLF), UTF-8. Verbs
+multiplex on a single connection via client-chosen stream IDs;
+cancellation runs on a separate control connection.
+
+### Why JSON Lines
+
+A small local LLM is a first-class HLAP client: the caller may be a
+1–3B-parameter on-device model translating natural-language goals
+("ship the May 10 fix to gravhl") into HLAP envelopes. JSON is the
+only format with the pretraining mass, the uniform escape rules, and
+the constrained-decoding tooling (llama.cpp grammars, vLLM guided
+generation, outlines, etc.) to let a small model emit valid HLAP
+without a post-validator. Length-prefixed framing and shell-quoted
+arg lists both lost to JSON for that reason — LLMs cannot reliably
+count bytes, and shell-quote escape rules are a known failure mode
+for sub-7B models.
+
+### Connection handshake
+
+The agent writes exactly ONE banner envelope before reading anything:
 
 ```
-> BUILD gravhl
-< OK build_id=abc123
-< STATUS=complete
-< (blank line)
+< {"hulaagent":1,"hlap":1,"streams":true,"max_inflight":16}
 ```
 
-Verbs in v1:
+| Field          | Meaning                                                     |
+| -------------- | ----------------------------------------------------------- |
+| `hulaagent`    | Binary major version (informational).                       |
+| `hlap`         | HLAP protocol version. v1 in this spec.                     |
+| `streams`      | True if multiplex is supported (always true in v1).         |
+| `max_inflight` | Per-connection cap on concurrent in-flight verbs.           |
 
-| HLAP verb       | Maps to hula API                                    |
-| --------------- | --------------------------------------------------- |
-| `BUILD`         | `POST /api/site/trigger-build`                      |
-| `STAGING-BUILD` | `POST /api/staging/build`                           |
-| `PULL`          | `POST /api/staging/{id}/git/pull`                   |
-| `PUSH`          | `POST /api/staging/{id}/git/push`                   |
-| `SYNC`          | `POST /api/staging/{id}/git/sync`                   |
-| `COMMIT`        | `POST /api/staging/{id}/git/commit` (msg via body)  |
-| `STAGE`         | `POST /api/staging/{id}/git/stage` (paths via body) |
-| `PUSH-FILE`     | `PUT /api/staging/{id}/dav/<remote-path>` (stdin)   |
-| `GET-FILE`      | `GET /api/staging/{id}/dav/<remote-path>` (stdout)  |
+Forward-compatibility: the agent may add fields; clients ignore
+unknown ones. Clients that don't recognise the banner's required
+keys (`hlap` in particular) MUST abort.
 
-Response shape:
+### Stream multiplexing
+
+Every client→agent envelope carries `"stream": <uint>` — a small,
+client-chosen integer scoped to this connection. Stream IDs MUST be
+fresh per verb on a given connection (no reuse while in flight); a
+verb's stream becomes reusable only after its terminating envelope.
+Every agent→client envelope echoes the `stream` of the verb it
+belongs to. The agent may interleave responses across streams
+freely; clients demultiplex.
+
+A stream terminates with one of:
+- `{"stream":N,"ok":true,"done":true, ...result fields}` — success
+- `{"stream":N,"err":"<reason>", ...}` — failure
+
+After either, the agent emits no further envelopes for that stream.
+
+### Sessions and cancellation
+
+The agent's first response envelope for any long-running verb
+carries `"session": "<opaque-id>"` in addition to `stream`. The
+session ID is stable for the lifetime of the verb's server-side
+execution and unique across the running hulaagent process.
+
+To cancel an in-flight verb, the client opens a **separate**
+connection and sends:
 
 ```
-< OK key=value [key=value ...]
+> {"verb":"cancel","stream":1,"session":"sess_abc123"}
+< {"stream":1,"ok":true,"done":true,"cancelled":true}
 ```
 
-or:
+The agent context-cancels the underlying hula REST call. The
+originating connection's stream terminates with
+`{"stream":N,"err":"cancelled"}`. Cancellation is best-effort: side
+effects already committed upstream (a git push that landed, a build
+that finalised) don't roll back. Hula's existing build/sync
+handlers honour `ctx.Done`.
+
+Cancel runs on a separate connection so a head-of-line block on the
+original socket (a slow `BUILD` whose log envelopes are draining
+slowly into a wedged reader) doesn't prevent cancel from being
+heard.
+
+### Verbs (v1)
+
+Each verb is a JSON envelope of the form:
 
 ```
-< ERR <reason>
+{"verb":"<name>","stream":<uint>, ...verb-specific fields}
 ```
 
-For verbs that return file content (GET-FILE) or large logs (BUILD),
-the agent streams the body verbatim after the OK line, terminated by
-a sentinel:
+Verbs are lowercase. Permission gating happens server-side at hula
+against the agent's registry record — hulaagent does NOT pre-
+validate. (The agent's registered `allow.<verb>` permission string
+is opaque to the agent; only hula can intersect it with the
+incoming call.)
+
+| Verb              | Required fields                            | Server-side hula endpoint                           |
+| ----------------- | ------------------------------------------ | --------------------------------------------------- |
+| `build`           | `site`                                     | `POST /api/site/trigger-build`                      |
+| `staging-build`   | `site`                                     | `POST /api/staging/build`                           |
+| `pull`            | `site`                                     | `POST /api/staging/{id}/git/pull`                   |
+| `push`            | `site`                                     | `POST /api/staging/{id}/git/push`                   |
+| `sync`            | `site`                                     | `POST /api/staging/{id}/git/sync`                   |
+| `commit`          | `site`, `message`                          | `POST /api/staging/{id}/git/commit`                 |
+| `stage`           | `site`, `paths` (array of strings)         | `POST /api/staging/{id}/git/stage`                  |
+| `push-file`       | `site`, `path`, `content` (base64 bytes)   | `PUT /api/staging/{id}/dav/<path>`                  |
+| `get-file`        | `site`, `path`                             | `GET /api/staging/{id}/dav/<path>`                  |
+| `cancel`          | `session`                                  | (in-process; cancels the targeted session)          |
+
+Binary file payloads (`push-file`, `get-file`) are carried as base64
+in v1. The simplicity of one-JSON-per-line outweighs the ~33%
+overhead. v2 may add a raw-bytes framing if large-file traffic
+becomes a measured bottleneck.
+
+### Streaming responses (build, sync, get-file)
+
+After the initial OK envelope, long-running verbs emit one envelope
+per logical chunk of output, in order, on the verb's stream. The
+chunk envelopes carry `log` (text) or `chunk` (base64 bytes) keys.
+The terminating envelope carries `ok:true,done:true` and any
+verb-specific result fields.
+
+Example `build` flow:
 
 ```
-< OK content_length=12345
-< <... 12345 bytes ...>
-< (blank line)
+> {"verb":"build","stream":1,"site":"gravhl"}
+< {"stream":1,"ok":true,"session":"sess_abc123","streaming":true}
+< {"stream":1,"log":"resolving deps..."}
+< {"stream":1,"log":"compiling 12 files..."}
+< {"stream":1,"log":"WARN: unused var x"}
+< {"stream":1,"log":"linking..."}
+< {"stream":1,"ok":true,"done":true,"build_id":"b_123","status":"complete"}
 ```
+
+Example `get-file` flow:
+
+```
+> {"verb":"get-file","stream":2,"site":"gravhl","path":"content/index.md"}
+< {"stream":2,"ok":true,"session":"sess_def456","streaming":true,"content_type":"text/markdown"}
+< {"stream":2,"chunk":"IyBJbmRleAo..."}
+< {"stream":2,"ok":true,"done":true,"bytes":4096}
+```
+
+For short-output verbs (`commit`, `stage`, `push-file`, the failure
+arms of any verb) the agent may emit a single combined
+`ok:true,done:true` envelope with no intermediate `log`/`chunk`
+envelopes.
+
+### Error envelope
+
+Errors share a common shape:
+
+```
+< {"stream":N,"err":"<short-reason>","detail":"<optional human text>","code":"<optional machine tag>"}
+```
+
+`err` is always present. `detail` is intended for log output;
+`code` is intended for client branching. After an `err` envelope
+the stream is terminated; no `done:true` follows.
+
+### Authentication / authorisation
+
+Implicit local trust: any process able to `connect(2)` to the
+socket is treated as authorised. Authorisation is enforced
+server-side at hula via the agent's mTLS cert and registry
+permissions. Filesystem permissions on the socket path are the
+only local gate — hulaagent binds at 0600 to a path under
+`$XDG_RUNTIME_DIR` (or `/tmp` fallback) so only the running
+user's processes can connect.
+
+### Cert expiry mid-session — graceful drain
+
+When the agent's mTLS cert crosses its `NotAfter` while sessions
+are in flight, the agent drains gracefully rather than cutting off
+immediately:
+
+- **In-flight verbs run to completion.** The cert was valid when
+  each verb started; the agent does not terminate ongoing builds,
+  syncs, or file transfers just because the cert expired during
+  execution. Hula's server-side handlers continue to honour the
+  request (the registry's `IsActive(now)` check fires at mTLS
+  handshake time, not on every API call within a session).
+- **New verbs reject** with
+  `{"err":"agent expired","code":"cert_expired"}`. This includes
+  new verbs issued on existing connections that already had other
+  verbs running successfully.
+- **New connections fail at handshake** — the Phase-3 mTLS
+  middleware refuses the TLS connection outright. The client sees
+  a TLS error, not an HLAP envelope.
+- **The agent does not auto-restart** on expiry; the operator
+  re-runs `hulactl create-agent` and updates the agent config.
+
+Operators tuning `--expires-in` should pick a window comfortably
+longer than the longest verb expected to run (full mkdocs/hugo
+build for the slowest site). One-week minimum is a reasonable
+starting point; the v1 install template uses one year.
 
 ## Server-side changes in hula
 
@@ -251,14 +399,135 @@ Target: <2MB stripped binary, <50ms cold startup.
 
 ## Phasing
 
-| Phase | Scope                                                                      | Status |
-| ----- | -------------------------------------------------------------------------- | ------ |
-| 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)    | DONE   |
-| 2     | Server-side `/api/agent/create`, agent CA bootstrap, registry storage      | DONE   |
-| 3     | mTLS verification middleware + `agent_perms` request context               | DONE   |
-| 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb       |        |
-| 5     | Remaining HLAP verbs                                                       |        |
-| 6     | `hulactl list-agents` / `revoke-agent` + e2e suite                         |        |
+| Phase | Scope                                                                          | Gating e2e suite | Status |
+| ----- | ------------------------------------------------------------------------------ | ---------------- | ------ |
+| 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)        | —                | DONE   |
+| 2     | Server-side `/api/agent/create`, agent CA bootstrap, registry storage          | 12a              | DONE   |
+| 3     | mTLS verification middleware + `agent_perms` request context                   | — (unit tests)   | DONE   |
+| 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb           | **12b**          |        |
+| 5     | Remaining HLAP verbs + multiplex / cancel / streaming protocol features        | **12c**          |        |
+| 6     | `hulactl list-agents` / `revoke-agent` + cert-expiry drain                     | **12d**          |        |
+
+Each unstarted phase's PR must land its gating suite green; see
+§e2e test plan for what each suite covers.
+
+## e2e test plan
+
+Each unstarted phase ships its own gating bash suite under
+`test/e2e/suites/`, following the convention of suite 12a (Phase
+2). Bash is chosen over Rust integration tests to stay consistent
+with the existing harness — discoverable by anyone scanning the
+e2e tree, gated by the same GitHub Actions workflow that already
+runs the team suites. JSON assertions use `jq`; suites that need
+the hula-agent binary build it once at suite-time (`cargo build
+--release`) and skip the binary-dependent steps if `cargo` isn't
+on PATH (mirrors 12a's pattern).
+
+Rust unit-level coverage of the HLAP parser, banner edge cases,
+and JSON envelope decoding lives separately in
+`hulaagent/src/**/*.rs` `#[test]` blocks — out of scope for this
+section.
+
+### Suite 12b — Phase 4 gate (HLAP basics, BUILD verb)
+
+Covers the protocol-foundations slice that Phase 4 ships:
+
+1. **Banner handshake.** Opening a socket to a running hula-agent
+   produces exactly one banner envelope before any client write.
+   Banner has `hlap:1`, `streams:true`, integer `max_inflight`.
+   Negative path: a mock socket missing the banner causes a
+   client to abort cleanly after a 1s read timeout.
+2. **mTLS handshake at hula.** hula-agent's outbound mTLS
+   connection to a running hula completes; a leaf signed by a
+   different (non-agent) CA is rejected at TLS handshake time.
+   This is the integration regression test for Phase 3's
+   middleware against real Phase 4 dial code (Phase 3's existing
+   middleware tests are mocks).
+3. **BUILD verb roundtrip — success.** Client sends
+   `{"verb":"build","stream":1,"site":"gravhl"}`, expects an
+   initial OK envelope with `session` + `streaming:true`, ≥1
+   `log` envelope, terminating
+   `{"ok":true,"done":true,"build_id":...,"status":"complete"}`.
+   Hula's build is verified to have produced site output on
+   disk.
+4. **BUILD permission denial.** Agent registered without
+   `allow.build` for the target site; the verb returns
+   `{"err":"forbidden"}` and the stream terminates with no
+   `done` envelope.
+
+### Suite 12c — Phase 5 gate (protocol features, remaining verbs)
+
+Covers the protocol features that span verbs (multiplex, cancel,
+streaming) plus a happy-path + permission-denial case per verb:
+
+5. **Multiplexed streams.** Two `build` verbs issued on one
+   connection with `stream:1` and `stream:2`. Log envelopes are
+   correctly demultiplexed; both streams terminate independently
+   regardless of completion order. A third concurrent verb
+   attempted while at `max_inflight` returns
+   `{"err":"max_inflight"}`.
+6. **Cancellation roundtrip.** `build` on conn-A; on conn-B send
+   `{"verb":"cancel","stream":1,"session":"<id from A>"}` and
+   expect `{"ok":true,"done":true,"cancelled":true}`. Conn-A's
+   stream terminates with `{"err":"cancelled"}`. Hula's build is
+   verified to have stopped (no further log lines reach the
+   client; no finalized output on disk).
+7. **Streaming logs are incremental, not buffered.** `build`
+   against a fixture site whose builder emits log output over 3+
+   seconds; the suite records envelope arrival timestamps and
+   asserts at least 3 distinct deltas — i.e. the agent is not
+   accumulating logs and flushing once at the end.
+8. **Each new verb's roundtrip.** `staging-build`, `pull`,
+   `push`, `sync`, `commit`, `stage`, `push-file`, `get-file`
+   each get a targeted happy-path case driven by the suite, and
+   a permission-denied case where the agent's registry record
+   omits the relevant `allow.<verb>`.
+9. **get-file streams chunks.** Large file (>64 KB) returns via
+   multiple `chunk` envelopes; client concatenates the base64
+   bodies and verifies the SHA256 matches the served file.
+
+### Suite 12d — Phase 6 gate (lifecycle: list / revoke / expiry)
+
+Covers the operator-facing lifecycle surfaces and the cert-expiry
+drain semantics:
+
+10. **list-agents.** `hulactl list-agents` returns the agent
+    written by suite 12a plus the agents created during this
+    suite. Revoked agents appear with `revoked:true`.
+11. **revoke-agent.** After revoke, a fresh agent connection
+    fails at the mTLS middleware ("agent revoked", 401). New
+    verbs on existing open connections also return
+    `{"err":"agent revoked"}` and terminate the stream.
+    In-flight verbs at the moment of revocation terminate at the
+    next server-side ctx check (best-effort, like cancel).
+12. **Cert expiry — graceful drain.** Agent created with
+    `--expires-in=20s`. Suite issues a slow `build` 15s into the
+    cert's lifetime; cert expires mid-build. The in-flight build
+    runs to completion and emits its terminator. A second verb
+    attempted post-expiry returns
+    `{"err":"agent expired","code":"cert_expired"}`.
+
+### Naming + harness conventions
+
+- Suite scripts: `test/e2e/suites/12<letter>-<short-slug>.sh`.
+  The 12-prefix keeps agent-related suites adjacent to the
+  existing 12a-create-agent.
+- Each script sources the standard suite helpers (compose-driven
+  hula bring-up, `dc()`/`fail()`/`pass()` patterns shared with
+  suites 41/42).
+- Suite-required env: `WORKDIR`, `COMPOSE_PROJECT`,
+  `COMPOSE_FILE` (the existing e2e harness wiring), plus
+  agent-specific `HULA_AGENT_BIN` (path to the built Rust
+  binary; empty triggers an inline `cargo build --release`).
+
+### Out of scope for v1 e2e
+
+- Performance / load (many agents fanning out; max-inflight
+  saturation under realistic verb mixes).
+- Fuzz testing of the JSON parser (Rust unit-level concern).
+- Chaos cases (agent killed mid-stream; hula killed mid-stream;
+  unix-socket corrupted). These land if and when an incident
+  surfaces a gap, not preemptively.
 
 ## Phase 2 — what landed
 
