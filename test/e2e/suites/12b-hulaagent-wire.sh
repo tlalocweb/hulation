@@ -74,26 +74,43 @@ sites:
 PY
 
 # Probe script — opens a unix-socket connection, optionally sends a
-# JSON line, reads everything back, prints it. Used for every wire
-# assertion below. Stdlib-only so the e2e fixture doesn't need a
-# python venv.
+# JSON line, reads everything back, prints it. Stdlib-only so the
+# e2e fixture doesn't need a python venv.
+#
+# Args:  SOCK [PAYLOAD] [TIMEOUT] [MODE]
+#   PAYLOAD  — optional JSON envelope (one line) to send after
+#              connecting
+#   TIMEOUT  — recv timeout in seconds (default 2.0)
+#   MODE     — "until-done" to exit early when a `"done":true` or
+#              `"err":` envelope appears (used by step-2c BUILD
+#              cases where the agent stays online after the verb
+#              completes); default mode reads until EOF or timeout
 cat > "$PROBE_PY" <<'PY'
 import socket, sys
 sock_path = sys.argv[1]
 payload = sys.argv[2] if len(sys.argv) > 2 else ""
+timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 2.0
+mode = sys.argv[4] if len(sys.argv) > 4 else ""
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(2.0)
+s.settimeout(timeout)
 s.connect(sock_path)
 if payload:
     s.sendall((payload + "\n").encode())
-s.shutdown(socket.SHUT_WR)
+if mode != "until-done":
+    s.shutdown(socket.SHUT_WR)
 buf = b""
+done = False
 try:
-    while True:
+    while not done:
         chunk = s.recv(4096)
         if not chunk:
             break
         buf += chunk
+        if mode == "until-done":
+            for line in buf.split(b"\n"):
+                if b'"done":true' in line or b'"err":' in line:
+                    done = True
+                    break
 except socket.timeout:
     pass
 sys.stdout.write(buf.decode(errors="replace"))
@@ -292,4 +309,111 @@ if [ "$code" = "403" ]; then
     pass "agent-cert POST /api/agent/build for disallowed site returns 403"
 else
     fail "agent-cert POST /api/agent/build for disallowed site returns 403" "got $code"
+fi
+
+# =========================================================================
+# Phase 4 step 2c cases — full HLAP roundtrip via host-side hula-agent.
+#
+# Runs hula-agent on the host with --resolve and --extra-ca flags so
+# the agent can reach hula.test.local via the host-port mapping and
+# trust hula's serving cert (signed by the e2e test root). The
+# alternative — running hula-agent inside test-runner — needs a
+# musl-built binary; the --resolve/--extra-ca flags are useful in
+# real deployments behind LBs / private CAs so adding them is no
+# worse than the musl-tooling path.
+# =========================================================================
+
+E2E_ROOT_CA="$HULA_E2E_ROOT/workdir/certs/rootCA.pem"
+if [ ! -f "$E2E_ROOT_CA" ]; then
+    echo "  (skipping step-2c cases — e2e test root not found at $E2E_ROOT_CA)"
+    return 0 2>/dev/null || exit 0
+fi
+if [ -z "${HULA_HOST_PORT:-}" ]; then
+    echo "  (skipping step-2c cases — HULA_HOST_PORT not set in env)"
+    return 0 2>/dev/null || exit 0
+fi
+
+# --- Case 3: BUILD HLAP roundtrip — banner, initial OK, log envelopes,
+#             terminal envelope ---
+SOCK_C3="$OUT_DIR/case3.sock"
+rm -f "$SOCK_C3"
+"$HULAAGENT_BIN" -c "$SUITE_12A_YAML" --socket "$SOCK_C3" \
+    --resolve "hula.test.local=127.0.0.1:${HULA_HOST_PORT}" \
+    --extra-ca "$E2E_ROOT_CA" \
+    >"$OUT_DIR/case3-agent.log" 2>&1 &
+C3_PID=$!
+for _ in $(seq 1 30); do [ -S "$SOCK_C3" ] && break; sleep 0.1; done
+if [ ! -S "$SOCK_C3" ]; then
+    fail "case 3 — hula-agent bound HLAP socket" "$(head -5 "$OUT_DIR/case3-agent.log")"
+    kill $C3_PID 2>/dev/null
+else
+    pass "case 3 — hula-agent bound HLAP socket"
+    # Probe with a 120s timeout — real testsite build can take
+    # 30-90s end-to-end depending on git clone + Docker pull
+    # caches. until-done exits as soon as we see done:true or err:
+    # so a fast build doesn't pay the full timeout.
+    python3 "$PROBE_PY" "$SOCK_C3" \
+        '{"verb":"build","stream":1,"site":"testsite"}' 120 until-done \
+        > "$OUT_DIR/case3.out" 2>/dev/null
+    kill -TERM $C3_PID 2>/dev/null
+    wait $C3_PID 2>/dev/null
+
+    # Banner is line 1; line 2 should be the initial OK envelope
+    # with streaming:true; the last line should be the terminal
+    # envelope with done:true; somewhere in between we want at
+    # least one log envelope.
+    line1=$(sed -n '1p' "$OUT_DIR/case3.out")
+    line2=$(sed -n '2p' "$OUT_DIR/case3.out")
+    last=$(tail -1 "$OUT_DIR/case3.out")
+    assert_contains "$line1" '"hlap":1'            "case 3 — banner emitted"
+    assert_contains "$line2" '"streaming":true'    "case 3 — initial OK has streaming:true"
+    assert_contains "$line2" '"build_id"'          "case 3 — initial OK carries build_id"
+    assert_contains "$last"  '"done":true'         "case 3 — terminal envelope has done:true"
+    if echo "$last" | grep -qE '"status":"(complete|failed)"'; then
+        pass "case 3 — terminal envelope reports a real build status"
+    else
+        fail "case 3 — terminal envelope reports a real build status" "last line: $last"
+    fi
+    # At least one log envelope between initial and terminal. A
+    # real build emits multiple — assert >= 1 to keep the suite
+    # robust against very fast cached builds.
+    log_count=$(grep -c '"log":' "$OUT_DIR/case3.out" || echo 0)
+    if [ "$log_count" -ge 1 ]; then
+        pass "case 3 — at least one log envelope streamed ($log_count seen)"
+    else
+        fail "case 3 — at least one log envelope streamed" "got 0; output: $(cat "$OUT_DIR/case3.out")"
+    fi
+fi
+
+# --- Case 4: HLAP permission denial — BUILD against disallowed site
+#             returns an err envelope (not just an HTTP 403 on the wire,
+#             which is what case 2c validated) ---
+SOCK_C4="$OUT_DIR/case4.sock"
+rm -f "$SOCK_C4"
+"$HULAAGENT_BIN" -c "$SUITE_12A_YAML" --socket "$SOCK_C4" \
+    --resolve "hula.test.local=127.0.0.1:${HULA_HOST_PORT}" \
+    --extra-ca "$E2E_ROOT_CA" \
+    >"$OUT_DIR/case4-agent.log" 2>&1 &
+C4_PID=$!
+for _ in $(seq 1 30); do [ -S "$SOCK_C4" ] && break; sleep 0.1; done
+if [ ! -S "$SOCK_C4" ]; then
+    fail "case 4 — hula-agent bound HLAP socket" "$(head -5 "$OUT_DIR/case4-agent.log")"
+    kill $C4_PID 2>/dev/null
+else
+    pass "case 4 — hula-agent bound HLAP socket"
+    python3 "$PROBE_PY" "$SOCK_C4" \
+        '{"verb":"build","stream":1,"site":"testsite-staging"}' 15 until-done \
+        > "$OUT_DIR/case4.out" 2>/dev/null
+    kill -TERM $C4_PID 2>/dev/null
+    wait $C4_PID 2>/dev/null
+
+    # Banner first, then a forbidden err envelope. No initial OK
+    # (the trigger HTTP request returns 403 before any envelope is
+    # emitted).
+    line1=$(sed -n '1p' "$OUT_DIR/case4.out")
+    line2=$(sed -n '2p' "$OUT_DIR/case4.out")
+    assert_contains "$line1" '"hlap":1'             "case 4 — banner emitted"
+    assert_contains "$line2" '"err":"forbidden"'    "case 4 — disallowed site yields forbidden err envelope"
+    assert_contains "$line2" '"code":"forbidden"'   "case 4 — forbidden envelope carries the forbidden code"
+    assert_contains "$line2" '"stream":1'           "case 4 — err envelope echoes the request's stream id"
 fi

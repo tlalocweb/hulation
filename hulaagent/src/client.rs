@@ -1,19 +1,41 @@
 //! mTLS HTTP client to hula.
 //!
 //! Built once per agent process from the PEM blobs in the loaded
-//! agent yaml. Each verb dispatcher (BUILD in step 2a; the rest in
-//! step 2b/3) calls a typed method on the client and gets back a
-//! parsed response or a structured ClientError that the HLAP layer
-//! maps to an err envelope.
+//! agent yaml. Each verb dispatcher calls a typed method on the
+//! client and gets back a parsed response or a structured
+//! ClientError that the HLAP layer maps to an err envelope.
 //!
 //! Server-cert verification uses system roots + the optional CA in
-//! the agent yaml (additive). Client-cert auth presents the agent's
-//! leaf via reqwest::Identity. SNI / hostname pinning follows
-//! `cfg.agent.hula_host`; the URL we build always uses that host.
+//! the agent yaml + any operator-supplied `--extra-ca` files
+//! (additive). Client-cert auth presents the agent's leaf via
+//! reqwest::Identity. SNI / hostname pinning follows
+//! `cfg.agent.hula_host`; the URL we build always uses that host,
+//! and `--resolve` overrides DNS lookups at the socket layer
+//! without touching SNI.
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
 use crate::config::AgentConfig;
+
+/// Operator overrides applied at HulaClient construction. None of
+/// these are required; they cover environments where hula sits
+/// behind a load balancer, on a non-default port, or behind a
+/// private CA (staging deployments, e2e harnesses, etc.).
+#[derive(Default, Debug)]
+pub struct ClientOverrides {
+    /// DNS overrides — domain → IP:port. Forwarded to reqwest's
+    /// `resolve_to_addrs` which intercepts at the socket layer; SNI
+    /// continues to use the URL's hostname so server certs validate
+    /// against the canonical name.
+    pub resolves: Vec<(String, SocketAddr)>,
+    /// Extra CA certificate files (PEM). Each is loaded and added
+    /// to reqwest's trust roots in addition to system roots and
+    /// the CA in the agent yaml.
+    pub extra_ca_paths: Vec<PathBuf>,
+}
 
 /// Errors from the HTTP client. The HLAP layer maps these onto wire
 /// err strings + HlapCode values; everything below is hidden from
@@ -73,7 +95,7 @@ pub struct HulaClient {
 }
 
 impl HulaClient {
-    pub fn new(cfg: &AgentConfig) -> Result<Self, ClientError> {
+    pub fn new(cfg: &AgentConfig, overrides: &ClientOverrides) -> Result<Self, ClientError> {
         // reqwest::Identity::from_pem wants the cert + key concatenated
         // in one PEM bundle. The agent yaml stores them as separate
         // strings; we splice them here. Newline between is mandatory
@@ -104,6 +126,25 @@ impl HulaClient {
             let ca = reqwest::Certificate::from_pem(cfg.agent.mtls.ca.as_bytes())
                 .map_err(|e| ClientError::Build(format!("ca: {}", e)))?;
             builder = builder.add_root_certificate(ca);
+        }
+
+        // Operator-supplied additional trust roots. Read once at
+        // construction; we don't re-read on signal because
+        // hula-agent is short-lived and the operator can restart it
+        // when the trust store changes.
+        for path in &overrides.extra_ca_paths {
+            let pem = std::fs::read(path)
+                .map_err(|e| ClientError::Build(format!("read {}: {}", path.display(), e)))?;
+            let ca = reqwest::Certificate::from_pem(&pem)
+                .map_err(|e| ClientError::Build(format!("parse {}: {}", path.display(), e)))?;
+            builder = builder.add_root_certificate(ca);
+        }
+
+        // DNS overrides. Applied per-domain; SNI and Host header
+        // continue to use the URL's hostname so the cert SAN check
+        // still passes.
+        for (domain, addr) in &overrides.resolves {
+            builder = builder.resolve(domain, *addr);
         }
 
         let inner = builder

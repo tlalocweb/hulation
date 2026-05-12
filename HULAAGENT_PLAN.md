@@ -404,7 +404,7 @@ Target: <2MB stripped binary, <50ms cold startup.
 | 1     | This design doc + skeleton dirs + `hulactl create-agent` (offline mode)        | —                | DONE   |
 | 2     | Server-side `/api/agent/create`, agent CA bootstrap, registry storage          | 12a              | DONE   |
 | 3     | mTLS verification middleware + `agent_perms` request context                   | — (unit tests)   | DONE   |
-| 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb           | **12b**          |        |
+| 4     | Rust agent: config load, unix-socket server, HLAP parser, BUILD verb           | **12b**          | DONE   |
 | 5     | Remaining HLAP verbs + multiplex / cancel / streaming protocol features        | **12c**          |        |
 | 6     | `hulactl list-agents` / `revoke-agent` + cert-expiry drain                     | **12d**          |        |
 
@@ -528,6 +528,67 @@ drain semantics:
 - Chaos cases (agent killed mid-stream; hula killed mid-stream;
   unix-socket corrupted). These land if and when an incident
   surfaces a gap, not preemptively.
+
+## Phase 4 — what landed
+
+Phase 4 turned the Phase-1 Rust placeholder into a working sidecar.
+Shipped in four incremental commits gated by suite 12b:
+
+- **Step 1 — wire plumbing.** Tokio current-thread runtime, unix-
+  socket bind at mode 0600 under an operator-chosen path, banner
+  emission on accept, JSON-Lines envelope decoder, per-connection
+  handler that rejects malformed envelopes with `code:bad_envelope`
+  / `code:missing_field` and tags responses with the originating
+  stream id. SIGTERM/SIGINT unlink the socket on shutdown.
+
+- **Step 2a — synchronous BUILD.** Rust mTLS client
+  (`hulaagent/src/client.rs`) built on reqwest + rustls with the
+  PEM blobs from the agent yaml as the Identity. Construction
+  fails-fast on malformed PEMs. New Go endpoint
+  `POST /api/agent/build` parallel to `/api/site/trigger-build`:
+  same handler internals, but auth comes from the Phase 3
+  middleware's attached `*registry.Record`, with
+  `record.IsAllowed(site, "build")` gating each call.
+  The registered allow-string is parsed as comma-separated build
+  args; agents cannot override them at HLAP-call time.
+
+- **Step 2b — log streaming.** New Go endpoint
+  `GET /api/agent/build/{buildid}/stream` emits NDJSON
+  (`{"type":"log","line":"..."}` per new log line, terminating
+  `{"type":"end","status":"complete",...}`). Polls
+  `BuildState.Snapshot()` every 250ms; flushes after each line
+  for reverse-proxy-friendly streaming. The Rust BUILD dispatcher
+  drains `reqwest::Response::bytes_stream()`, parses
+  `\n`-delimited NDJSON, and re-emits each line as an HLAP
+  envelope on the verb's stream. Single combined-OK form gave
+  way to the spec's full streaming shape: initial OK with
+  `streaming:true` and `build_id`, then log envelopes, then
+  terminal `ok:true,done:true` envelope with final status.
+
+- **Step 2c — host-side HLAP roundtrip in suite 12b.** Added two
+  CLI flags to hula-agent — `--resolve HOST=IP:PORT` (mirrors
+  curl's --resolve; overrides DNS at the socket layer without
+  changing SNI) and `--extra-ca PATH` (extra trust roots on top
+  of system + yaml CA). Lets suite 12b run hula-agent on the
+  host against the e2e fixture's hula (private CA, non-default
+  port) without a musl-target build. Cases 3 and 4 of suite 12b
+  exercise the full BUILD HLAP roundtrip — banner + initial OK
+  + ≥1 log envelope + terminal OK with status — and the
+  HLAP-side permission denial path returning `err:"forbidden"`.
+
+What's deliberately NOT in Phase 4:
+
+- Multiplexed in-flight verbs per connection. Today verbs serialise
+  within a connection; multiplex bookkeeping (in-flight map keyed
+  by stream id, max_inflight enforcement) lands in Phase 5.
+- Cancel verb on a separate control connection. Phase 5.
+- Verbs beyond BUILD (staging-build, pull, push, sync, commit,
+  stage, push-file, get-file). Phase 5.
+- Cert expiry mid-session graceful drain. The behaviour rule is
+  documented in §Cert expiry mid-session; implementation is
+  Phase 6 (it tangles with the registry's IsActive checks that
+  the revoke flow needs anyway).
+- list-agents / revoke-agent CLI surfaces. Phase 6.
 
 ## Phase 2 — what landed
 

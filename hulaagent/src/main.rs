@@ -8,6 +8,7 @@
 //! See HULAAGENT_PLAN.md for the wire spec.
 
 use clap::Parser;
+use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -40,6 +41,38 @@ struct Args {
     /// the full HLAP loop.
     #[arg(long)]
     dump: bool,
+
+    /// Override DNS lookups for a host. Repeatable. Format:
+    /// `HOST=IP:PORT` — e.g. `hula.example.com=10.0.0.5:443`. The
+    /// host's SNI and Host header continue to use the canonical
+    /// name from `hula_host`; only the socket-layer connect target
+    /// changes. Mirrors curl's --resolve.
+    #[arg(long = "resolve", value_name = "HOST=IP:PORT")]
+    resolves: Vec<String>,
+
+    /// Extra CA certificate (PEM) to trust for hula's serving cert
+    /// verification. Repeatable. Useful behind private CAs or in
+    /// e2e environments; production deployments with publicly-
+    /// trusted serving certs don't need this.
+    #[arg(long = "extra-ca", value_name = "PATH")]
+    extra_ca: Vec<PathBuf>,
+}
+
+/// Parse a `--resolve HOST=IP:PORT` argument into the
+/// (host, SocketAddr) pair reqwest expects.
+fn parse_resolve(raw: &str) -> Result<(String, SocketAddr), String> {
+    let (host, addr) = raw
+        .split_once('=')
+        .ok_or_else(|| format!("expected HOST=IP:PORT, got {:?}", raw))?;
+    let host = host.trim();
+    if host.is_empty() {
+        return Err(format!("empty host in --resolve {:?}", raw));
+    }
+    let sock: SocketAddr = addr
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid IP:PORT {:?}: {}", addr, e))?;
+    Ok((host.to_string(), sock))
 }
 
 fn main() -> ExitCode {
@@ -58,12 +91,26 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Parse --resolve overrides up-front so a bad value surfaces
+    // before we touch any cryptographic material.
+    let mut overrides = client::ClientOverrides::default();
+    for raw in &args.resolves {
+        match parse_resolve(raw) {
+            Ok(entry) => overrides.resolves.push(entry),
+            Err(e) => {
+                eprintln!("hula-agent: --resolve: {}", e);
+                return ExitCode::from(2);
+            }
+        }
+    }
+    overrides.extra_ca_paths = args.extra_ca.clone();
+
     // Build the mTLS HTTP client at startup so failures (malformed
     // PEMs, unreadable CA, etc.) surface as a clean exit-2 instead of
     // a per-request error on first BUILD. Successful construction is
     // also a useful smoke signal: the agent can't talk to hula yet
     // but the cryptographic material parsed.
-    let hula_client = match client::HulaClient::new(&cfg) {
+    let hula_client = match client::HulaClient::new(&cfg, &overrides) {
         Ok(c) => Arc::new(c),
         Err(e) => {
             eprintln!("hula-agent: {}", e);
