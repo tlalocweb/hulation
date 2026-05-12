@@ -97,6 +97,20 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 			handleStartErr(w, err)
 			return
 		}
+
+		// Fan out an APNs/FCM push to every operator that has push
+		// notifications enabled. Runs on its own goroutine so the
+		// /chat/start response isn't held up by the (potentially slow)
+		// APNs HTTP/2 hop and the FCM OAuth token refresh.
+		go chatpkg.FireNewChatPush(context.Background(), chatpkg.ChatPushInput{
+			SessionID:      res.SessionID.String(),
+			ServerID:       body.ServerID,
+			VisitorID:      body.VisitorID,
+			VisitorEmail:   body.Email,
+			VisitorCountry: body.Country,
+			FirstMessage:   body.FirstMessage,
+		})
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		resp := map[string]any{

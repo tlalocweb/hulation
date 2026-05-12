@@ -80,6 +80,12 @@ type Envelope struct {
 	HTMLBody  string
 	ShortText string
 	Recipients []DeviceAddr
+	// CustomData rides on the push payload alongside the user-visible
+	// alert. APNs embeds it verbatim at the JSON top level (next to
+	// `aps`); FCM JSON-stringifies each top-level value into the flat
+	// `data{}` dict. Used for deep-link routing in the mobile apps.
+	// Email backends ignore this field.
+	CustomData map[string]any
 }
 
 // ChannelResult is the per-recipient outcome.

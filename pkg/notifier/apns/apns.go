@@ -132,21 +132,30 @@ func (b *Backend) providerToken() (string, error) {
 	return signed, nil
 }
 
-// apnsPayload is the minimum aps-wrapped JSON APNs accepts.
-type apnsPayload struct {
-	APS apnsPayloadAPS `json:"aps"`
-	// Custom app-level fields attach here via an embedded JSON
-	// merging step if we ever need them.
-}
-
-type apnsPayloadAPS struct {
-	Alert apnsPayloadAlert `json:"alert"`
-	Sound string           `json:"sound,omitempty"`
-}
-
+// apnsPayloadAlert is the user-visible alert body that lands inside
+// `aps.alert`.
 type apnsPayloadAlert struct {
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+}
+
+// buildAPNsPayload assembles the JSON sent to APNs. CustomData keys
+// land at the top level alongside `aps` — that's the iOS deep-link
+// parser's expectation (see hula-mobile/ios/Hula/PushDeepLink.swift).
+func buildAPNsPayload(env notifier.Envelope) ([]byte, error) {
+	payload := map[string]any{
+		"aps": map[string]any{
+			"alert": apnsPayloadAlert{
+				Title: env.Subject,
+				Body:  env.ShortText,
+			},
+			"sound": "default",
+		},
+	}
+	for k, v := range env.CustomData {
+		payload[k] = v
+	}
+	return json.Marshal(payload)
 }
 
 // Deliver iterates recipients with ChannelAPNS, POSTs each. Skips
@@ -180,14 +189,7 @@ func (b *Backend) Deliver(ctx context.Context, env notifier.Envelope) ([]notifie
 }
 
 func (b *Backend) sendOne(ctx context.Context, r notifier.DeviceAddr, env notifier.Envelope) error {
-	body, err := json.Marshal(apnsPayload{
-		APS: apnsPayloadAPS{
-			Alert: apnsPayloadAlert{
-				Title: env.Subject,
-				Body:  env.ShortText,
-			},
-		},
-	})
+	body, err := buildAPNsPayload(env)
 	if err != nil {
 		return fmt.Errorf("apns: marshal payload: %w", err)
 	}
