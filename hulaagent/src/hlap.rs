@@ -93,7 +93,14 @@ pub fn decode_envelope(line: &str) -> Result<VerbEnvelope, HlapError> {
     let verb = obj
         .get("verb")
         .and_then(|s| s.as_str())
-        .ok_or_else(|| HlapError::bad_envelope("missing or non-string \"verb\" field"))?
+        .ok_or_else(|| HlapError {
+            // Stream parsed cleanly above, so echo it back on this
+            // err even though verb itself was malformed.
+            stream: Some(stream),
+            err: "bad_envelope".into(),
+            code: HlapCode::BadEnvelope,
+            detail: Some("missing or non-string \"verb\" field".into()),
+        })?
         .to_string();
     let mut extra = obj.clone();
     extra.remove("verb");
