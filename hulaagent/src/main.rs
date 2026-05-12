@@ -149,11 +149,20 @@ async fn run(args: Args, hula_client: Arc<client::HulaClient>) -> std::io::Resul
     // overwrite a path we don't own).
     let _ = std::fs::remove_file(&args.socket);
 
-    let listener = UnixListener::bind(&args.socket)?;
+    // Tighten umask before bind() so the kernel creates the socket
+    // inode with mode 0600 from the start. A post-bind chmod alone
+    // leaves a microsecond window where a same-UID process could
+    // connect; this closes it. The post-bind chmod stays as a
+    // belt-and-braces in case the process umask was something
+    // unusual before this restore.
+    // SAFETY: umask is async-signal-safe and process-global; we hold
+    // the value across a single sync syscall and restore it before
+    // any further work.
+    let prev_umask = unsafe { libc::umask(0o177) };
+    let listener_result = UnixListener::bind(&args.socket);
+    unsafe { libc::umask(prev_umask) };
+    let listener = listener_result?;
 
-    // Mode 0600 — only the running user's processes can connect.
-    // Authorisation is enforced server-side at hula, but local
-    // confinement gives us defence in depth.
     std::fs::set_permissions(&args.socket, std::fs::Permissions::from_mode(0o600))?;
 
     eprintln!(

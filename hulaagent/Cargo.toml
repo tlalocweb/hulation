@@ -32,6 +32,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # from pulling unrelated future utilities.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
+# Direct libc only for the umask() call used when binding the unix
+# socket — see the safety comment at the call site for why we can't
+# rely on a post-bind chmod alone.
+libc = "0.2"
+
 [profile.release]
 # Aggressive size reduction — hulaagent is a sidecar; small binary
 # and fast startup matter more than raw throughput.
