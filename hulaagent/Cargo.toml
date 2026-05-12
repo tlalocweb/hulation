@@ -19,9 +19,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 clap = { version = "4", features = ["derive"] }
-# rustls + reqwest go in alongside the BUILD verb in Phase 4 step 2.
-# Holding off until then to keep the binary smaller during the
-# wire-plumbing slice.
+
+# mTLS HTTP client. rustls-tls (default features for now — pulls
+# native roots so a Let's Encrypt-signed hula serving cert validates
+# without per-deployment trust-store ceremony). Agent identity rides
+# via reqwest::Identity built from the PEM blobs in the agent yaml.
+# The `stream` feature lands for step 2b's log-streaming work.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 
 [profile.release]
 # Aggressive size reduction — hulaagent is a sidecar; small binary

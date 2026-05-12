@@ -1,10 +1,9 @@
 //! hulaagent — mTLS sidecar for hula.
 //!
-//! Phase 4 step 1 (this commit): tokio runtime + unix-socket accept
-//! loop + HLAP banner emission + JSON envelope decoding. Verb dispatch
-//! is a placeholder that returns `unknown_verb` for every envelope.
-//! Step 2 layers in the mTLS client + BUILD verb; step 3 adds
-//! multiplex + sessions; suite 12b gates the phase.
+//! Phase 4 step 2a scope (this commit): tokio runtime + unix-socket
+//! accept loop + HLAP banner emission + BUILD verb dispatch over the
+//! mTLS HTTP client. The BUILD verb returns a single combined
+//! terminal envelope; log streaming follows in step 2b.
 //!
 //! See HULAAGENT_PLAN.md for the wire spec.
 
@@ -12,9 +11,11 @@ use clap::Parser;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::signal::unix::{signal, SignalKind};
 
+mod client;
 mod config;
 mod error;
 mod hlap;
@@ -57,6 +58,19 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Build the mTLS HTTP client at startup so failures (malformed
+    // PEMs, unreadable CA, etc.) surface as a clean exit-2 instead of
+    // a per-request error on first BUILD. Successful construction is
+    // also a useful smoke signal: the agent can't talk to hula yet
+    // but the cryptographic material parsed.
+    let hula_client = match client::HulaClient::new(&cfg) {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            eprintln!("hula-agent: {}", e);
+            return ExitCode::from(2);
+        }
+    };
+
     // Current-thread tokio runtime: hulaagent's job is to fan a
     // small number of unix-socket clients into one outbound HTTP
     // connection, not to saturate cores. Single-threaded keeps the
@@ -72,7 +86,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match rt.block_on(run(args, cfg)) {
+    match rt.block_on(run(args, hula_client)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hula-agent: {}", e);
@@ -81,7 +95,7 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(args: Args, _cfg: config::AgentConfig) -> std::io::Result<()> {
+async fn run(args: Args, hula_client: Arc<client::HulaClient>) -> std::io::Result<()> {
     // Best-effort cleanup of a stale socket from a previous run. If
     // the path exists and isn't ours, the subsequent bind will fail
     // and we'll exit cleanly — that's the right behaviour (don't
@@ -109,8 +123,9 @@ async fn run(args: Args, _cfg: config::AgentConfig) -> std::io::Result<()> {
         tokio::select! {
             accept = listener.accept() => {
                 let (sock, _addr) = accept?;
+                let client_arc = Arc::clone(&hula_client);
                 tokio::spawn(async move {
-                    if let Err(e) = hlap::serve_connection(sock).await {
+                    if let Err(e) = hlap::serve_connection(sock, client_arc).await {
                         // I/O error on a single connection is logged
                         // and the connection is torn down; other
                         // connections and the accept loop continue.
@@ -131,8 +146,7 @@ async fn run(args: Args, _cfg: config::AgentConfig) -> std::io::Result<()> {
 
     // Cleanup: unlink the socket path on graceful shutdown so the
     // next start has a clean slate. In-flight handler tasks
-    // continue until their connections close — step 1 has no
-    // long-running verbs so this is fast.
+    // continue until their connections close.
     let _ = std::fs::remove_file(&args.socket);
     Ok(())
 }

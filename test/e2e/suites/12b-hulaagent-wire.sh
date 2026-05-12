@@ -38,31 +38,40 @@ if [ ! -x "$HULAAGENT_BIN" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
-# Minimal agent yaml fixture. PEM blobs are placeholders — step 1
-# only exercises the unix-socket plumbing, the mTLS client isn't
-# wired yet, so the cert contents are never inspected at runtime.
-cat > "$YAML_FILE" <<'YAML'
-agent:
-  id: wire_test_step1
+# Generate a throwaway ECDSA cert+key pair for the agent yaml.
+# Step-1's cases don't dial hula, but step 2a's HulaClient
+# constructs reqwest::Identity at startup and refuses to run on
+# malformed PEMs — so the fixture needs material that actually
+# parses. The cert is self-signed and is reused as its own CA;
+# none of the step-1 cases exercise handshake verification.
+openssl ecparam -genkey -name prime256v1 -noout -out "$OUT_DIR/_key.pem" 2>/dev/null
+openssl req -new -x509 -days 7 -sha256 \
+    -key "$OUT_DIR/_key.pem" \
+    -out "$OUT_DIR/_cert.pem" \
+    -subj "/CN=hulaagent-wire-test" 2>/dev/null
+cp "$OUT_DIR/_cert.pem" "$OUT_DIR/_ca.pem"
+
+python3 - "$OUT_DIR/_cert.pem" "$OUT_DIR/_key.pem" "$OUT_DIR/_ca.pem" "$YAML_FILE" <<'PY'
+import sys
+cert, key, ca, out = sys.argv[1:5]
+def indent(path, prefix="      "):
+    return "\n".join(prefix + line for line in open(path).read().rstrip().split("\n"))
+open(out, "w").write(f"""agent:
+  id: wire_test_step2a
   mTLS:
     ca: |
-      -----BEGIN CERTIFICATE-----
-      placeholder
-      -----END CERTIFICATE-----
+{indent(ca)}
     cert: |
-      -----BEGIN CERTIFICATE-----
-      placeholder
-      -----END CERTIFICATE-----
+{indent(cert)}
     key: |
-      -----BEGIN EC PRIVATE KEY-----
-      placeholder
-      -----END EC PRIVATE KEY-----
+{indent(key)}
   hula_host: hula.test.local:443
 sites:
   testsite:
     allow:
       build: ""
-YAML
+""")
+PY
 
 # Probe script — opens a unix-socket connection, optionally sends a
 # JSON line, reads everything back, prints it. Used for every wire
@@ -135,10 +144,14 @@ assert_contains "$banner" '"hlap":1'       "banner has hlap:1"
 assert_contains "$banner" '"streams":true' "banner has streams:true"
 assert_contains "$banner" '"max_inflight"' "banner has max_inflight"
 
-# --- Case 1c: a recognised envelope echoes its stream and gets unknown_verb ---
-probe '{"verb":"build","stream":7,"site":"testsite"}'
+# --- Case 1c: a not-yet-implemented verb echoes its stream and gets unknown_verb ---
+# `pull` lands in step 3 alongside the other staging verbs; until
+# then it's the canonical "valid envelope, unimplemented verb" case.
+# (`build` was used here in the step-1 commit but lands in step 2a,
+# so this case migrated to a verb that's still unimplemented.)
+probe '{"verb":"pull","stream":7,"site":"testsite"}'
 resp=$(sed -n '2p' "$PROBE_OUT")
-assert_contains "$resp" '"err":"unknown_verb"' "valid envelope returns unknown_verb (step-1 placeholder)"
+assert_contains "$resp" '"err":"unknown_verb"' "unimplemented verb returns unknown_verb"
 assert_contains "$resp" '"stream":7'           "response echoes the verb's stream id"
 
 # --- Case 1d: malformed JSON gets bad_envelope ---
@@ -181,4 +194,102 @@ if [ ! -e "$SOCK_PATH" ]; then
     pass "SIGTERM unlinks the socket on shutdown"
 else
     fail "SIGTERM unlinks the socket on shutdown" "$SOCK_PATH still present"
+fi
+
+# =========================================================================
+# Phase 4 step 2a cases — Go-side /api/agent/build via direct curl.
+#
+# Validates the server-side wiring of the BUILD verb (mTLS gate,
+# permission check, build-trigger delegation) independently of the
+# Rust hulaagent process. Step 2b will add the full HLAP-roundtrip
+# cases (hula-agent process → /api/agent/build → response) once the
+# log-streaming path is in place.
+# =========================================================================
+
+SUITE_12A_YAML="$WORKDIR/agent-yaml/test-agent.yaml"
+if [ ! -f "$SUITE_12A_YAML" ]; then
+    echo "  (skipping step-2a cases — suite 12a yaml not found at $SUITE_12A_YAML)"
+    return 0 2>/dev/null || exit 0
+fi
+pass "suite 12a produced an agent yaml for step-2a cases"
+
+# Extract cert / key / CA from the yaml. Python is on the host;
+# yaml→file is one line. Files land in $OUT_DIR (host) and we mount
+# them read-only into test-runner per-curl.
+python3 - "$SUITE_12A_YAML" "$OUT_DIR" <<'PY'
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(2)
+y = yaml.safe_load(open(sys.argv[1]))
+out = sys.argv[2]
+for field, fname in (("cert", "agent-cert.pem"),
+                     ("key",  "agent-key.pem"),
+                     ("ca",   "agent-ca.pem")):
+    with open(f"{out}/{fname}", "w") as f:
+        f.write(y["agent"]["mTLS"][field])
+PY
+if [ $? -ne 0 ] || [ ! -s "$OUT_DIR/agent-cert.pem" ]; then
+    echo "  (skipping step-2a cases — python yaml unavailable or extraction failed)"
+    return 0 2>/dev/null || exit 0
+fi
+
+# Helper: direct curl to /api/agent/build with optional cert/key
+# mounts. Returns the HTTP status code on stdout.
+curl_agent_build() {
+    local site="$1" with_cert="$2"
+    local extra=()
+    if [ "$with_cert" = "yes" ]; then
+        extra=(
+            -v "$OUT_DIR/agent-cert.pem:/tmp/agent-cert.pem:ro"
+            -v "$OUT_DIR/agent-key.pem:/tmp/agent-key.pem:ro"
+        )
+    fi
+    dcq run --rm -T "${extra[@]}" test-runner \
+        sh -c "
+            apk add --quiet --no-cache curl ca-certificates >/dev/null 2>&1
+            update-ca-certificates >/dev/null 2>&1
+            HULA_IP=\$(getent hosts hula | awk '{print \$1}')
+            echo \"\$HULA_IP hula.test.local\" >> /etc/hosts
+            $(if [ "$with_cert" = "yes" ]; then echo "CERT_ARGS='--cert /tmp/agent-cert.pem --key /tmp/agent-key.pem'"; else echo "CERT_ARGS=''"; fi)
+            curl -sS -o /dev/null -w '%{http_code}' \$CERT_ARGS \
+                -H 'Content-Type: application/json' \
+                -d '{\"site\":\"$site\"}' \
+                'https://hula.test.local:443/api/agent/build'
+        " 2>/dev/null | tail -1
+}
+
+# --- Case 2a: no client cert → 401 ---
+code=$(curl_agent_build testsite no)
+if [ "$code" = "401" ]; then
+    pass "no-cert POST /api/agent/build returns 401"
+else
+    fail "no-cert POST /api/agent/build returns 401" "got $code"
+fi
+
+# --- Case 2b: agent cert + allowed site → 200 / 202 / 409 ---
+# 200 = build_triggered, 409 = build_in_progress (already building
+# from suite 12a or a prior run). Both indicate auth + permission
+# passed; the build manager just dedupes.
+code=$(curl_agent_build testsite yes)
+case "$code" in
+    200|202|409)
+        pass "agent-cert POST /api/agent/build for allowed site returns 2xx/409 (got $code)"
+        ;;
+    *)
+        fail "agent-cert POST /api/agent/build for allowed site returns 2xx/409" "got $code"
+        ;;
+esac
+
+# --- Case 2c: agent cert + disallowed site → 403 ---
+# Suite 12a registered allow.build for `testsite` only; the
+# `testsite-staging` server exists in the e2e config but the agent
+# has allow.staging-build for it, NOT allow.build. So this is a
+# clean 'cert OK, permission denied' case.
+code=$(curl_agent_build testsite-staging yes)
+if [ "$code" = "403" ]; then
+    pass "agent-cert POST /api/agent/build for disallowed site returns 403"
+else
+    fail "agent-cert POST /api/agent/build for disallowed site returns 403" "got $code"
 fi

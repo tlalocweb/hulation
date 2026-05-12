@@ -1,23 +1,30 @@
 //! HLAP wire protocol — banner emission, envelope decoding,
-//! envelope writing.
+//! envelope writing, per-verb dispatch.
 //!
 //! See HULAAGENT_PLAN.md §HLAP for the wire spec this implements.
-//! In Phase 4 step 1 (this slice) we cover:
 //!
+//! Phase 4 step 2a (current) scope:
 //!   - Banner emitted exactly once on connect.
 //!   - One-JSON-object-per-line decoding of incoming envelopes.
-//!   - Outgoing envelope writers (`ok`, `err`, `log`).
-//!   - A connection handler that responds with `unknown_verb` for
-//!     anything that arrives — until step 2 wires the real verbs.
+//!   - BUILD verb: forwards to hula via HulaClient, returns
+//!     `{ok:true,done:true,session,build_id,status}` in a single
+//!     combined envelope (short-output form allowed by the spec).
+//!     Log streaming follows in step 2b.
+//!   - Unknown verbs still get `unknown_verb`.
 //!
 //! Multiplexed bookkeeping (max_inflight, in-flight stream map) and
-//! the session registry come in step 3.
+//! the session registry for cancel routing land in step 3 — this
+//! commit treats `session` IDs as throwaway, agent-only strings.
+
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use crate::client::HulaClient;
 use crate::error::HlapError;
 
 /// HLAP protocol version emitted in the banner. Bumped only on
@@ -30,9 +37,8 @@ pub const HULAAGENT_VERSION: u32 = 1;
 
 /// Per-connection cap on in-flight verbs. The accept loop will reject
 /// new verb envelopes with `err:"max_inflight"` once this many are
-/// in flight on a single connection. Phase 4 step 1 doesn't actually
-/// enforce the cap (single-stream serial handling); step 3 wires it
-/// in when the in-flight map lands.
+/// in flight on a single connection. Step 2a is still sequential;
+/// step 3 wires the cap when the in-flight map lands.
 pub const MAX_INFLIGHT: u32 = 16;
 
 /// Banner sent once on connect, before any read.
@@ -63,10 +69,6 @@ impl Banner {
 pub struct VerbEnvelope {
     pub verb: String,
     pub stream: u32,
-    /// Verb-specific fields land here; step-2 verb implementations
-    /// pluck `site`, `message`, `path`, etc. from this map. Step 1
-    /// only routes on `verb` so this is unused for now.
-    #[allow(dead_code)]
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -90,9 +92,6 @@ pub fn decode_envelope(line: &str) -> Result<VerbEnvelope, HlapError> {
         .and_then(|s| s.as_str())
         .ok_or_else(|| HlapError::bad_envelope("missing or non-string \"verb\" field"))?
         .to_string();
-    // Re-extract the flattened extra: serde_json::Value → owned Map
-    // minus the keys we've already pulled. Cheaper than running a
-    // second deserialize pass against a strongly-typed struct.
     let mut extra = obj.clone();
     extra.remove("verb");
     extra.remove("stream");
@@ -128,19 +127,33 @@ pub fn err_envelope(e: &HlapError) -> Value {
     Value::Object(m)
 }
 
+/// Mint an opaque session id. v1 uses nanos-since-epoch + a tiny
+/// per-process counter; not cryptographically random but session IDs
+/// are cancellation keys (the agent's own registry mediates cancel
+/// routing), not security tokens. Step 3 may swap to a random source
+/// when the cancel verb lands.
+fn mint_session_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("sess_{:x}_{:x}", ns, n)
+}
+
 /// Per-connection handler. Runs until the client closes the socket
 /// or a fatal I/O error occurs.
 ///
-/// Step-1 behaviour: emits the banner, decodes one envelope at a
-/// time, replies with `unknown_verb` for everything (no verb
-/// dispatch yet). The loop is sequential — step 3 will spawn verb
-/// handlers concurrently keyed by `stream`.
-pub async fn serve_connection(stream: UnixStream) -> std::io::Result<()> {
+/// Step-2a behaviour: emits the banner, decodes envelopes
+/// sequentially, dispatches `build` via `HulaClient`, returns
+/// `unknown_verb` for anything else. Step 3 makes dispatch
+/// concurrent across streams.
+pub async fn serve_connection(stream: UnixStream, client: Arc<HulaClient>) -> std::io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    // Banner first, before any read. The agent advertises capabilities
-    // unconditionally; clients that don't grok the shape disconnect.
     write_envelope(&mut writer, &Banner::current()).await?;
 
     let mut line = String::new();
@@ -148,13 +161,8 @@ pub async fn serve_connection(stream: UnixStream) -> std::io::Result<()> {
         line.clear();
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
-            // EOF — client closed cleanly. Step-1 has no in-flight
-            // state to drain; later steps will cancel any in-flight
-            // verbs on this connection here.
             return Ok(());
         }
-        // Skip blank lines silently — friendly to clients that send
-        // trailing newlines or use heredocs.
         if line.trim().is_empty() {
             continue;
         }
@@ -163,17 +171,58 @@ pub async fn serve_connection(stream: UnixStream) -> std::io::Result<()> {
             Ok(e) => e,
             Err(e) => {
                 write_envelope(&mut writer, &err_envelope(&e)).await?;
-                // Decode failure isn't fatal to the connection; the
-                // client may have sent garbage in one envelope and
-                // still want to use the connection for valid ones.
                 continue;
             }
         };
 
-        // Step-1: no verb is implemented. Every envelope gets
-        // `unknown_verb`. Step 2 introduces BUILD; step 3 widens to
-        // the full verb table.
-        let e = HlapError::unknown_verb(env.stream, &env.verb);
-        write_envelope(&mut writer, &err_envelope(&e)).await?;
+        let stream_id = env.stream;
+        let verb = env.verb.clone();
+        let result = dispatch(&env, &client).await;
+        match result {
+            Ok(reply) => {
+                write_envelope(&mut writer, &reply).await?;
+            }
+            Err(e) => {
+                write_envelope(&mut writer, &err_envelope(&e)).await?;
+            }
+        }
+        // Silence the unused-warning if we ever reorder fields later.
+        let _ = (stream_id, verb);
     }
+}
+
+/// Route an envelope to its verb handler. Returns the success
+/// envelope to write, or an HlapError that the caller serialises.
+async fn dispatch(env: &VerbEnvelope, client: &HulaClient) -> Result<Value, HlapError> {
+    match env.verb.as_str() {
+        "build" => dispatch_build(env, client).await,
+        _ => Err(HlapError::unknown_verb(env.stream, &env.verb)),
+    }
+}
+
+/// BUILD verb. Required field: `site`. Step 2a returns one combined
+/// terminal envelope (no log envelopes). Permission gating happens
+/// server-side via the agent-mTLS middleware + registry, not here.
+async fn dispatch_build(env: &VerbEnvelope, client: &HulaClient) -> Result<Value, HlapError> {
+    let site = env
+        .extra
+        .get("site")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| HlapError::missing_field(env.stream, "site"))?;
+
+    let resp = client
+        .trigger_build(site)
+        .await
+        .map_err(|e| HlapError::from_client_err(env.stream, e))?;
+
+    let session = mint_session_id();
+    let mut m = Map::new();
+    m.insert("stream".into(), Value::from(env.stream));
+    m.insert("ok".into(), Value::from(true));
+    m.insert("done".into(), Value::from(true));
+    m.insert("session".into(), Value::from(session));
+    m.insert("build_id".into(), Value::from(resp.build_id));
+    m.insert("status".into(), Value::from(resp.status));
+    Ok(Value::Object(m))
 }
