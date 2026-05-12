@@ -1,9 +1,12 @@
 //! hulaagent — mTLS sidecar for hula.
 //!
-//! Phase 4 step 2a scope (this commit): tokio runtime + unix-socket
-//! accept loop + HLAP banner emission + BUILD verb dispatch over the
-//! mTLS HTTP client. The BUILD verb returns a single combined
-//! terminal envelope; log streaming follows in step 2b.
+//! Tokio current-thread runtime + unix-socket accept loop + HLAP
+//! banner emission + per-verb dispatch over the mTLS HTTP client.
+//! The BUILD verb emits an initial OK envelope with `streaming:true`,
+//! streams `log` envelopes for each line of hula's build output, and
+//! ends with a terminal `done:true` envelope carrying the final
+//! status. Other verbs follow the same multi-envelope shape where
+//! applicable.
 //!
 //! See HULAAGENT_PLAN.md for the wire spec.
 
