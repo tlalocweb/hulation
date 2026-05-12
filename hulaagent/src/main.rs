@@ -215,12 +215,7 @@ async fn run(args: Args, hula_client: Arc<client::HulaClient>) -> std::io::Resul
 fn print_dump(cfg: &config::AgentConfig) {
     println!("agent.id:        {}", cfg.agent.id);
     println!("agent.hula_host: {}", cfg.agent.hula_host);
-    println!(
-        "agent.mTLS:      ca={} bytes, cert={} bytes, key={} bytes",
-        cfg.agent.mtls.ca.len(),
-        cfg.agent.mtls.cert.len(),
-        cfg.agent.mtls.key.len()
-    );
+    println!("agent.mTLS:      [configured]");
     println!();
     println!("sites:");
     for (site, allow) in &cfg.sites {
