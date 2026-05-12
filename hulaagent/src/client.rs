@@ -73,6 +73,21 @@ impl std::fmt::Display for ClientError {
 
 impl std::error::Error for ClientError {}
 
+/// Walk a reqwest::Error's source chain and join the messages. The
+/// default Display impl only renders the top-level "error sending
+/// request for url (...)" which hides what actually went wrong
+/// (TLS handshake failed? DNS not found? connection refused?).
+fn fmt_reqwest_err(e: &reqwest::Error) -> String {
+    let mut out = e.to_string();
+    let mut cur: &dyn std::error::Error = e;
+    while let Some(src) = cur.source() {
+        out.push_str(": ");
+        out.push_str(&src.to_string());
+        cur = src;
+    }
+    out
+}
+
 /// Response shape for `POST /api/agent/build`. Mirrors the Go
 /// handler's triggerBuildResponse — keep in sync. Only `build_id`
 /// is consumed by the verb dispatcher today; `status` here is the
@@ -168,7 +183,7 @@ impl HulaClient {
             .json(&serde_json::json!({ "site": site }))
             .send()
             .await
-            .map_err(|e| ClientError::Network(e.to_string()))?;
+            .map_err(|e| ClientError::Network(fmt_reqwest_err(&e)))?;
 
         let status = resp.status();
         let bytes = resp
@@ -204,7 +219,7 @@ impl HulaClient {
             .timeout(std::time::Duration::from_secs(3600))
             .send()
             .await
-            .map_err(|e| ClientError::Network(e.to_string()))?;
+            .map_err(|e| ClientError::Network(fmt_reqwest_err(&e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
