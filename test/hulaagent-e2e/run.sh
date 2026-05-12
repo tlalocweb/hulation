@@ -75,6 +75,8 @@ require_tools() {
     command -v openssl >/dev/null 2>&1 || missing+=(openssl)
     command -v cargo >/dev/null 2>&1 || missing+=(cargo)
     command -v python3 >/dev/null 2>&1 || missing+=(python3)
+    command -v curl >/dev/null 2>&1 || missing+=(curl)
+    command -v envsubst >/dev/null 2>&1 || missing+=(envsubst)
     docker compose version >/dev/null 2>&1 || missing+=("docker-compose-v2")
     # Need a Go binary for the argon2 hash generator. Prefer the
     # repo-local toolchain; fall back to PATH.
