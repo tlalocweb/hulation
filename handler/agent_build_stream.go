@@ -126,17 +126,19 @@ func streamBuild(ctx context.Context, bs *sitedeploy.BuildState, enc *json.Encod
 	defer ticker.Stop()
 
 	for {
-		snap := bs.Snapshot()
-		// Drain any log lines past the cursor.
-		for i := cursor; i < len(snap.Logs); i++ {
+		// SnapshotSince returns only log entries past the cursor so
+		// long builds don't re-copy the entire log history on each
+		// 250ms tick.
+		snap := bs.SnapshotSince(cursor)
+		for _, line := range snap.Logs {
 			if err := enc.Encode(agentBuildLogEnvelope{
 				Type: "log",
-				Line: snap.Logs[i],
+				Line: line,
 			}); err != nil {
 				return // client gone; stop polling
 			}
 		}
-		cursor = len(snap.Logs)
+		cursor += len(snap.Logs)
 		flusher.Flush()
 
 		if isTerminal(snap.Status) {
