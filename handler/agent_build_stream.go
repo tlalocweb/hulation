@@ -139,7 +139,12 @@ func streamBuild(ctx context.Context, bs *sitedeploy.BuildState, enc *json.Encod
 			}
 		}
 		cursor += len(snap.Logs)
-		flusher.Flush()
+		// Skip the flush on ticks that produced no output — saves a
+		// trip through the chunked-transfer writer when a long-
+		// running build pauses between log emits.
+		if len(snap.Logs) > 0 {
+			flusher.Flush()
+		}
 
 		if isTerminal(snap.Status) {
 			_ = enc.Encode(agentBuildEndEnvelope{
