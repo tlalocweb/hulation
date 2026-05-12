@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::UnixStream;
 
@@ -43,6 +43,14 @@ pub const HULAAGENT_VERSION: u32 = 1;
 /// the in-flight map lands; today verbs are serialised on the
 /// connection so it's effectively 1.
 pub const MAX_INFLIGHT: u32 = 16;
+
+/// Upper bound on a single incoming envelope. The unix socket is
+/// mode 0600 so the threat is a local same-UID process; cheap
+/// defence-in-depth against an unbounded read_line growing the
+/// connection's buffer until the agent OOMs. Realistic verbs carry
+/// short identifiers and small JSON payloads; large content travels
+/// the other direction (agent → client) as log streams.
+pub const MAX_ENVELOPE_BYTES: u64 = 1_048_576;
 
 /// Banner sent once on connect, before any read.
 #[derive(Serialize)]
@@ -177,8 +185,26 @@ pub async fn serve_connection(stream: UnixStream, client: Arc<HulaClient>) -> st
     let mut line = String::new();
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await?;
+        // Cap each envelope so a malformed client can't grow the
+        // BufReader's allocation without bound. Take<&mut R> resets
+        // its counter each loop iteration.
+        let n = (&mut reader)
+            .take(MAX_ENVELOPE_BYTES)
+            .read_line(&mut line)
+            .await?;
         if n == 0 {
+            return Ok(());
+        }
+        if !line.ends_with('\n') {
+            // Hit the cap before finding a newline → envelope too
+            // large. Surface a bad_envelope err and close the
+            // connection; the buffered tail of the overflowing
+            // envelope would otherwise pollute the next read.
+            let e = HlapError::bad_envelope(format!(
+                "envelope exceeds {} bytes",
+                MAX_ENVELOPE_BYTES
+            ));
+            let _ = write_envelope(&mut writer, &err_envelope(&e)).await;
             return Ok(());
         }
         if line.trim().is_empty() {
