@@ -52,10 +52,16 @@ impl std::fmt::Display for ClientError {
 impl std::error::Error for ClientError {}
 
 /// Response shape for `POST /api/agent/build`. Mirrors the Go
-/// handler's triggerBuildResponse — keep in sync.
+/// handler's triggerBuildResponse — keep in sync. Only `build_id`
+/// is consumed by the verb dispatcher today; `status` here is the
+/// trigger-time status ("build_triggered") and we rely on the
+/// log-stream's terminal envelope for the actual final status.
+/// Kept on the struct for forward-compat and so the field gets
+/// validated as present in the JSON.
 #[derive(Debug, Deserialize)]
 pub struct TriggerBuildResponse {
     pub build_id: String,
+    #[allow(dead_code)]
     pub status: String,
 }
 
@@ -111,7 +117,8 @@ impl HulaClient {
 
     /// POST /api/agent/build — synchronous trigger; hula returns the
     /// new build_id immediately and the build runs in the background.
-    /// Step 2b adds log streaming on top of this.
+    /// `open_build_stream` consumes the build's log output once a
+    /// build_id is in hand.
     pub async fn trigger_build(&self, site: &str) -> Result<TriggerBuildResponse, ClientError> {
         let url = format!("{}/api/agent/build", self.base_url);
         let resp = self
@@ -138,5 +145,31 @@ impl HulaClient {
 
         serde_json::from_slice::<TriggerBuildResponse>(&bytes)
             .map_err(|e| ClientError::Decode(format!("{}; body was: {}", e, String::from_utf8_lossy(&bytes))))
+    }
+
+    /// GET /api/agent/build/{build_id}/stream — opens an NDJSON
+    /// streaming response. The caller drives the body stream via
+    /// `Response::bytes_stream()` and parses one `\n`-delimited JSON
+    /// object per envelope. Override timeout to None so a long-
+    /// running build doesn't trip the per-request 30s budget the
+    /// client was constructed with.
+    pub async fn open_build_stream(&self, build_id: &str) -> Result<reqwest::Response, ClientError> {
+        let url = format!("{}/api/agent/build/{}/stream", self.base_url, build_id);
+        let resp = self
+            .inner
+            .get(&url)
+            // Streaming response can outlast the client's default
+            // 30s timeout. Per-request override.
+            .timeout(std::time::Duration::from_secs(3600))
+            .send()
+            .await
+            .map_err(|e| ClientError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Http { status, body });
+        }
+        Ok(resp)
     }
 }

@@ -24,8 +24,13 @@ clap = { version = "4", features = ["derive"] }
 # native roots so a Let's Encrypt-signed hula serving cert validates
 # without per-deployment trust-store ceremony). Agent identity rides
 # via reqwest::Identity built from the PEM blobs in the agent yaml.
-# The `stream` feature lands for step 2b's log-streaming work.
+# `stream` feature drives BUILD's NDJSON log-streaming consumer.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+# StreamExt::next() for reqwest::Response::bytes_stream(). Tiny next
+# to the reqwest dep tree; using `default-features = false` keeps it
+# from pulling unrelated future utilities.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [profile.release]
 # Aggressive size reduction — hulaagent is a sidecar; small binary

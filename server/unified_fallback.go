@@ -197,6 +197,10 @@ func registerLegacyAPIRoutes(srv *unified.Server) {
 	// against record.IsAllowed(site, "build") so revoked / expired
 	// agents see a clean 401/403 instead of running a build.
 	srv.RegisterCustomHandler("POST /api/agent/build", handler.WrapForNetHTTP(handler.AgentBuild))
+	// Companion log-stream endpoint — NDJSON over chunked transfer,
+	// polled snapshot of BuildState every ~250ms. Raw http.HandlerFunc
+	// (not WrapForNetHTTP) so we get http.Flusher access.
+	srv.RegisterCustomHandler("GET /api/agent/build/{buildid}/stream", http.HandlerFunc(handler.AgentBuildStream))
 
 	// Staging build (WebDAV registered separately below).
 	srv.RegisterCustomHandler("POST /api/staging/build", admin(handler.StagingBuild))

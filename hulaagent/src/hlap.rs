@@ -3,29 +3,33 @@
 //!
 //! See HULAAGENT_PLAN.md §HLAP for the wire spec this implements.
 //!
-//! Phase 4 step 2a (current) scope:
+//! Phase 4 step 2b scope:
 //!   - Banner emitted exactly once on connect.
 //!   - One-JSON-object-per-line decoding of incoming envelopes.
-//!   - BUILD verb: forwards to hula via HulaClient, returns
-//!     `{ok:true,done:true,session,build_id,status}` in a single
-//!     combined envelope (short-output form allowed by the spec).
-//!     Log streaming follows in step 2b.
+//!   - BUILD verb: forwards to hula via HulaClient, then opens the
+//!     log-stream endpoint and emits one `{"stream":N,"log":"..."}`
+//!     envelope per log line, finally a terminating
+//!     `{ok:true,done:true,build_id,status}` envelope.
 //!   - Unknown verbs still get `unknown_verb`.
 //!
-//! Multiplexed bookkeeping (max_inflight, in-flight stream map) and
-//! the session registry for cancel routing land in step 3 — this
-//! commit treats `session` IDs as throwaway, agent-only strings.
+//! Verb dispatchers take the connection's write half directly so
+//! they can emit multiple envelopes per verb. Multiplexed
+//! bookkeeping across verbs (in-flight stream map, cancel routing)
+//! lands in step 3 — this commit serialises verb dispatch within
+//! a single connection.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::UnixStream;
 
 use crate::client::HulaClient;
-use crate::error::HlapError;
+use crate::error::{HlapCode, HlapError};
 
 /// HLAP protocol version emitted in the banner. Bumped only on
 /// breaking wire changes.
@@ -35,10 +39,9 @@ pub const HLAP_VERSION: u32 = 1;
 /// clients should branch on `hlap` not `hulaagent`.
 pub const HULAAGENT_VERSION: u32 = 1;
 
-/// Per-connection cap on in-flight verbs. The accept loop will reject
-/// new verb envelopes with `err:"max_inflight"` once this many are
-/// in flight on a single connection. Step 2a is still sequential;
-/// step 3 wires the cap when the in-flight map lands.
+/// Per-connection cap on in-flight verbs. Step 3 wires the cap when
+/// the in-flight map lands; today verbs are serialised on the
+/// connection so it's effectively 1.
 pub const MAX_INFLIGHT: u32 = 16;
 
 /// Banner sent once on connect, before any read.
@@ -101,7 +104,7 @@ pub fn decode_envelope(line: &str) -> Result<VerbEnvelope, HlapError> {
 /// Serialize and write a JSON envelope as one line (terminator: `\n`).
 /// Caller is responsible for flush ordering across multiple writes.
 pub async fn write_envelope<T: Serialize>(
-    stream: &mut tokio::net::unix::OwnedWriteHalf,
+    stream: &mut OwnedWriteHalf,
     env: &T,
 ) -> std::io::Result<()> {
     let mut bytes = serde_json::to_vec(env).map_err(|e| {
@@ -127,11 +130,11 @@ pub fn err_envelope(e: &HlapError) -> Value {
     Value::Object(m)
 }
 
-/// Mint an opaque session id. v1 uses nanos-since-epoch + a tiny
-/// per-process counter; not cryptographically random but session IDs
+/// Mint an opaque session id. v1 uses nanos-since-epoch + a per-
+/// process counter; not cryptographically random but session IDs
 /// are cancellation keys (the agent's own registry mediates cancel
-/// routing), not security tokens. Step 3 may swap to a random source
-/// when the cancel verb lands.
+/// routing), not security tokens. Step 3 may swap to a random
+/// source when the cancel verb lands.
 fn mint_session_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -143,13 +146,21 @@ fn mint_session_id() -> String {
     format!("sess_{:x}_{:x}", ns, n)
 }
 
+/// Map an io::Error from a writer call onto an HlapError. The
+/// stream context is the verb that was writing when the failure
+/// hit. Used to render an err envelope as the last write attempt
+/// before the connection torn down.
+fn io_to_hlap(stream: u32, e: std::io::Error) -> HlapError {
+    HlapError {
+        stream: Some(stream),
+        err: "io_error".into(),
+        code: HlapCode::InternalError,
+        detail: Some(e.to_string()),
+    }
+}
+
 /// Per-connection handler. Runs until the client closes the socket
 /// or a fatal I/O error occurs.
-///
-/// Step-2a behaviour: emits the banner, decodes envelopes
-/// sequentially, dispatches `build` via `HulaClient`, returns
-/// `unknown_verb` for anything else. Step 3 makes dispatch
-/// concurrent across streams.
 pub async fn serve_connection(stream: UnixStream, client: Arc<HulaClient>) -> std::io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -175,35 +186,40 @@ pub async fn serve_connection(stream: UnixStream, client: Arc<HulaClient>) -> st
             }
         };
 
-        let stream_id = env.stream;
-        let verb = env.verb.clone();
-        let result = dispatch(&env, &client).await;
-        match result {
-            Ok(reply) => {
-                write_envelope(&mut writer, &reply).await?;
-            }
-            Err(e) => {
-                write_envelope(&mut writer, &err_envelope(&e)).await?;
-            }
+        if let Err(e) = dispatch(&env, &client, &mut writer).await {
+            write_envelope(&mut writer, &err_envelope(&e)).await?;
         }
-        // Silence the unused-warning if we ever reorder fields later.
-        let _ = (stream_id, verb);
     }
 }
 
-/// Route an envelope to its verb handler. Returns the success
-/// envelope to write, or an HlapError that the caller serialises.
-async fn dispatch(env: &VerbEnvelope, client: &HulaClient) -> Result<Value, HlapError> {
+/// Route an envelope to its verb handler. Verb dispatchers write
+/// their own envelopes directly via the writer (so they can stream);
+/// the returned Result<()> is only for error termination — an Err
+/// is converted to a single err envelope.
+async fn dispatch(
+    env: &VerbEnvelope,
+    client: &HulaClient,
+    writer: &mut OwnedWriteHalf,
+) -> Result<(), HlapError> {
     match env.verb.as_str() {
-        "build" => dispatch_build(env, client).await,
+        "build" => dispatch_build(env, client, writer).await,
         _ => Err(HlapError::unknown_verb(env.stream, &env.verb)),
     }
 }
 
-/// BUILD verb. Required field: `site`. Step 2a returns one combined
-/// terminal envelope (no log envelopes). Permission gating happens
-/// server-side via the agent-mTLS middleware + registry, not here.
-async fn dispatch_build(env: &VerbEnvelope, client: &HulaClient) -> Result<Value, HlapError> {
+/// BUILD verb. Required field: `site`. Triggers the build on hula,
+/// emits an initial OK envelope, then streams `log` envelopes
+/// extracted from hula's NDJSON log-stream endpoint, then a
+/// terminating OK envelope with the build's final status.
+///
+/// Permission gating happens server-side at hula via the agent-mTLS
+/// middleware + registry — hulaagent forwards the verb and surfaces
+/// whatever hula returns (403 → err:"forbidden" envelope).
+async fn dispatch_build(
+    env: &VerbEnvelope,
+    client: &HulaClient,
+    writer: &mut OwnedWriteHalf,
+) -> Result<(), HlapError> {
     let site = env
         .extra
         .get("site")
@@ -211,18 +227,136 @@ async fn dispatch_build(env: &VerbEnvelope, client: &HulaClient) -> Result<Value
         .filter(|s| !s.is_empty())
         .ok_or_else(|| HlapError::missing_field(env.stream, "site"))?;
 
-    let resp = client
+    let trigger = client
         .trigger_build(site)
         .await
         .map_err(|e| HlapError::from_client_err(env.stream, e))?;
 
     let session = mint_session_id();
-    let mut m = Map::new();
-    m.insert("stream".into(), Value::from(env.stream));
-    m.insert("ok".into(), Value::from(true));
-    m.insert("done".into(), Value::from(true));
-    m.insert("session".into(), Value::from(session));
-    m.insert("build_id".into(), Value::from(resp.build_id));
-    m.insert("status".into(), Value::from(resp.status));
-    Ok(Value::Object(m))
+
+    // Initial OK envelope — signals "verb accepted, stream coming".
+    // build_id rides here so a client that doesn't care about logs
+    // can act on it immediately.
+    {
+        let mut m = Map::new();
+        m.insert("stream".into(), Value::from(env.stream));
+        m.insert("ok".into(), Value::from(true));
+        m.insert("session".into(), Value::from(session.clone()));
+        m.insert("streaming".into(), Value::from(true));
+        m.insert("build_id".into(), Value::from(trigger.build_id.clone()));
+        write_envelope(writer, &Value::Object(m))
+            .await
+            .map_err(|e| io_to_hlap(env.stream, e))?;
+    }
+
+    // Open the log-stream endpoint. If this fails (hula 404'd the
+    // build_id, network blip, etc.) we emit an err envelope and
+    // return — the stream ends without `done:true`.
+    let resp = client
+        .open_build_stream(&trigger.build_id)
+        .await
+        .map_err(|e| HlapError::from_client_err(env.stream, e))?;
+
+    // Drain the NDJSON body. Each line is one server envelope:
+    //   {"type":"log","line":"..."}
+    //   {"type":"end","status":"...","build_id":"...","error":""}
+    // We translate to HLAP envelopes as they arrive, flushing
+    // implicitly via tokio's socket write.
+    let mut body = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut saw_end = false;
+
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|e| HlapError {
+            stream: Some(env.stream),
+            err: "network_error".into(),
+            code: HlapCode::Network,
+            detail: Some(format!("log stream: {}", e)),
+        })?;
+        buf.extend_from_slice(&chunk);
+
+        // Process complete `\n`-delimited lines from the buffer.
+        // Leftover bytes (a partial line at the end of the chunk)
+        // stay in `buf` for the next iteration.
+        while let Some(nl_idx) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=nl_idx).collect();
+            // Strip the trailing newline. Empty lines (e.g. CRLF or
+            // a stray \n in the stream) are skipped.
+            let line_bytes = &line[..line.len().saturating_sub(1)];
+            if line_bytes.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                continue;
+            }
+
+            let parsed: Value = serde_json::from_slice(line_bytes).map_err(|e| HlapError {
+                stream: Some(env.stream),
+                err: "internal_error".into(),
+                code: HlapCode::InternalError,
+                detail: Some(format!("ndjson decode: {}", e)),
+            })?;
+
+            let env_type = parsed
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match env_type {
+                "log" => {
+                    let log_line = parsed
+                        .get("line")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let mut m = Map::new();
+                    m.insert("stream".into(), Value::from(env.stream));
+                    m.insert("log".into(), Value::from(log_line));
+                    write_envelope(writer, &Value::Object(m))
+                        .await
+                        .map_err(|e| io_to_hlap(env.stream, e))?;
+                }
+                "end" => {
+                    saw_end = true;
+                    let status = parsed
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let mut m = Map::new();
+                    m.insert("stream".into(), Value::from(env.stream));
+                    m.insert("ok".into(), Value::from(true));
+                    m.insert("done".into(), Value::from(true));
+                    m.insert("session".into(), Value::from(session.clone()));
+                    m.insert("build_id".into(), Value::from(trigger.build_id.clone()));
+                    m.insert("status".into(), Value::from(status));
+                    if let Some(err_text) = parsed
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        m.insert("error".into(), Value::from(err_text));
+                    }
+                    write_envelope(writer, &Value::Object(m))
+                        .await
+                        .map_err(|e| io_to_hlap(env.stream, e))?;
+                }
+                _ => {
+                    // Unknown NDJSON type — forward-compat: ignore.
+                    // Hula might add new types (warn, progress, etc.)
+                    // without our knowing; better to drop them than
+                    // tear the stream down.
+                }
+            }
+        }
+    }
+
+    // Body closed without a `type:"end"` envelope. Shouldn't happen
+    // against a well-behaved hula, but surface it cleanly so the
+    // client doesn't wait forever on a half-open stream.
+    if !saw_end {
+        return Err(HlapError {
+            stream: Some(env.stream),
+            err: "incomplete_stream".into(),
+            code: HlapCode::Upstream,
+            detail: Some("log stream ended without type:\"end\" envelope".into()),
+        });
+    }
+
+    Ok(())
 }
