@@ -116,8 +116,27 @@ type BuildStateSnapshot struct {
 func (bs *BuildState) Snapshot() BuildStateSnapshot {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
-	logs := make([]string, len(bs.Logs))
-	copy(logs, bs.Logs)
+	return bs.snapshotLocked(0)
+}
+
+// SnapshotSince is like Snapshot but the Logs field contains only
+// entries with index >= cursor. The agent BUILD log-stream poller
+// uses this to avoid re-copying the entire log history every tick;
+// callers that need the full log slice should keep calling
+// Snapshot().
+func (bs *BuildState) SnapshotSince(cursor int) BuildStateSnapshot {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	return bs.snapshotLocked(cursor)
+}
+
+func (bs *BuildState) snapshotLocked(cursor int) BuildStateSnapshot {
+	if cursor < 0 || cursor > len(bs.Logs) {
+		cursor = len(bs.Logs)
+	}
+	tail := bs.Logs[cursor:]
+	logs := make([]string, len(tail))
+	copy(logs, tail)
 	return BuildStateSnapshot{
 		BuildID:    bs.BuildID,
 		ServerID:   bs.ServerID,

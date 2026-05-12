@@ -1,0 +1,59 @@
+# Hula config for the hulaagent e2e suite.
+# Substituted via envsubst by run.sh before docker compose up.
+#
+# Two server entries — `testsite` with a deliberately bogus
+# root_git_autodeploy.repo so BUILD verbs trigger but fail at git
+# clone (exercises the streaming pipeline + failure-path terminal
+# envelope without needing a real builder image), and `othersite`
+# which is just here so suite case 4 can target a real site the
+# agent isn't allowed to build.
+
+admin:
+    username: admin
+    hash: ${ADMIN_ARGON_HASH}
+
+jwt_key: ${JWT_KEY}
+jwt_expiration: "72h"
+port: 443
+
+hula_host: hula.test.local
+hula_ssl:
+    cert: /var/hula/certs/cert.pem
+    key: /var/hula/certs/key.pem
+
+# Disabled so the host's repeated probes don't get scored as a bad
+# actor mid-suite.
+bad_actors:
+    disable: true
+
+dbconfig:
+    host: hula-clickhouse
+    port: 9000
+    user: hula
+    pass: hula
+    dbname: hula
+    retries: 5
+    delay_retry: 5
+
+servers:
+    - host: testsite.test.local
+      id: testsite
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      root_git_autodeploy:
+          repo: file:///var/hula/nonexistent-repo
+          ref:
+              branch: main
+          hula_build: prod
+
+    - host: othersite.test.local
+      id: othersite
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      root_git_autodeploy:
+          repo: file:///var/hula/nonexistent-repo
+          ref:
+              branch: main
+          hula_build: prod
