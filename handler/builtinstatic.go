@@ -1,0 +1,229 @@
+package handler
+
+// Overlay-aware HTTP handler for Hula's built-in static assets
+// (chat widget JS + CSS, plus future bundled files).
+//
+// Per request, the handler:
+//
+//   1. Resolves the per-host config from the Host header.
+//   2. Looks for a customer overlay file at <host.Root>/<URL path>.
+//      If present, that file wins and we serve it as-is.
+//   3. Otherwise renders the embedded mustache template (loaded from
+//      web/builtin-statics) with per-host variables.
+//
+// The "overlay" mechanism keeps the customer's deployment pattern
+// simple: drop a file at <static-root>/<prefix>scripts/hula-chat.js
+// and Hula will serve that instead of the built-in widget. Same goes
+// for the CSS. The path prefix is configurable via
+// tune.GetBuiltinStaticPrefix().
+
+import (
+	"bytes"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/cbroglie/mustache"
+
+	"github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/config"
+	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/pkg/tune"
+	builtinstatics "github.com/tlalocweb/hulation/web/builtin-statics"
+)
+
+// BuiltinStaticAsset describes a single bundled file the unified
+// server should route. EmbedPath is the relative path inside the
+// builtinstatics embed.FS; URLPath is the request path the unified
+// server will match; ContentType is the response MIME.
+type BuiltinStaticAsset struct {
+	EmbedPath   string
+	URLPath     string
+	ContentType string
+}
+
+// BuiltinChatJSAsset returns the descriptor for the chat-widget JS,
+// at /<prefix>scripts/hula-chat.js.
+func BuiltinChatJSAsset() BuiltinStaticAsset {
+	return BuiltinStaticAsset{
+		EmbedPath:   "scripts/hula-chat.js",
+		URLPath:     "/" + tune.GetBuiltinStaticPrefix() + "scripts/hula-chat.js",
+		ContentType: "text/javascript; charset=utf-8",
+	}
+}
+
+// BuiltinChatCSSAsset returns the descriptor for the chat-widget CSS,
+// at /<prefix>styles/hula-chat.css.
+func BuiltinChatCSSAsset() BuiltinStaticAsset {
+	return BuiltinStaticAsset{
+		EmbedPath:   "styles/hula-chat.css",
+		URLPath:     "/" + tune.GetBuiltinStaticPrefix() + "styles/hula-chat.css",
+		ContentType: "text/css; charset=utf-8",
+	}
+}
+
+// BuiltinStaticHandler returns a net/http handler for one built-in
+// asset. The host-lookup table is captured at registration time from
+// app.GetConfig(); the template is parsed on first hit and cached
+// for subsequent requests.
+func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
+	cfg := app.GetConfig()
+	hosts := buildHostLookup(cfg)
+
+	var (
+		parsedTmpl *mustache.Template
+	)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		host := normaliseHost(r.Host)
+		srv := hosts[host]
+		if srv == nil {
+			http.Error(w, "unknown host", http.StatusBadRequest)
+			return
+		}
+
+		// 1. Customer overlay — same URL path under the host's static
+		//    root wins, no templating applied.
+		if overlay, ok := resolveOverlay(srv.Root, r.URL.Path); ok {
+			w.Header().Set("Content-Type", asset.ContentType)
+			http.ServeFile(w, r, overlay)
+			return
+		}
+
+		// 2. Embedded fallback — parse once, render per request.
+		if parsedTmpl == nil {
+			data, err := builtinstatics.Get(asset.EmbedPath)
+			if err != nil {
+				log.Errorf("builtinstatic: read %s: %s", asset.EmbedPath, err.Error())
+				http.Error(w, "asset unavailable", http.StatusInternalServerError)
+				return
+			}
+			t, err := mustache.ParseString(string(data))
+			if err != nil {
+				log.Errorf("builtinstatic: parse %s: %s", asset.EmbedPath, err.Error())
+				http.Error(w, "asset unavailable", http.StatusInternalServerError)
+				return
+			}
+			parsedTmpl = t
+		}
+
+		vars := buildBuiltinVars(srv)
+		var buf bytes.Buffer
+		if err := parsedTmpl.FRender(&buf, vars); err != nil {
+			log.Errorf("builtinstatic: render %s: %s", asset.EmbedPath, err.Error())
+			http.Error(w, "render error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		_, _ = w.Write(buf.Bytes())
+	}
+}
+
+// buildHostLookup builds host-header → *config.Server for the registered
+// hosts (host + aliases). Misconfigured / empty hosts are skipped.
+func buildHostLookup(cfg *config.Config) map[string]*config.Server {
+	hosts := map[string]*config.Server{}
+	if cfg == nil {
+		return hosts
+	}
+	for _, s := range cfg.Servers {
+		if s == nil || s.Host == "" {
+			continue
+		}
+		hosts[strings.ToLower(s.Host)] = s
+		for _, a := range s.Aliases {
+			if a != "" {
+				hosts[strings.ToLower(a)] = s
+			}
+		}
+	}
+	return hosts
+}
+
+// normaliseHost lowercases and strips the port from r.Host, matching
+// the same canonicalisation unified_static.go does for static routes.
+func normaliseHost(rawHost string) string {
+	host := strings.ToLower(rawHost)
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	return host
+}
+
+// resolveOverlay translates a request URL path to an absolute file
+// path under root and reports whether a regular file lives there.
+// Refuses any path that would resolve outside the root (path
+// traversal defence) — those silently fall through to the embedded
+// template.
+func resolveOverlay(root, urlPath string) (string, bool) {
+	if root == "" {
+		return "", false
+	}
+	rel := strings.TrimPrefix(urlPath, "/")
+	overlay := filepath.Join(root, filepath.FromSlash(rel))
+	cleanRoot := filepath.Clean(root)
+	if !strings.HasPrefix(overlay, cleanRoot+string(filepath.Separator)) && overlay != cleanRoot {
+		return "", false
+	}
+	fi, err := os.Stat(overlay)
+	if err != nil || fi.IsDir() {
+		return "", false
+	}
+	return overlay, true
+}
+
+// buildBuiltinVars constructs the mustache variable map for the
+// host. Adding a new {{var}} in a bundled asset means adding it
+// here. Stays a flat string map so the same dict feeds JS, CSS, and
+// future HTML templates uniformly.
+func buildBuiltinVars(srv *config.Server) map[string]string {
+	prefix := tune.GetBuiltinStaticPrefix()
+	cfg := app.GetConfig()
+
+	captchaProvider := ""
+	captchaSitekey := ""
+	captchaDefault := ""
+	if cfg != nil && cfg.Chat != nil && cfg.Chat.Captcha != nil {
+		if cfg.Chat.Captcha.TestBypass {
+			// Test-bypass mode accepts any non-empty token. Letting
+			// the widget pass "dev" through keeps a stock dev install
+			// fully working without the customer wiring a real
+			// captcha in.
+			captchaDefault = "dev"
+		}
+		// Provider drives which JS API the widget loads (Cloudflare
+		// Turnstile vs Google reCAPTCHA v2). Sitekey is the per-
+		// deployment public key for whichever provider is selected.
+		// Empty sitekey → widget skips the challenge UI entirely and
+		// falls back to captcha_default; server still verifies tokens
+		// per its own provider config, so dev installs can run with
+		// no captcha at all.
+		switch cfg.Chat.Captcha.Provider {
+		case "", "turnstile":
+			captchaProvider = "turnstile"
+		case "recaptcha":
+			captchaProvider = "recaptcha"
+		default:
+			// Unknown provider — leave widget without a captcha
+			// adapter. Server-side warning is already logged in
+			// chat_boot.captchaFromConfig.
+		}
+		captchaSitekey = cfg.Chat.Captcha.SiteKey
+	}
+
+	return map[string]string{
+		"server_id":             srv.ID,
+		"chat_start_url":        "/api/v1/chat/start",
+		"chat_ws_url":           "/api/v1/chat/ws",
+		"css_url":               "/" + prefix + "styles/hula-chat.css",
+		"captcha_provider":      captchaProvider,
+		"captcha_sitekey":       captchaSitekey,
+		"captcha_token_default": captchaDefault,
+	}
+}

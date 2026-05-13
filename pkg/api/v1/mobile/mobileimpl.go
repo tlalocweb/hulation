@@ -16,6 +16,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
+	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	"github.com/tlalocweb/hulation/pkg/mobile/tokenbox"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
@@ -44,20 +45,29 @@ type Server struct {
 	// construction from server.BootUnifiedServer.
 	summaryFn    func(ctx context.Context, req *analyticsspec.SummaryRequest) (*analyticsspec.SummaryResponse, error)
 	timeseriesFn func(ctx context.Context, req *analyticsspec.TimeseriesRequest) (*analyticsspec.TimeseriesResponse, error)
-	tokenKeyFn   TokenKeyFn
+	// pagesFn drives MobileTopPages; usually analyticsimpl.Server.Pages.
+	pagesFn func(ctx context.Context, req *analyticsspec.PagesRequest) (*analyticsspec.PagesResponse, error)
+	// chatStore drives MobileLiveChats. nil → that RPC returns
+	// FailedPrecondition (chat not wired into this build).
+	chatStore  *chatpkg.Store
+	tokenKeyFn TokenKeyFn
 }
 
-// New constructs the MobileService implementation. summaryFn /
-// timeseriesFn are usually (&analyticsimpl.Server{}).Summary +
-// .Timeseries method values — decouples the package graph.
+// New constructs the MobileService implementation. The fn parameters
+// are usually method values from analyticsimpl.Server — decouples the
+// package graph.
 func New(
 	summaryFn func(context.Context, *analyticsspec.SummaryRequest) (*analyticsspec.SummaryResponse, error),
 	timeseriesFn func(context.Context, *analyticsspec.TimeseriesRequest) (*analyticsspec.TimeseriesResponse, error),
+	pagesFn func(context.Context, *analyticsspec.PagesRequest) (*analyticsspec.PagesResponse, error),
+	chatStore *chatpkg.Store,
 	tokenKeyFn TokenKeyFn,
 ) *Server {
 	return &Server{
 		summaryFn:    summaryFn,
 		timeseriesFn: timeseriesFn,
+		pagesFn:      pagesFn,
+		chatStore:    chatStore,
 		tokenKeyFn:   tokenKeyFn,
 	}
 }
@@ -336,6 +346,89 @@ func downsampleStrings(values []string, target int) []string {
 		out[i] = values[idx]
 	}
 	return out
+}
+
+func (s *Server) MobileTopPages(ctx context.Context, req *mobilespec.MobileTopPagesRequest) (*mobilespec.MobileTopPagesResponse, error) {
+	if req == nil || req.GetServerId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "server_id required")
+	}
+	if s.pagesFn == nil {
+		return nil, status.Error(codes.FailedPrecondition, "top-pages not wired (analytics service unavailable)")
+	}
+	// Phone Overview card fits ~5 rows above the fold; cap at 25 so a
+	// misconfigured client can't ask for thousands.
+	limit := req.GetLimit()
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 25 {
+		limit = 25
+	}
+	from, to, grain := presetToRange(req.GetPreset())
+	pages, err := s.pagesFn(ctx, &analyticsspec.PagesRequest{
+		ServerId: req.GetServerId(),
+		Filters: &analyticsspec.Filters{
+			From:        from.Format(time.RFC3339),
+			To:          to.Format(time.RFC3339),
+			Granularity: grain,
+		},
+		Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*mobilespec.MobileTopPage, 0, len(pages.GetRows()))
+	for _, r := range pages.GetRows() {
+		out = append(out, &mobilespec.MobileTopPage{
+			Path:      r.GetKey(),
+			Visitors:  r.GetVisitors(),
+			Pageviews: r.GetPageviews(),
+		})
+	}
+	return &mobilespec.MobileTopPagesResponse{Pages: out}, nil
+}
+
+func (s *Server) MobileLiveChats(ctx context.Context, req *mobilespec.MobileLiveChatsRequest) (*mobilespec.MobileLiveChatsResponse, error) {
+	if req == nil || req.GetServerId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "server_id required")
+	}
+	if s.chatStore == nil {
+		return nil, status.Error(codes.FailedPrecondition, "live-chats not wired (chat store unavailable)")
+	}
+	// One query per status — ListSessions returns the pre-paging
+	// total in the second return value, so Limit=1 keeps the row
+	// scan tiny while still letting us read the count.
+	count := func(statuses ...string) (int32, error) {
+		_, total, err := s.chatStore.ListSessions(ctx, chatpkg.ListSessionsFilter{
+			ServerID: req.GetServerId(),
+			Statuses: statuses,
+			Limit:    1,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if total > 1<<31-1 {
+			total = 1<<31 - 1
+		}
+		return int32(total), nil
+	}
+	awaiting, err := count(chatpkg.StatusQueued)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count queued: %s", err)
+	}
+	assigned, err := count(chatpkg.StatusAssigned)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count assigned: %s", err)
+	}
+	open, err := count(chatpkg.StatusOpen)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count open: %s", err)
+	}
+	return &mobilespec.MobileLiveChatsResponse{
+		AwaitingReply: awaiting,
+		Assigned:      assigned,
+		Open:          open,
+	}, nil
 }
 
 // Unused import guards for the trimmed-down impl — keep `model`

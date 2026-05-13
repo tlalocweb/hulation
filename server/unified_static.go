@@ -18,6 +18,7 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
+	"github.com/tlalocweb/hulation/pkg/tune"
 )
 
 // staticRoute captures one host → filesystem-root pair.
@@ -78,6 +79,21 @@ func registerStaticSites(srv *unified.Server, cfg *config.Config) {
 				log.Debugf("static-mw: passthrough for service path %s", p)
 				next.ServeHTTP(w, r)
 				return
+			}
+			// Built-in static namespace (chat widget JS/CSS, future
+			// bundled assets). The handler in handler/builtinstatic.go
+			// does its own per-host overlay check against srv.Root and
+			// only renders the embedded template when no overlay
+			// exists; passing through here keeps both halves of the
+			// overlay+fallback story in one place.
+			if bp := tune.GetBuiltinStaticPrefix(); bp != "" {
+				if strings.HasPrefix(p, "/"+bp+"scripts/") ||
+					strings.HasPrefix(p, "/"+bp+"styles/") ||
+					strings.HasPrefix(p, "/"+bp+"html/") {
+					log.Debugf("static-mw: passthrough for builtin asset %s", p)
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 			host := strings.ToLower(r.Host)
 			if i := strings.LastIndex(host, ":"); i >= 0 {

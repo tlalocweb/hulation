@@ -46,7 +46,9 @@ import (
 	"strings"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/badactor"
 	"github.com/tlalocweb/hulation/log"
+	"github.com/tlalocweb/hulation/pkg/analytics/enrich"
 	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 )
 
@@ -68,7 +70,12 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 			FirstMessage   string         `json:"first_message"`
 			Country        string         `json:"country"`
 			Device         string         `json:"device"`
-			Meta           map[string]any `json:"meta"`
+			// Latitude / Longitude come from visitor widgets that
+			// successfully obtained browser geolocation. Pointers so
+			// "field absent" is distinguishable from "zero coords".
+			Latitude  *float64 `json:"latitude"`
+			Longitude *float64 `json:"longitude"`
+			Meta      map[string]any `json:"meta"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&body); err != nil {
 			writeStartError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -79,6 +86,14 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 			return
 		}
 		peerIP := extractPeerIP(r)
+		ua := r.Header.Get("User-Agent")
+
+		// Server-side enrichment: fill country / device / page when the
+		// widget hasn't bothered, so every operator gets a usable session
+		// header in the mobile app regardless of which visitor widget the
+		// customer ships. Customer-provided values always win, followed
+		// by browser-geolocation coords, then IP-based lookup.
+		country, device, meta := enrichChatStart(body.Country, body.Device, body.Meta, peerIP, ua, r.Header.Get("Referer"), body.Latitude, body.Longitude)
 
 		res, err := svc.Start(r.Context(), chatpkg.StartParams{
 			ServerID:     body.ServerID,
@@ -87,10 +102,10 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 			FirstMessage: body.FirstMessage,
 			Turnstile:    body.TurnstileToken,
 			PeerIP:       peerIP,
-			UserAgent:    r.Header.Get("User-Agent"),
-			Country:      body.Country,
-			Device:       body.Device,
-			Meta:         body.Meta,
+			UserAgent:    ua,
+			Country:      country,
+			Device:       device,
+			Meta:         meta,
 		}, isKnown)
 
 		if err != nil {
@@ -213,6 +228,91 @@ func extractPeerIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// enrichChatStart fills in country / device / meta.url when the widget
+// posted them blank. The mobile app's session header reads these three
+// fields directly, and most third-party visitor widgets won't populate
+// them — so deriving from browser geolocation, peer IP, User-Agent, and
+// Referer here gives every deployment a useful operator view for free.
+//
+// Country resolution order (each step only fires if the previous
+// produced nothing):
+//
+//  1. Customer-provided body.Country (visitor widget's explicit value).
+//  2. body.Latitude / body.Longitude — browser geolocation, reverse-
+//     geocoded via Nominatim. High-confidence; no "via IP" tag.
+//  3. peerIP via badactor.GetIPInfo (cache-only). Tagged
+//     meta.country_source = "ip" so the operator UI can render
+//     "via IP" in small text.
+//
+// Customer-provided values are never overwritten. IP cache lookups are
+// cache-only on the hot path; an async fetch primes the cache for the
+// next request from this IP.
+func enrichChatStart(country, device string, meta map[string]any, peerIP, ua, referer string, lat, lon *float64) (string, string, map[string]any) {
+	if country == "" && lat != nil && lon != nil {
+		if cc := badactor.LookupCoordsCountry(*lat, *lon); cc != "" {
+			country = cc
+		}
+	}
+	if country == "" && peerIP != "" {
+		if info := badactor.GetIPInfo(peerIP); info != nil && info.CountryCode != "" {
+			country = info.CountryCode
+			// Flag the source so the operator UI can surface the
+			// lower-confidence nature of IP-based geolocation (e.g.
+			// render "via IP" in small text under the country code).
+			// Direct visitor-widget submissions never get this tag.
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			meta["country_source"] = "ip"
+		}
+		badactor.LookupIPInfoAsync(peerIP)
+	}
+	if device == "" {
+		device = formatDeviceFromUA(ua)
+	}
+	if referer != "" {
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		if _, ok := meta["url"]; !ok {
+			meta["url"] = referer
+		}
+	}
+	return country, device, meta
+}
+
+// formatDeviceFromUA renders a short "OS · Browser" label from the
+// User-Agent header for the mobile app's session-header Device card.
+// Returns empty for unparseable / bot UAs so the card falls back to "—".
+func formatDeviceFromUA(ua string) string {
+	uaf := enrich.ParseUA(ua)
+	if uaf.IsBot {
+		return ""
+	}
+	os := normalizeUAField(uaf.OS)
+	br := normalizeUAField(uaf.Browser)
+	switch {
+	case os != "" && br != "":
+		return os + " · " + br
+	case os != "":
+		return os
+	case br != "":
+		return br
+	default:
+		return ""
+	}
+}
+
+// normalizeUAField strips uap-go's placeholder value ("Other") for
+// unrecognised families and trims whitespace.
+func normalizeUAField(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "Other" {
+		return ""
+	}
+	return s
 }
 
 // quiet vet's "context not used" lint — context is reserved for

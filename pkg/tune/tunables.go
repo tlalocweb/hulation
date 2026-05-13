@@ -66,6 +66,12 @@ type Tunables struct {
 	// Note: ProxyProtocolEnabled defaults to true (set in SetupTunables before YAML decode)
 	ProxyProtocolEnabled bool `yaml:"proxy_protocol_enabled" env:"HULA_PROXY_PROTOCOL_ENABLED" usage:"Enable PROXY protocol auto-detection for load balancer compatibility (default: true)"`
 
+	// URL prefix for Hula's built-in static assets (chat widget, etc).
+	// Default "hula-" produces /hula-scripts/hula-chat.js, /hula-styles/…, /hula-html/….
+	// Customers override individual files by dropping their own copy under
+	// <static-root>/<prefix>scripts/<file> in their per-host root directory.
+	BuiltinStaticPrefix string `yaml:"builtin_static_prefix" default:"hula-" env:"HULA_BUILTIN_STATIC_PREFIX" usage:"URL prefix for Hula's built-in widget assets (e.g. 'hula-' → /hula-scripts/hula-chat.js). Customer overlays drop a file at the same path under their static root."`
+
 	// Permission cache settings
 	PermissionCacheMaxEntries int `yaml:"permission_cache_max_entries" default:"1000" env:"HULA_PERMISSION_CACHE_MAX_ENTRIES" usage:"Maximum number of user permission sets to cache in memory"`
 
@@ -310,6 +316,19 @@ func GetGHCRRateLimitPerSec() int               { return globalTunables.GHCRRate
 // ==================== PROXY Protocol Getters ====================
 
 func GetProxyProtocolEnabled() bool { return globalTunables.ProxyProtocolEnabled }
+
+// ==================== Built-in Static Getters ====================
+
+// GetBuiltinStaticPrefix returns the URL path prefix used in front of
+// Hula's bundled widget assets (chat widget, etc). Empty string is
+// coerced to the bare default "hula-" so handler registration always
+// has a non-empty namespace to live under.
+func GetBuiltinStaticPrefix() string {
+	if globalTunables.BuiltinStaticPrefix == "" {
+		return "hula-"
+	}
+	return globalTunables.BuiltinStaticPrefix
+}
 
 // ==================== Permission Cache Getters ====================
 
