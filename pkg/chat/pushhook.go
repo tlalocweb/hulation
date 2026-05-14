@@ -67,7 +67,15 @@ func FireNewChatPush(ctx context.Context, in ChatPushInput) {
 		log.Debugf("chat push: no recipients for server %s session %s", in.ServerID, in.SessionID)
 		return
 	}
-	rep, err := notifier.Global().Deliver(ctx, env)
+	n := notifier.Global()
+	if n == nil {
+		// notifier.Global is documented as nil-when-unset (e.g. tests
+		// or installs without APNs/FCM configured). Guard the goroutine
+		// against a nil-deref crash.
+		log.Warnf("chat push: notifier.Global() is nil; skipping delivery for session %s", in.SessionID)
+		return
+	}
+	rep, err := n.Deliver(ctx, env)
 	if err != nil {
 		log.Warnf("chat push: deliver: %v", err)
 		return
