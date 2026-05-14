@@ -161,21 +161,35 @@ func normaliseHost(rawHost string) string {
 // Refuses any path that would resolve outside the root (path
 // traversal defence) — those silently fall through to the embedded
 // template.
+//
+// Both sides are resolved to absolute paths and compared via
+// filepath.Rel so a "../" segment, a doubled-up "..//.." chain, or a
+// canonicalised path that lands outside root all fail the check. The
+// returned path is absolute, suitable for passing directly to
+// http.ServeFile.
 func resolveOverlay(root, urlPath string) (string, bool) {
 	if root == "" {
 		return "", false
 	}
-	rel := strings.TrimPrefix(urlPath, "/")
-	overlay := filepath.Join(root, filepath.FromSlash(rel))
-	cleanRoot := filepath.Clean(root)
-	if !strings.HasPrefix(overlay, cleanRoot+string(filepath.Separator)) && overlay != cleanRoot {
+	rootAbs, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
 		return "", false
 	}
-	fi, err := os.Stat(overlay)
+	rel := strings.TrimPrefix(urlPath, "/")
+	candidate := filepath.Join(rootAbs, filepath.FromSlash(rel))
+	candidateAbs, err := filepath.Abs(filepath.Clean(candidate))
+	if err != nil {
+		return "", false
+	}
+	relToRoot, err := filepath.Rel(rootAbs, candidateAbs)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	fi, err := os.Stat(candidateAbs)
 	if err != nil || fi.IsDir() {
 		return "", false
 	}
-	return overlay, true
+	return candidateAbs, true
 }
 
 // buildBuiltinVars constructs the mustache variable map for the
