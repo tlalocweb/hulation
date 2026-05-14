@@ -63,6 +63,17 @@
   display: flex;
 }
 
+/* The widget JS toggles .hc-start / .hc-log / .hc-composer via the
+   `hidden` attribute. Our flex rules for each have higher specificity
+   than the browser default [hidden] { display: none }, so we restate
+   it explicitly here. Without these, the start form stays visible
+   after the session opens. */
+#hula-chat .hc-start[hidden],
+#hula-chat .hc-log[hidden],
+#hula-chat .hc-composer[hidden] {
+  display: none;
+}
+
 #hula-chat .hc-bar {
   display: flex;
   align-items: center;
