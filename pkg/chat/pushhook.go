@@ -101,9 +101,12 @@ func BuildNewChatEnvelope(in ChatPushInput) notifier.Envelope {
 	if country == "" {
 		country = "Unknown"
 	}
+	// Truncate by rune count, not bytes — byte slicing can split a
+	// multi-byte UTF-8 rune (emoji, accented chars) and produce an
+	// invalid push payload body.
 	preview := in.FirstMessage
-	if len(preview) > 180 {
-		preview = preview[:177] + "…"
+	if runes := []rune(preview); len(runes) > 180 {
+		preview = string(runes[:177]) + "…"
 	}
 
 	return notifier.Envelope{
