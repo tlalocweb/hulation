@@ -31,6 +31,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 )
 
@@ -157,6 +158,13 @@ func buildAPNsPayload(env notifier.Envelope) ([]byte, error) {
 	}
 	payload := map[string]any{"aps": aps}
 	for k, v := range env.CustomData {
+		// "aps" is reserved by APNs — clobbering it would break
+		// delivery entirely. Callers shouldn't put it in CustomData;
+		// drop it defensively if they do.
+		if k == "aps" {
+			log.Debugf("apns: dropping reserved 'aps' key from CustomData (envelope=%s)", env.ID)
+			continue
+		}
 		payload[k] = v
 	}
 	return json.Marshal(payload)
