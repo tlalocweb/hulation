@@ -86,6 +86,10 @@ type Envelope struct {
 	// `data{}` dict. Used for deep-link routing in the mobile apps.
 	// Email backends ignore this field.
 	CustomData map[string]any
+	// Sound is an opt-in APNs `aps.sound` value (e.g. "default").
+	// Empty string omits the key, leaving the push silent — the prior
+	// default. Chat pushes set this; alert pushes typically don't.
+	Sound string
 }
 
 // ChannelResult is the per-recipient outcome.

@@ -116,6 +116,9 @@ func BuildNewChatEnvelope(in ChatPushInput) notifier.Envelope {
 		// HTML body left empty — email backends ignore chat push.
 		// A future "chat digest" email would fill this in.
 		HTMLBody: "",
+		// Chat-new pushes chime by default; alert pushes don't unless
+		// they explicitly opt in. See notifier.Envelope.Sound docs.
+		Sound: "default",
 		CustomData: map[string]any{
 			"hula": map[string]any{
 				"kind":            "chat.new",

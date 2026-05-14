@@ -143,15 +143,19 @@ type apnsPayloadAlert struct {
 // land at the top level alongside `aps` — that's the iOS deep-link
 // parser's expectation (see hula-mobile/ios/Hula/PushDeepLink.swift).
 func buildAPNsPayload(env notifier.Envelope) ([]byte, error) {
-	payload := map[string]any{
-		"aps": map[string]any{
-			"alert": apnsPayloadAlert{
-				Title: env.Subject,
-				Body:  env.ShortText,
-			},
-			"sound": "default",
+	aps := map[string]any{
+		"alert": apnsPayloadAlert{
+			Title: env.Subject,
+			Body:  env.ShortText,
 		},
 	}
+	// Opt-in: chat pushes set env.Sound = "default". Alert pushes
+	// leave it empty so the operator's notification settings decide
+	// whether to chime (prior behavior pre-chat-push).
+	if env.Sound != "" {
+		aps["sound"] = env.Sound
+	}
+	payload := map[string]any{"aps": aps}
 	for k, v := range env.CustomData {
 		payload[k] = v
 	}
