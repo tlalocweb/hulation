@@ -27,6 +27,7 @@ import (
 	"github.com/tlalocweb/hulation/model"
 	alertsevaluator "github.com/tlalocweb/hulation/pkg/alerts/evaluator"
 	"github.com/tlalocweb/hulation/pkg/auth/opaque"
+	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	"github.com/tlalocweb/hulation/pkg/forwarder"
 	"github.com/tlalocweb/hulation/pkg/mailer"
 	"github.com/tlalocweb/hulation/pkg/notifier"
@@ -275,12 +276,14 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 	// Realtime pub/sub hub.
 	realtime.SetGlobal(realtime.New())
 
-	// Token key for the alerts evaluator — needed at every push send,
-	// so resolve it before evaluator goroutines start scoring.
+	// Token key for the alerts evaluator + chat push hook — needed at
+	// every push send, so resolve it before evaluator goroutines start
+	// scoring and before the first /chat/start lands.
 	if key, err := utils.GetTOTPEncryptionKey(conf.TotpEncryptionKey); err == nil {
 		alertsevaluator.SetTokenKey(key)
+		chatpkg.SetPushTokenKey(key)
 	} else {
-		log.Warnf("alerts evaluator: no TOTP encryption key; push delivery will be disabled")
+		log.Warnf("push delivery disabled: no TOTP encryption key (alerts evaluator + chat hook)")
 	}
 
 	// Alert rule evaluator. The 1-minute ticker + queue are cheap to

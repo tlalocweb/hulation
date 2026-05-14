@@ -31,6 +31,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 )
 
@@ -132,21 +133,41 @@ func (b *Backend) providerToken() (string, error) {
 	return signed, nil
 }
 
-// apnsPayload is the minimum aps-wrapped JSON APNs accepts.
-type apnsPayload struct {
-	APS apnsPayloadAPS `json:"aps"`
-	// Custom app-level fields attach here via an embedded JSON
-	// merging step if we ever need them.
-}
-
-type apnsPayloadAPS struct {
-	Alert apnsPayloadAlert `json:"alert"`
-	Sound string           `json:"sound,omitempty"`
-}
-
+// apnsPayloadAlert is the user-visible alert body that lands inside
+// `aps.alert`.
 type apnsPayloadAlert struct {
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+}
+
+// buildAPNsPayload assembles the JSON sent to APNs. CustomData keys
+// land at the top level alongside `aps` — that's the iOS deep-link
+// parser's expectation (see hula-mobile/ios/Hula/PushDeepLink.swift).
+func buildAPNsPayload(env notifier.Envelope) ([]byte, error) {
+	aps := map[string]any{
+		"alert": apnsPayloadAlert{
+			Title: env.Subject,
+			Body:  env.ShortText,
+		},
+	}
+	// Opt-in: chat pushes set env.Sound = "default". Alert pushes
+	// leave it empty so the operator's notification settings decide
+	// whether to chime (prior behavior pre-chat-push).
+	if env.Sound != "" {
+		aps["sound"] = env.Sound
+	}
+	payload := map[string]any{"aps": aps}
+	for k, v := range env.CustomData {
+		// "aps" is reserved by APNs — clobbering it would break
+		// delivery entirely. Callers shouldn't put it in CustomData;
+		// drop it defensively if they do.
+		if k == "aps" {
+			log.Debugf("apns: dropping reserved 'aps' key from CustomData (envelope=%s)", env.ID)
+			continue
+		}
+		payload[k] = v
+	}
+	return json.Marshal(payload)
 }
 
 // Deliver iterates recipients with ChannelAPNS, POSTs each. Skips
@@ -180,14 +201,7 @@ func (b *Backend) Deliver(ctx context.Context, env notifier.Envelope) ([]notifie
 }
 
 func (b *Backend) sendOne(ctx context.Context, r notifier.DeviceAddr, env notifier.Envelope) error {
-	body, err := json.Marshal(apnsPayload{
-		APS: apnsPayloadAPS{
-			Alert: apnsPayloadAlert{
-				Title: env.Subject,
-				Body:  env.ShortText,
-			},
-		},
-	})
+	body, err := buildAPNsPayload(env)
 	if err != nil {
 		return fmt.Errorf("apns: marshal payload: %w", err)
 	}

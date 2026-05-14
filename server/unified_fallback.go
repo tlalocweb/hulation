@@ -94,6 +94,17 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
 	}
 
+	// Built-in chat widget (JS + CSS). Each handler first checks the
+	// per-host static root for a customer overlay at the same URL
+	// path and serves that file as-is when present; otherwise it
+	// renders the embedded mustache template with per-host variables.
+	for _, asset := range []handler.BuiltinStaticAsset{
+		handler.BuiltinChatJSAsset(),
+		handler.BuiltinChatCSSAsset(),
+	} {
+		srv.RegisterCustomHandler("GET "+asset.URLPath, handler.BuiltinStaticHandler(asset))
+	}
+
 	// Mobile realtime WebSocket — Phase 5a.6. Registers on the
 	// ServeMux fallback because gRPC server-streaming isn't worth
 	// the toolchain load for a single endpoint.

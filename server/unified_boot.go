@@ -302,9 +302,15 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// device registration. Delegates the analytics math to the
 	// already-registered analyticsSvc; device storage rides on Bolt
 	// via pkg/mobile/tokenbox for token sealing.
-	mobileSvc := mobileimpl.New(analyticsSvc.Summary, analyticsSvc.Timeseries, func() ([]byte, error) {
-		return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
-	})
+	mobileSvc := mobileimpl.New(
+		analyticsSvc.Summary,
+		analyticsSvc.Timeseries,
+		analyticsSvc.Pages,
+		chatStore,
+		func() ([]byte, error) {
+			return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
+		},
+	)
 	mobilespec.RegisterMobileServiceServer(grpcSrv, mobileSvc)
 	if err := mobilespec.RegisterMobileServiceHandlerServer(ctx, gwMux, mobileSvc); err != nil {
 		return nil, fmt.Errorf("register mobile handler: %w", err)

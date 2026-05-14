@@ -52,6 +52,6 @@ builder-images/hulabuild-linux
 testclickhouse
 gen-hash
 hulaagent/target/
-
+.mobile-dev
 # hulaagent e2e — regenerated on every `test/hulaagent-e2e/run.sh`
 test/hulaagent-e2e/workdir/

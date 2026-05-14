@@ -48,7 +48,13 @@ func CORSMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 			continue
 		}
 		cc := s.CORS
-		if cc == nil {
+		// conftagz auto-fills Server.CORS as an empty struct (via the
+		// default: tags on AllowMethods etc.) even when the YAML has
+		// no per-server cors: block. Treat a per-server CORS that
+		// names no origins as "not configured" and fall through to
+		// the global cfg.CORS — otherwise global allow_origins +
+		// unsafe_any_origin are silently ignored for known hosts.
+		if cc == nil || (cc.AllowOrigins == "" && !cc.UnsafeAnyOrigin) {
 			cc = &cfg.CORS
 		}
 		bind := buildCORSBinding(cc)

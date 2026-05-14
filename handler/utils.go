@@ -124,6 +124,11 @@ func GetHostConfigFromUrl(u string) (hostconf *config.Server, host string, httpe
 		httperror = 500
 		return
 	}
+	// Page URLs include the port (e.g. localhost:8080) but the alias
+	// map keys hostnames without ports — matching GetHostConfig's
+	// Host-header path which also strips. Without this, any local dev
+	// site served on a non-default port can't be tracked.
+	hostonly = utils.GetHostOnlyFromHostPort(hostonly)
 	hostconf = app.GetConfig().GetServerByAnyAlias(hostonly)
 	if hostconf != nil {
 		host = hostonly

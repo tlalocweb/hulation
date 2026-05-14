@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/oauth2/google"
 
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 )
 
@@ -104,13 +105,44 @@ type fcmMessage struct {
 }
 
 type fcmMessageBody struct {
-	Token        string             `json:"token"`
+	Token        string                 `json:"token"`
 	Notification fcmMessageNotification `json:"notification,omitempty"`
+	// Data carries deep-link routing payload. FCM v1 requires this to
+	// be flat string→string, so non-string CustomData values are
+	// JSON-stringified before insertion. The Android client parses
+	// each value back as needed.
+	Data map[string]string `json:"data,omitempty"`
 }
 
 type fcmMessageNotification struct {
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+}
+
+// flattenCustomData converts the Envelope's mixed-type CustomData map
+// into the flat string-string map FCM v1 accepts. String values pass
+// through; everything else is JSON-marshaled into a string.
+func flattenCustomData(custom map[string]any) map[string]string {
+	if len(custom) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(custom))
+	for k, v := range custom {
+		if s, ok := v.(string); ok {
+			out[k] = s
+			continue
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			// Should be unreachable — CustomData carries primitives
+			// and nested maps in practice. Surface it so a silent
+			// missing deep-link field doesn't waste debugging time.
+			log.Warnf("fcm: dropping CustomData key %q: marshal failed: %v", k, err)
+			continue
+		}
+		out[k] = string(b)
+	}
+	return out
 }
 
 // Deliver iterates recipients with ChannelFCM. Non-FCM addrs skipped.
@@ -150,6 +182,7 @@ func (b *Backend) sendOne(ctx context.Context, r notifier.DeviceAddr, env notifi
 				Title: env.Subject,
 				Body:  env.ShortText,
 			},
+			Data: flattenCustomData(env.CustomData),
 		},
 	})
 	if err != nil {

@@ -63,6 +63,29 @@ service MobileService {
     };
     option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
   }
+
+  // MobileTopPages — top URL paths by pageviews for the preset window.
+  // Delegates to the analytics Pages query builder; trimmed to a
+  // phone-card-sized row count (default 5).
+  rpc MobileTopPages(MobileTopPagesRequest) returns (MobileTopPagesResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/top-pages"
+    };
+    option (hula.auth.permission) = { needs: ["server.{server_id}.analytics.read"] };
+  }
+
+  // MobileLiveChats — counts of in-flight chat sessions on this
+  // server. Drives the "N chat needs you right now" banner on the
+  // Overview tab. queued = no agent; assigned = picked up but no
+  // visitor message yet; open = active conversation.
+  rpc MobileLiveChats(MobileLiveChatsRequest) returns (MobileLiveChatsResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/live-chats"
+    };
+    // chat.read is enough — the response is aggregate counts, never
+    // visitor PII or message bodies.
+    option (hula.auth.permission) = { needs: ["server.{server_id}.chat.read"] };
+  }
 }
 
 enum Platform {
@@ -140,4 +163,37 @@ message MobileTimeseriesResponse {
   repeated string ts = 1;
   repeated int64 visitors = 2;
   repeated int64 pageviews = 3;
+}
+
+message MobileTopPagesRequest {
+  string server_id = 1;
+  string preset = 2;
+  // Row cap. 0 → defaults to 5 (the phone Overview card fits ~5
+  // rows above the fold). Server caps at 25 regardless.
+  int32 limit = 3;
+}
+
+message MobileTopPage {
+  string path = 1;
+  int64 visitors = 2;
+  int64 pageviews = 3;
+}
+
+message MobileTopPagesResponse {
+  repeated MobileTopPage pages = 1;
+}
+
+message MobileLiveChatsRequest {
+  string server_id = 1;
+}
+
+message MobileLiveChatsResponse {
+  // Sessions with no agent assigned yet — the "drop everything" set
+  // that drives the red Overview banner.
+  int32 awaiting_reply = 1;
+  // Sessions picked up by an agent but with no visitor message since
+  // the assignment.
+  int32 assigned = 2;
+  // Active in-flight conversations.
+  int32 open = 3;
 }

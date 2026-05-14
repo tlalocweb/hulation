@@ -1,0 +1,239 @@
+/*
+ * Hula built-in chat widget styles. Mustache-templated; today no
+ * substitution vars are used but the file is rendered through the
+ * same pipeline as hula-chat.js so future theming hooks land in one
+ * place.
+ *
+ * Scoped to #hula-chat and #hula-chat-fab — no global selectors, so
+ * dropping the widget on a customer page never disturbs their layout.
+ *
+ * Customer overlay: drop a file at <static-root>/{prefix}styles/hula-chat.css
+ * to replace these styles wholesale.
+ */
+
+#hula-chat-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+#hula-chat-fab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.25);
+}
+#hula-chat-fab .hc-fab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.3);
+}
+
+#hula-chat {
+  position: fixed;
+  right: 20px;
+  bottom: 84px;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  height: 480px;
+  max-height: calc(100vh - 120px);
+  z-index: 2147483001;
+  background: #ffffff;
+  color: #111827;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  font: 400 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+#hula-chat.hc-open {
+  display: flex;
+}
+
+#hula-chat .hc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #111827;
+  color: #f9fafb;
+  font-weight: 600;
+}
+#hula-chat .hc-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+#hula-chat .hc-start {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+#hula-chat .hc-start label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+#hula-chat .hc-start input[type="email"],
+#hula-chat .hc-start textarea {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  background: #fff;
+  resize: vertical;
+}
+#hula-chat .hc-start textarea {
+  min-height: 80px;
+}
+#hula-chat .hc-primary {
+  margin-top: 6px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: 600 14px/1 inherit;
+  cursor: pointer;
+}
+#hula-chat .hc-primary:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Captcha challenge (Turnstile or reCAPTCHA v2) sits between the
+   message textarea and the submit button. The provider ships its
+   own internal styling; we just provide spacing + a min-height so
+   layout doesn't jump while the iframe loads. */
+#hula-chat .hc-captcha {
+  margin: 4px 0;
+  min-height: 65px;
+  display: flex;
+  justify-content: center;
+}
+#hula-chat .hc-captcha[hidden] {
+  display: none;
+}
+#hula-chat .hc-error {
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 2px 0 0;
+}
+#hula-chat .hc-error[hidden] {
+  display: none;
+}
+
+#hula-chat .hc-log {
+  flex: 1 1 auto;
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f9fafb;
+}
+#hula-chat .hc-msg {
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+#hula-chat .hc-msg-me {
+  align-self: flex-end;
+  background: #2563eb;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+#hula-chat .hc-msg-them {
+  align-self: flex-start;
+  background: #e5e7eb;
+  color: #111827;
+  border-bottom-left-radius: 4px;
+}
+#hula-chat .hc-msg-sys {
+  align-self: center;
+  background: transparent;
+  color: #6b7280;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+#hula-chat .hc-composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+#hula-chat .hc-composer input[type="text"] {
+  flex: 1 1 auto;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+}
+#hula-chat .hc-send {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: 600 13px/1 inherit;
+  cursor: pointer;
+}
+#hula-chat .hc-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (prefers-color-scheme: dark) {
+  #hula-chat {
+    background: #1f2937;
+    color: #f9fafb;
+  }
+  #hula-chat .hc-start input[type="email"],
+  #hula-chat .hc-start textarea,
+  #hula-chat .hc-composer input[type="text"] {
+    background: #111827;
+    border-color: #374151;
+    color: inherit;
+  }
+  #hula-chat .hc-log {
+    background: #111827;
+  }
+  #hula-chat .hc-msg-them {
+    background: #374151;
+    color: #f9fafb;
+  }
+  #hula-chat .hc-composer {
+    background: #1f2937;
+    border-top-color: #374151;
+  }
+}

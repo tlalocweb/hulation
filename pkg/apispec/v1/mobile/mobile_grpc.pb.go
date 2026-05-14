@@ -34,6 +34,8 @@ const (
 	MobileService_ListMyDevices_FullMethodName    = "/hulation.v1.mobile.MobileService/ListMyDevices"
 	MobileService_MobileSummary_FullMethodName    = "/hulation.v1.mobile.MobileService/MobileSummary"
 	MobileService_MobileTimeseries_FullMethodName = "/hulation.v1.mobile.MobileService/MobileTimeseries"
+	MobileService_MobileTopPages_FullMethodName   = "/hulation.v1.mobile.MobileService/MobileTopPages"
+	MobileService_MobileLiveChats_FullMethodName  = "/hulation.v1.mobile.MobileService/MobileLiveChats"
 )
 
 // MobileServiceClient is the client API for MobileService service.
@@ -56,6 +58,15 @@ type MobileServiceClient interface {
 	// by default. Larger buckets → smaller payload; matches the
 	// phone's usable horizontal resolution.
 	MobileTimeseries(ctx context.Context, in *MobileTimeseriesRequest, opts ...grpc.CallOption) (*MobileTimeseriesResponse, error)
+	// MobileTopPages — top URL paths by pageviews for the preset window.
+	// Delegates to the analytics Pages query builder; trimmed to a
+	// phone-card-sized row count (default 5).
+	MobileTopPages(ctx context.Context, in *MobileTopPagesRequest, opts ...grpc.CallOption) (*MobileTopPagesResponse, error)
+	// MobileLiveChats — counts of in-flight chat sessions on this
+	// server. Drives the "N chat needs you right now" banner on the
+	// Overview tab. queued = no agent; assigned = picked up but no
+	// visitor message yet; open = active conversation.
+	MobileLiveChats(ctx context.Context, in *MobileLiveChatsRequest, opts ...grpc.CallOption) (*MobileLiveChatsResponse, error)
 }
 
 type mobileServiceClient struct {
@@ -116,6 +127,26 @@ func (c *mobileServiceClient) MobileTimeseries(ctx context.Context, in *MobileTi
 	return out, nil
 }
 
+func (c *mobileServiceClient) MobileTopPages(ctx context.Context, in *MobileTopPagesRequest, opts ...grpc.CallOption) (*MobileTopPagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MobileTopPagesResponse)
+	err := c.cc.Invoke(ctx, MobileService_MobileTopPages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mobileServiceClient) MobileLiveChats(ctx context.Context, in *MobileLiveChatsRequest, opts ...grpc.CallOption) (*MobileLiveChatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MobileLiveChatsResponse)
+	err := c.cc.Invoke(ctx, MobileService_MobileLiveChats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MobileServiceServer is the server API for MobileService service.
 // All implementations must embed UnimplementedMobileServiceServer
 // for forward compatibility.
@@ -136,6 +167,15 @@ type MobileServiceServer interface {
 	// by default. Larger buckets → smaller payload; matches the
 	// phone's usable horizontal resolution.
 	MobileTimeseries(context.Context, *MobileTimeseriesRequest) (*MobileTimeseriesResponse, error)
+	// MobileTopPages — top URL paths by pageviews for the preset window.
+	// Delegates to the analytics Pages query builder; trimmed to a
+	// phone-card-sized row count (default 5).
+	MobileTopPages(context.Context, *MobileTopPagesRequest) (*MobileTopPagesResponse, error)
+	// MobileLiveChats — counts of in-flight chat sessions on this
+	// server. Drives the "N chat needs you right now" banner on the
+	// Overview tab. queued = no agent; assigned = picked up but no
+	// visitor message yet; open = active conversation.
+	MobileLiveChats(context.Context, *MobileLiveChatsRequest) (*MobileLiveChatsResponse, error)
 	mustEmbedUnimplementedMobileServiceServer()
 }
 
@@ -160,6 +200,12 @@ func (UnimplementedMobileServiceServer) MobileSummary(context.Context, *MobileSu
 }
 func (UnimplementedMobileServiceServer) MobileTimeseries(context.Context, *MobileTimeseriesRequest) (*MobileTimeseriesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MobileTimeseries not implemented")
+}
+func (UnimplementedMobileServiceServer) MobileTopPages(context.Context, *MobileTopPagesRequest) (*MobileTopPagesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MobileTopPages not implemented")
+}
+func (UnimplementedMobileServiceServer) MobileLiveChats(context.Context, *MobileLiveChatsRequest) (*MobileLiveChatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MobileLiveChats not implemented")
 }
 func (UnimplementedMobileServiceServer) mustEmbedUnimplementedMobileServiceServer() {}
 func (UnimplementedMobileServiceServer) testEmbeddedByValue()                       {}
@@ -272,6 +318,42 @@ func _MobileService_MobileTimeseries_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MobileService_MobileTopPages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MobileTopPagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MobileServiceServer).MobileTopPages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MobileService_MobileTopPages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MobileServiceServer).MobileTopPages(ctx, req.(*MobileTopPagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MobileService_MobileLiveChats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MobileLiveChatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MobileServiceServer).MobileLiveChats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MobileService_MobileLiveChats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MobileServiceServer).MobileLiveChats(ctx, req.(*MobileLiveChatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MobileService_ServiceDesc is the grpc.ServiceDesc for MobileService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -298,6 +380,14 @@ var MobileService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MobileTimeseries",
 			Handler:    _MobileService_MobileTimeseries_Handler,
+		},
+		{
+			MethodName: "MobileTopPages",
+			Handler:    _MobileService_MobileTopPages_Handler,
+		},
+		{
+			MethodName: "MobileLiveChats",
+			Handler:    _MobileService_MobileLiveChats_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
