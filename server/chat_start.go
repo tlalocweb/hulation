@@ -44,6 +44,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/badactor"
@@ -51,6 +52,12 @@ import (
 	"github.com/tlalocweb/hulation/pkg/analytics/enrich"
 	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 )
+
+// chatPushTimeout bounds the lifetime of the /chat/start push fan-out
+// goroutine. APNs HTTP/2 and FCM OAuth refresh are typically sub-
+// second; this cap kills goroutines stuck on a wedged upstream so they
+// don't accumulate across many chat-starts or live past process exit.
+const chatPushTimeout = 30 * time.Second
 
 // chatStartHandler returns the handler bound to svc + isKnown.
 // isKnown is the per-config server-id check (server/chat_acl.go's
@@ -116,8 +123,15 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 		// Fan out an APNs/FCM push to every operator that has push
 		// notifications enabled. Runs on its own goroutine so the
 		// /chat/start response isn't held up by the (potentially slow)
-		// APNs HTTP/2 hop and the FCM OAuth token refresh.
-		go chatpkg.FireNewChatPush(context.Background(), chatpkg.ChatPushInput{
+		// APNs HTTP/2 hop and the FCM OAuth token refresh. We
+		// deliberately don't derive from r.Context() — that's
+		// cancelled the moment the response flushes, defeating the
+		// detach. chatPushTimeout caps stuck goroutines instead.
+		pushCtx, pushCancel := context.WithTimeout(context.Background(), chatPushTimeout)
+		go func(in chatpkg.ChatPushInput) {
+			defer pushCancel()
+			chatpkg.FireNewChatPush(pushCtx, in)
+		}(chatpkg.ChatPushInput{
 			SessionID:      res.SessionID.String(),
 			ServerID:       body.ServerID,
 			VisitorID:      body.VisitorID,
