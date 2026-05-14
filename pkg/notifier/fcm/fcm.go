@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/oauth2/google"
 
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/notifier"
 )
 
@@ -131,9 +132,15 @@ func flattenCustomData(custom map[string]any) map[string]string {
 			out[k] = s
 			continue
 		}
-		if b, err := json.Marshal(v); err == nil {
-			out[k] = string(b)
+		b, err := json.Marshal(v)
+		if err != nil {
+			// Should be unreachable — CustomData carries primitives
+			// and nested maps in practice. Surface it so a silent
+			// missing deep-link field doesn't waste debugging time.
+			log.Warnf("fcm: dropping CustomData key %q: marshal failed: %v", k, err)
+			continue
 		}
+		out[k] = string(b)
 	}
 	return out
 }
