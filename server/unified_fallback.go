@@ -201,6 +201,18 @@ func registerLegacyAPIRoutes(srv *unified.Server) {
 	srv.RegisterCustomHandler("GET /api/site/build-status/{buildid}", admin(handler.BuildStatus))
 	srv.RegisterCustomHandler("GET /api/site/builds/{serverid}", admin(handler.ListBuilds))
 
+	// Agent-mTLS build trigger — parallel to /api/site/trigger-build
+	// but gated on the Phase 3 mTLS middleware's attached registry
+	// record (no admin JWT). HULAAGENT_PLAN.md verb table maps
+	// HLAP `build` here. Permission is checked inside the handler
+	// against record.IsAllowed(site, "build") so revoked / expired
+	// agents see a clean 401/403 instead of running a build.
+	srv.RegisterCustomHandler("POST /api/agent/build", handler.WrapForNetHTTP(handler.AgentBuild))
+	// Companion log-stream endpoint — NDJSON over chunked transfer,
+	// polled snapshot of BuildState every ~250ms. Raw http.HandlerFunc
+	// (not WrapForNetHTTP) so we get http.Flusher access.
+	srv.RegisterCustomHandler("GET /api/agent/build/{buildid}/stream", http.HandlerFunc(handler.AgentBuildStream))
+
 	// Staging build (WebDAV registered separately below).
 	srv.RegisterCustomHandler("POST /api/staging/build", admin(handler.StagingBuild))
 
