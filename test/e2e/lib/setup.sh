@@ -151,13 +151,24 @@ gen_certs() {
         "hugo-min.test.local"
         "mkdocs-min.test.local"
     )
-    if command -v mkcert >/dev/null 2>&1; then
-        echo "--- Generating TLS certs with mkcert ---"
+    # Prefer the repo-local mkcert at .bin/mkcert (matches the Go-
+    # binary pattern in this file). Without a real CA+leaf chain
+    # rustls clients reject the openssl-fallback cert with
+    # CaUsedAsEndEntity — suite 12b's hula-agent (Phase 4) is the
+    # canary.
+    local mkcert_bin=""
+    if [ -x "$REPO_ROOT/.bin/mkcert" ]; then
+        mkcert_bin="$REPO_ROOT/.bin/mkcert"
+    elif command -v mkcert >/dev/null 2>&1; then
+        mkcert_bin=$(command -v mkcert)
+    fi
+    if [ -n "$mkcert_bin" ]; then
+        echo "--- Generating TLS certs with mkcert ($mkcert_bin) ---"
         local caroot
-        caroot=$(mkcert -CAROOT)
+        caroot=$("$mkcert_bin" -CAROOT)
         cp "$caroot/rootCA.pem" "$WORKDIR/certs/rootCA.pem"
         cd "$WORKDIR/certs"
-        mkcert -cert-file cert.pem -key-file key.pem \
+        "$mkcert_bin" -cert-file cert.pem -key-file key.pem \
             "${cert_hosts[@]}" 2>/dev/null
     else
         echo "--- Generating self-signed TLS cert with openssl (mkcert not installed) ---"
