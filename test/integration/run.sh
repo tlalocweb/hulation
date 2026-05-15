@@ -396,18 +396,11 @@ else
 fi
 
 # Pull the JWT out so the existing curl tests below can keep using
-# bearer auth. Single-server config: take the first entry.
-JWT=$(python3 - "$HULACTL_CFG" <<'PY'
-import sys, yaml
-d = yaml.safe_load(open(sys.argv[1])) or {}
-servers = d.get("servers") or {}
-for entry in servers.values():
-    tok = entry.get("token") or ""
-    if tok:
-        print(tok)
-        break
-PY
-)
+# bearer auth. The hulactl.yaml schema is flat enough to parse with
+# awk — first `token:` line wins, which is correct for the single-
+# server config this runner produces. Avoids a PyYAML dependency
+# that the other test runners deliberately don't require.
+JWT=$(awk '$1 == "token:" { print $2; exit }' "$HULACTL_CFG")
 if [ -n "$JWT" ]; then
     pass "JWT extracted from hulactl config"
 else
