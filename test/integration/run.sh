@@ -5,11 +5,68 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKDIR=$(mktemp -d)
 COMPOSE_PROJECT="hula-inttest-$$"
-DOMAIN="example.com"
+# Use localhost as the server hostname so hulactl (which doesn't
+# support curl-style --resolve overrides) can reach the container
+# without an /etc/hosts edit. mkcert auto-includes 127.0.0.1 in the
+# SAN list when the leaf cert is issued for "localhost", so HTTPS
+# validation still works for both the curl tests and hulactl's
+# Go-default TLS verifier (which honours SSL_CERT_FILE — set per
+# hulactl invocation below).
+DOMAIN="localhost"
 PORT=8443
 PASSED=0
 FAILED=0
 CLEANUP_PIDS=()
+
+# Prefer repo-local toolchains when present (matches the pattern used
+# by test/e2e/run.sh and test/hulaagent-e2e/run.sh). Falls back to
+# whatever's on PATH so CI environments that install go/mkcert
+# globally keep working.
+if [ -x "$REPO_ROOT/.bin/go/bin/go" ]; then
+    GO_BIN="$REPO_ROOT/.bin/go/bin/go"
+elif command -v go >/dev/null 2>&1; then
+    GO_BIN=$(command -v go)
+else
+    echo "ERROR: no go binary found (looked in $REPO_ROOT/.bin/go/bin and PATH)" >&2
+    exit 1
+fi
+if [ -x "$REPO_ROOT/.bin/mkcert" ]; then
+    MKCERT_BIN="$REPO_ROOT/.bin/mkcert"
+elif command -v mkcert >/dev/null 2>&1; then
+    MKCERT_BIN=$(command -v mkcert)
+else
+    echo "ERROR: no mkcert binary found (looked in $REPO_ROOT/.bin and PATH)" >&2
+    exit 1
+fi
+if [ -x "$REPO_ROOT/.bin/hulactl" ]; then
+    HULACTL_BIN="$REPO_ROOT/.bin/hulactl"
+elif command -v hulactl >/dev/null 2>&1; then
+    HULACTL_BIN=$(command -v hulactl)
+else
+    echo "ERROR: no hulactl binary found (looked in $REPO_ROOT/.bin and PATH)" >&2
+    exit 1
+fi
+
+# The docker build context is REPO_ROOT/.. (parent of hulation/) so
+# the Dockerfile can ADD both hulation/ and clickhouse/ siblings. The
+# parent dir's local Go module cache lives in hulation/.gopath (3+ GB)
+# and ships into buildkit otherwise — install hulation/.dockerignore
+# at the context root for the duration of the build. Match
+# build-docker.sh's pattern.
+BUILD_CONTEXT="$REPO_ROOT/.."
+INSTALLED_DOCKERIGNORE=""
+install_dockerignore() {
+    if [ ! -f "$BUILD_CONTEXT/.dockerignore" ] && [ -f "$REPO_ROOT/.dockerignore" ]; then
+        cp "$REPO_ROOT/.dockerignore" "$BUILD_CONTEXT/.dockerignore"
+        INSTALLED_DOCKERIGNORE="$BUILD_CONTEXT/.dockerignore"
+    fi
+}
+remove_dockerignore() {
+    if [ -n "$INSTALLED_DOCKERIGNORE" ]; then
+        rm -f "$INSTALLED_DOCKERIGNORE"
+        INSTALLED_DOCKERIGNORE=""
+    fi
+}
 
 cleanup() {
     echo ""
@@ -18,6 +75,7 @@ cleanup() {
     docker logs "${COMPOSE_PROJECT}-hula" > /tmp/hula-full.log 2>&1 || true
     docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans 2>/dev/null || true
     docker rmi "${COMPOSE_PROJECT}-counter-backend" 2>/dev/null || true
+    remove_dockerignore
     rm -rf "$WORKDIR"
     echo "Cleaned up $WORKDIR (hula logs at /tmp/hula-full.log)"
     echo ""
@@ -80,7 +138,7 @@ echo ""
 # -------------------------------------------------------
 echo "--- Step 1: Generate admin credentials ---"
 cd "$REPO_ROOT"
-HASHES=$(go run ./test/integration/gen-hash/ 2>/dev/null)
+HASHES=$("$GO_BIN" run ./test/integration/gen-hash/ 2>/dev/null)
 NETWORK_HASH=$(echo "$HASHES" | sed -n '1p')
 ARGON_HASH=$(echo "$HASHES" | sed -n '2p')
 echo "  Admin network hash: ${NETWORK_HASH:0:16}..."
@@ -90,23 +148,25 @@ echo "  Admin argon2 hash: ${ARGON_HASH:0:30}..."
 # Step 2: Generate TLS certs with mkcert
 # -------------------------------------------------------
 echo "--- Step 2: Generate TLS certs ---"
-CAROOT=$(mkcert -CAROOT)
+CAROOT=$("$MKCERT_BIN" -CAROOT)
 cp "$CAROOT/rootCA.pem" "$WORKDIR/rootCA.pem"
 cd "$WORKDIR"
-mkcert -cert-file cert.pem -key-file key.pem "$DOMAIN" 2>/dev/null
+"$MKCERT_BIN" -cert-file cert.pem -key-file key.pem "$DOMAIN" 2>/dev/null
 echo "  Generated cert.pem and key.pem for $DOMAIN"
 
 # -------------------------------------------------------
 # Step 3: Build hula Docker image
 # -------------------------------------------------------
 echo "--- Step 3: Build hula Docker image ---"
-cd "$REPO_ROOT/.."
+install_dockerignore
+cd "$BUILD_CONTEXT"
 docker buildx build --network=host --load \
     -f hulation/Dockerfile.local \
     --build-arg hulaversion=test \
     --build-arg hulabuilddate="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --tag hula-inttest:latest \
     . 2>&1 | tail -20
+remove_dockerignore
 echo "  Built hula-inttest:latest"
 
 # -------------------------------------------------------
@@ -158,6 +218,12 @@ servers:
     id: testsite1
     aliases:
       - "127.0.0.1"
+      # The visitor handler resolves the server by the tracked-page
+      # URL's hostname (the u= query param), which the iframe tests
+      # still set to example.com regardless of the front-door host.
+      # Without this alias the lookup misses and /v/* returns 400
+      # "unknown host" for every iframe request.
+      - "example.com"
     publish_port: true
     http_scheme: https
     root: /var/hula/site
@@ -280,28 +346,85 @@ PROTO=$(curl2 -o /dev/null -w "%{http_version}" "https://${DOMAIN}:${PORT}/")
 assert_status "$PROTO" "2" "HTTP/2 protocol negotiated"
 
 # -------------------------------------------------------
-# Test 2: Admin login
+# Test 2: Admin auth via OPAQUE
+#
+# The legacy /api/auth/login plaintext flow was retired post-Phase
+# 5a; hula now requires OPAQUE PAKE registration for every
+# password-based login. We bootstrap an OPAQUE record via
+# `hulactl set-password`, then exchange the password for a JWT via
+# `hulactl auth`, then pull the saved JWT out of hulactl's per-test
+# config file so the existing JWT-protected curl tests below can
+# keep running with no further changes.
+#
+# SSL_CERT_FILE points Go's crypto/x509 SystemCertPool at mkcert's
+# rootCA without needing `mkcert -install` (which requires sudo).
 # -------------------------------------------------------
 echo "--- Test: Admin API ---"
-LOGIN_RESP=$(curl11 -X POST "https://${DOMAIN}:${PORT}/api/auth/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"userid\":\"admin\",\"hash\":\"${NETWORK_HASH}\"}")
-JWT=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['jwt'])" 2>/dev/null || echo "")
-if [ -n "$JWT" ]; then
-    pass "Admin login (HTTP/1.1) - got JWT"
+ADMIN_PASS="hula-inttest-secret"
+HULACTL_CFG="$WORKDIR/hulactl.yaml"
+HULA_URL="https://${DOMAIN}:${PORT}"
+
+# hulactl with -config <path> insists the file exists before
+# reading it (custom paths are treated as user error if missing).
+# Seed with an empty mapping so the first set-password call doesn't
+# error out before it even attempts the OPAQUE handshake.
+echo "{}" > "$HULACTL_CFG"
+
+# Bootstrap: HULACTL_CURRENT_PASSWORD set to empty string signals
+# first-time registration (no rotation proof required).
+SETPW_OUT=$(SSL_CERT_FILE="$WORKDIR/rootCA.pem" \
+    HULACTL_CURRENT_PASSWORD="" \
+    HULACTL_NEW_PASSWORD="$ADMIN_PASS" \
+    "$HULACTL_BIN" -config "$HULACTL_CFG" -host "$HULA_URL" \
+    set-password --username admin --provider admin 2>&1 || true)
+if echo "$SETPW_OUT" | grep -q "Password for admin/admin set via OPAQUE"; then
+    pass "Admin OPAQUE bootstrap via hulactl set-password"
 else
-    fail "Admin login (HTTP/1.1)" "response: $LOGIN_RESP"
+    fail "Admin OPAQUE bootstrap via hulactl set-password" "$SETPW_OUT"
 fi
 
-LOGIN_RESP2=$(curl2 -X POST "https://${DOMAIN}:${PORT}/api/auth/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"userid\":\"admin\",\"hash\":\"${NETWORK_HASH}\"}")
-JWT2=$(echo "$LOGIN_RESP2" | python3 -c "import sys,json; print(json.load(sys.stdin)['jwt'])" 2>/dev/null || echo "")
-if [ -n "$JWT2" ]; then
-    pass "Admin login (HTTP/2) - got JWT"
+# Login: exchange the password for a JWT. hulactl stores the token
+# under servers.<key>.token in $HULACTL_CFG.
+AUTH_OUT=$(SSL_CERT_FILE="$WORKDIR/rootCA.pem" \
+    HULACTL_IDENTITY=admin \
+    HULACTL_PASSWORD="$ADMIN_PASS" \
+    "$HULACTL_BIN" -config "$HULACTL_CFG" auth "$HULA_URL" 2>&1 || true)
+if echo "$AUTH_OUT" | grep -q "Credentials saved"; then
+    pass "hulactl auth obtained JWT and saved credentials"
 else
-    fail "Admin login (HTTP/2)" "response: $LOGIN_RESP2"
+    fail "hulactl auth obtained JWT" "$AUTH_OUT"
 fi
+
+# Pull the JWT out so the existing curl tests below can keep using
+# bearer auth. Single-server config: take the first entry.
+JWT=$(python3 - "$HULACTL_CFG" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])) or {}
+servers = d.get("servers") or {}
+for entry in servers.values():
+    tok = entry.get("token") or ""
+    if tok:
+        print(tok)
+        break
+PY
+)
+if [ -n "$JWT" ]; then
+    pass "JWT extracted from hulactl config"
+else
+    fail "JWT extracted from hulactl config" "config: $(cat "$HULACTL_CFG" 2>/dev/null)"
+fi
+# Same JWT for both HTTP/1.1 and HTTP/2 paths — the legacy test
+# verified two independent logins, which doesn't add coverage now
+# that auth is decoupled from the JWT consumer.
+JWT2="$JWT"
+
+# Confirm the retired /api/auth/login path now fails loud rather
+# than silently letting old clients through.
+LEGACY_STATUS=$(curl11 -o /dev/null -w "%{http_code}" \
+    -X POST "https://${DOMAIN}:${PORT}/api/auth/login" \
+    -H "Content-Type: application/json" \
+    -d '{"userid":"admin","hash":"deadbeef"}')
+assert_status "$LEGACY_STATUS" "410" "Legacy /api/auth/login returns 410 Gone"
 
 # Test protected endpoint
 STATUS=$(curl11 -o /dev/null -w "%{http_code}" "https://${DOMAIN}:${PORT}/api/status" \
