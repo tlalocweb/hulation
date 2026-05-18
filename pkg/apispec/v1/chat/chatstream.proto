@@ -1,0 +1,235 @@
+syntax = "proto3";
+
+// ChatStreamService — bidirectional / server-streaming chat RPCs that replace the two
+// WebSocket endpoints in `server/chat_ws_agent.go` + `server/chat_ws_control.go`. The
+// mobile app (hula-mobile, Rust + tonic) opens these streams to read inbound visitor
+// messages and post outbound agent messages in real time; the SPA can continue using the
+// existing WebSockets until it cuts over.
+//
+// Two RPCs:
+//
+//   AgentStream(stream AgentClientFrame) returns (stream AgentServerFrame)
+//     Single bidirectional stream per (agent, session). The first client frame must be a
+//     SubscribeAgent. Server replies with SubscribedAck; thereafter both sides exchange
+//     msg / typing / presence / system / error frames mirroring today's JSON WS protocol.
+//
+//   ControlStream(ControlSubscribe) returns (stream ControlServerFrame)
+//     Server-streaming subscription to per-server agent control events: queue snapshots,
+//     session_assigned, session_released. Mirrors agent-control-ws.
+//
+// Auth: AdminBearerInterceptor() unary check is reused at stream open; chat ACL gates
+// `server_id`. For QR-paired chat-only users (no bearer), the same interceptor will also
+// accept ed25519 device-key signatures — that work lands in a follow-up.
+//
+// Noise: each stream will eventually carry a Noise_IK session — the first AgentClientFrame
+// (and the ControlSubscribe message) will become Noise handshake messages, with all later
+// frames as Noise transport messages. That layer is added on top of this contract; the
+// frame schema below is what flows inside the Noise transport once the handshake completes.
+
+package hulation.v1.chat;
+
+option go_package = "github.com/tlalocweb/hulation/pkg/apispec/v1/chat;chatspec";
+
+import "google/protobuf/timestamp.proto";
+// ChatSessionStatus and ChatMessageDirection are defined in chat.proto (same package).
+// We could rely on Protobuf compiling both files together, but importing makes the
+// dependency explicit and lets tonic-build pick it up cleanly in Rust.
+import "pkg/apispec/v1/chat/chat.proto";
+
+service ChatStreamService {
+  // Per-session bidirectional stream — replaces /api/v1/chat/admin/agent-ws.
+  rpc AgentStream(stream AgentClientFrame) returns (stream AgentServerFrame);
+
+  // Per-server agent control event stream — replaces /api/v1/chat/admin/agent-control-ws.
+  // Server-streaming only; the corresponding client-side actions (ack / decline a
+  // session assignment) live as the unary RPCs below so the streaming contract stays
+  // simple.
+  rpc ControlStream(ControlSubscribe) returns (stream ControlServerFrame);
+
+  // Agent confirms a session_assigned handoff. Clears the 30s re-route timer so the
+  // router stops chasing this assignment.
+  rpc AckSession(AckSessionRequest) returns (AckSessionResponse);
+
+  // Agent declines a session assignment. The router immediately re-queues it; the
+  // response carries the next chosen agent (empty string if there's no one available).
+  rpc DeclineSession(DeclineSessionRequest) returns (DeclineSessionResponse);
+}
+
+message AckSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+}
+
+message AckSessionResponse {}
+
+message DeclineSessionRequest {
+  string server_id  = 1;
+  string session_id = 2;
+}
+
+message DeclineSessionResponse {
+  // Username of the agent the router handed the session to next. Empty when there is
+  // no other ready agent.
+  string new_assignee = 1;
+}
+
+// --- AgentStream frames ---
+
+message AgentClientFrame {
+  oneof body {
+    SubscribeAgent subscribe = 1;
+    AgentMessage   msg       = 2;
+    AgentTyping    typing    = 3;
+    AgentPing      ping      = 4;
+    AgentClose     close     = 5;
+    // When the client opts into Noise_IK, every frame is a NoiseEnvelope. The first
+    // such frame carries the Noise_IK initiator handshake message (`is_handshake = true`);
+    // the encrypted payload inside is a serialised AgentClientFrame whose body MUST be a
+    // SubscribeAgent. After both sides finish the handshake every later frame carries a
+    // Noise transport message; the decrypted payload is a serialised AgentClientFrame
+    // (without the noise variant set).
+    NoiseEnvelope  noise     = 100;
+  }
+}
+
+// Required first frame. Identifies the session the agent is joining. Server validates the
+// chat ACL for `server_id` and that the session is reachable by the authenticated user.
+message SubscribeAgent {
+  string server_id  = 1;
+  string session_id = 2;
+}
+
+message AgentMessage {
+  string content   = 1;
+  // Optional client-side identifier echoed back on the corresponding ChatMessage so the
+  // client can dedup / show delivered state without waiting for the server-side id.
+  string client_id = 2;
+}
+
+message AgentTyping {
+  bool active = 1;
+}
+
+message AgentPing {}
+
+// Voluntary close from the agent side. Server will then close the stream after flushing
+// any in-flight frames. Connection-level close (gRPC half-close on the client) is also
+// honoured.
+message AgentClose {}
+
+message AgentServerFrame {
+  oneof body {
+    SubscribedAck     subscribed = 1;
+    StreamChatMessage msg        = 2;
+    SystemEvent       system     = 3;
+    Presence          presence   = 4;
+    StreamError       error      = 5;
+    AgentPong         pong       = 6;
+    // Server-side counterpart of AgentClientFrame.noise. First such frame is the Noise_IK
+    // responder handshake message; later frames are Noise transport messages whose
+    // payload is a serialised AgentServerFrame.
+    NoiseEnvelope     noise      = 100;
+  }
+}
+
+// Wraps a Noise_IK_25519_ChaChaPoly_SHA256 message. The `payload` is the wire form snow
+// (Rust) / flynn/noise (Go) produce. Mark `is_handshake = true` on the two handshake
+// messages so each side can refuse stray transport frames before the handshake completes.
+message NoiseEnvelope {
+  bytes payload      = 1;
+  bool  is_handshake = 2;
+}
+
+message SubscribedAck {
+  string session_id = 1;
+  // Optional snapshot: latest closed_at / status / message_count so the client can paint
+  // immediately without a separate ListSessions call.
+  ChatSessionStatus status = 2;
+}
+
+// ChatService also defines a ChatMessage shape for the REST surface. This one carries an
+// extra `client_id` echo for streaming dedup, so it's a separate message here. The
+// `direction` field uses the same ChatMessageDirection enum imported from chat.proto.
+message StreamChatMessage {
+  string id        = 1;
+  string session_id = 2;
+  ChatMessageDirection direction = 3;
+  string sender_id = 4;
+  string content   = 5;
+  google.protobuf.Timestamp when = 6;
+  // Echoed back when the agent's AgentMessage included a client_id.
+  string client_id = 7;
+}
+
+// System notifications — session lifecycle and out-of-band messages.
+message SystemEvent {
+  string kind    = 1; // "session_closed" | "transferred" | "queued" | …
+  string message = 2;
+  // Optional structured payload as JSON; kept as a string to avoid bloating the schema.
+  string detail_json = 3;
+}
+
+message Presence {
+  bool visitor_online = 1;
+  bool visitor_typing = 2;
+  google.protobuf.Timestamp last_seen_at = 3;
+}
+
+message StreamError {
+  string code    = 1; // "forbidden" | "session_not_found" | "internal" | …
+  string message = 2;
+}
+
+message AgentPong {
+  google.protobuf.Timestamp server_time = 1;
+}
+
+// --- ControlStream frames ---
+
+message ControlSubscribe {
+  string server_id = 1;
+}
+
+message ControlServerFrame {
+  oneof body {
+    QueueSnapshot   queue    = 1;
+    SessionAssigned assigned = 2;
+    SessionReleased released = 3;
+    StreamError     error    = 4;
+  }
+}
+
+message QueueSnapshot {
+  repeated QueueEntry entries = 1;
+  google.protobuf.Timestamp generated_at = 2;
+  repeated AssignmentEntry assigned = 3;
+  repeated string ready_agents = 4;
+}
+
+message QueueEntry {
+  string session_id = 1;
+  string visitor_id = 2;
+  string visitor_label = 3; // email or country fallback for display
+  google.protobuf.Timestamp queued_at = 4;
+  // Seconds the session has been on the queue at snapshot time — handy for SLA chips.
+  uint32 queued_for_seconds = 5;
+}
+
+message AssignmentEntry {
+  string session_id = 1;
+  string agent      = 2;
+}
+
+message SessionAssigned {
+  string session_id        = 1;
+  string assigned_agent_id = 2;
+  google.protobuf.Timestamp assigned_at = 3;
+}
+
+message SessionReleased {
+  string session_id = 1;
+  // "agent_disconnect" | "transferred" | "closed" | "expired"
+  string reason     = 2;
+  google.protobuf.Timestamp released_at = 3;
+}
+

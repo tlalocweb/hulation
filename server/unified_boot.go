@@ -50,6 +50,7 @@ import (
 	reportsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/reports"
 	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
 	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
+	"github.com/tlalocweb/hulation/pkg/server/authware"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
@@ -147,12 +148,18 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// middleware too) when the Agent CA hasn't loaded yet.
 	clientCAs := agentClientCAPool()
 
+	// Device-key store powers Hula-Device-* signature auth (QR-paired mobile devices).
+	// Until the QR-pairing endpoint is wired, the in-memory store is empty — bearer auth
+	// continues to be the only working path. Tests insert keys directly.
+	deviceKeyStore := authware.NewInMemoryDeviceKeyStore()
+
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
 		GetCertificate: getCert,
 		ClientCAs:      clientCAs,
 		GRPCServerOptions: []grpc.ServerOption{
-			grpc.UnaryInterceptor(AdminBearerInterceptor()),
+			grpc.UnaryInterceptor(AdminBearerInterceptor(deviceKeyStore)),
+			grpc.StreamInterceptor(AdminBearerStreamInterceptor(deviceKeyStore)),
 		},
 		MuxOptions: []runtime.ServeMuxOption{
 			// Emit proto field names as-is (snake_case) and keep default
@@ -297,6 +304,33 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	if err := chatspec.RegisterChatServiceHandlerServer(ctx, gwMux, chatSvc); err != nil {
 		return nil, fmt.Errorf("register chat handler: %w", err)
 	}
+
+	// ChatStreamService — bidirectional agent stream + per-server control stream
+	// that replace the two WebSocket endpoints (chat_ws_agent.go,
+	// chat_ws_control.go). Hub + router are constructed lazily by
+	// registerChatPublic() later in boot; the closures here re-resolve each call so
+	// the gRPC path comes online the moment the singletons land.
+	//
+	// The Noise static secret is optional — when set, gRPC clients can opt into a
+	// Noise_IK session-wrap around the per-session stream. Missing / malformed keys
+	// degrade the chat stream to plaintext-only mode (mobile clients that demand
+	// Noise will see noise_unavailable). We log but don't fail boot on decode error.
+	var noiseStatic []byte
+	if cfg.NoiseStaticKey != "" {
+		if k, err := utils.DecodeNoiseStaticKey(cfg.NoiseStaticKey); err != nil {
+			log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
+		} else {
+			noiseStatic = k
+		}
+	}
+	chatStreamSvc := chatimpl.NewStreamServer(
+		chatStore,
+		ChatHub,
+		ChatRouter,
+		chatACLLookup(cfg),
+		noiseStatic,
+	)
+	chatspec.RegisterChatStreamServiceServer(grpcSrv, chatStreamSvc)
 
 	// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
 	// device registration. Delegates the analytics math to the

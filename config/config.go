@@ -886,6 +886,13 @@ type Config struct {
 	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
 	// Issuer name shown in authenticator apps (default: "Hulation")
 	TotpIssuer string `yaml:"totp_issuer,omitempty" default:"Hulation"`
+	// Base64url-encoded 32-byte X25519 private key used as the Hula installation's
+	// Noise_IK responder static key for the gRPC chat stream. Mobile clients learn the
+	// matching public key during QR pairing or after OPAQUE login and will refuse to
+	// open a Noise session against any other server identity. Generate with:
+	// hulactl noise-static-key. When empty, plaintext gRPC streams still work but
+	// Noise-mode connections are rejected with a noise_unavailable error.
+	NoiseStaticKey string `yaml:"noise_static_key,omitempty" env:"HULA_NOISE_STATIC_KEY"`
 	// Auth providers (OIDC SSO + internal password). See pkg/server/
 	// authware/provider for the runtime. Use AuthConfig.Providers.
 	Auth *AuthConfig `yaml:"auth,omitempty"`
