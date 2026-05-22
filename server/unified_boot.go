@@ -409,6 +409,12 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// arrives in stage 4b.4.
 	registerChatPublic(srv, cfg)
 
+	// Public installation-identity endpoint — returns the Noise static public
+	// key so mobile clients can pin it at pair time without first
+	// authenticating. No-op when no Noise key is configured; the handler
+	// returns 404 in that case.
+	srv.RegisterCustomHandler("GET /api/v1/installation/identity", installationIdentityHandler())
+
 	// CORS — must be among the OUTERMOST middleware. CORS needs to
 	// see OPTIONS preflights before auth/proxy middleware drops them,
 	// and add Access-Control-* headers to every response regardless

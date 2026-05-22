@@ -44,10 +44,20 @@ import (
 	chatspec "github.com/tlalocweb/hulation/pkg/apispec/v1/chat"
 )
 
+// sessionStore is the narrow surface of *chatpkg.Store that the agent-stream
+// loop touches. Keeping it as an interface lets tests substitute an in-memory
+// fake without needing a ClickHouse instance behind the real store.
+type sessionStore interface {
+	GetSession(ctx context.Context, serverID string, id uuid.UUID) (chatpkg.Session, error)
+	MarkSessionOpen(ctx context.Context, serverID string, id uuid.UUID) (chatpkg.Session, error)
+	MarkSessionClosed(ctx context.Context, serverID string, id uuid.UUID, _ string) (chatpkg.Session, error)
+	AppendMessage(ctx context.Context, m chatpkg.Message) error
+}
+
 // StreamServer is the running instance bound to the gRPC server.
 type StreamServer struct {
 	chatspec.UnimplementedChatStreamServiceServer
-	store             *chatpkg.Store
+	store             sessionStore
 	hubFn             func() *chatpkg.Hub
 	routerFn          func() *chatpkg.Router
 	acl               ACLLookup
