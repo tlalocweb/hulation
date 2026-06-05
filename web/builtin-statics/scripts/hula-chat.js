@@ -78,8 +78,14 @@
       if (serverPub.length !== 32) return false;
       // Generate a per-session keypair. We need the raw private to open agent
       // replies, so generate raw bytes and derive the public via the module.
+      // A missing CSPRNG must NOT proceed: an all-zero (or non-random) private
+      // is a predictable key that defeats the encryption entirely — treat it as
+      // "encryption unsupported" and fall back to plaintext.
+      if (!window.crypto || typeof window.crypto.getRandomValues !== "function") {
+        return false;
+      }
       var priv = new Uint8Array(32);
-      (window.crypto || {}).getRandomValues && window.crypto.getRandomValues(priv);
+      window.crypto.getRandomValues(priv);
       return mod.publicFromPrivate(priv).then(function (pub) {
         enc.serverPub = serverPub;
         enc.sessionPriv = priv;
@@ -482,9 +488,16 @@
             // private. On failure show a placeholder rather than dropping —
             // the operator's message still arrived, we just can't render it.
             if (frame.enc && enc.ready) {
-              var env;
-              try { env = window.HulaVisitorCrypto.b64urlDecode(frame.enc); } catch (_) { return; }
               var who = frame.direction === "agent" ? "them" : "me";
+              var env;
+              try {
+                env = window.HulaVisitorCrypto.b64urlDecode(frame.enc);
+              } catch (_) {
+                // Decode failure: still surface a placeholder so the operator's
+                // message isn't silently lost.
+                appendMsg(who, "[could not decrypt message]");
+                break;
+              }
               window.HulaVisitorCrypto.open(enc.sessionPriv, env).then(function (pt) {
                 appendMsg(who, new TextDecoder().decode(pt));
               }).catch(function () {
@@ -512,17 +525,25 @@
       var text = (msgInput.value || "").trim();
       if (!text || !ws || ws.readyState !== 1) return;
       if (enc.ready) {
-        // Seal content to the server's visitor-chat key. Append optimistically
-        // so the UI feels instant; the seal + send happen async.
+        // Seal content to the server's visitor-chat key. Only append to the UI
+        // and clear the input once the send actually happens — otherwise a seal
+        // failure or a socket that closed before the promise resolves would
+        // leave the message looking delivered when it never left.
         var payload = new TextEncoder().encode(text);
         window.HulaVisitorCrypto.seal(enc.serverPub, payload).then(function (envBytes) {
-          if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "msg", enc: window.HulaVisitorCrypto.b64urlEncode(envBytes) }));
+          if (!ws || ws.readyState !== 1) {
+            appendMsg("sys", "Couldn't send — connection lost. Please retype and try again.");
+            return;
           }
+          ws.send(JSON.stringify({ type: "msg", enc: window.HulaVisitorCrypto.b64urlEncode(envBytes) }));
+          appendMsg("me", text);
+          msgInput.value = "";
+        }).catch(function () {
+          appendMsg("sys", "Couldn't encrypt your message. Please retype and try again.");
         });
-      } else {
-        ws.send(JSON.stringify({ type: "msg", content: text }));
+        return;
       }
+      ws.send(JSON.stringify({ type: "msg", content: text }));
       appendMsg("me", text);
       msgInput.value = "";
     }

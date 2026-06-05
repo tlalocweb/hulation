@@ -151,7 +151,7 @@ func TestHandleNoiseAgentStreamCompletesHandshake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := newFakeAgentStream(ctx)
-	svr := &StreamServer{noiseStaticSecret: serverSecret}
+	svr := &StreamServer{noiseStaticFn: func() []byte { return serverSecret }}
 
 	done := make(chan error, 1)
 	go func() {

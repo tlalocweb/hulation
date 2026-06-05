@@ -17,9 +17,10 @@ syntax = "proto3";
 //     Server-streaming subscription to per-server agent control events: queue snapshots,
 //     session_assigned, session_released. Mirrors agent-control-ws.
 //
-// Auth: AdminBearerInterceptor() unary check is reused at stream open; chat ACL gates
-// `server_id`. For QR-paired chat-only users (no bearer), the same interceptor will also
-// accept ed25519 device-key signatures — that work lands in a follow-up.
+// Auth: AdminBearerStreamInterceptor(deviceKeys) gates stream open (the streaming
+// sibling of AdminBearerInterceptor(deviceKeys), which now takes a DeviceKeyStore);
+// chat ACL gates `server_id`. For QR-paired chat-only users (no bearer), the same
+// interceptor also accepts ed25519 device-key signatures (Hula-Device-* headers).
 //
 // Noise: each stream will eventually carry a Noise_IK session — the first AgentClientFrame
 // (and the ControlSubscribe message) will become Noise handshake messages, with all later

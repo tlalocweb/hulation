@@ -48,7 +48,12 @@ func (s *StreamServer) handleNoiseAgentStream(
 	stream chatspec.ChatStreamService_AgentStreamServer,
 	firstHandshake *chatspec.NoiseEnvelope,
 ) error {
-	if len(s.noiseStaticSecret) != 32 {
+	// Resolve the static key per handshake so config reload / rotation is live.
+	var secret []byte
+	if s.noiseStaticFn != nil {
+		secret = s.noiseStaticFn()
+	}
+	if len(secret) != 32 {
 		return sendStreamError(stream, "noise_unavailable",
 			"server does not have a Noise static key configured")
 	}
@@ -57,7 +62,7 @@ func (s *StreamServer) handleNoiseAgentStream(
 			"first NoiseEnvelope must have is_handshake=true")
 	}
 
-	staticKey, err := noiseStaticKeyFromSecret(s.noiseStaticSecret)
+	staticKey, err := noiseStaticKeyFromSecret(secret)
 	if err != nil {
 		return sendStreamError(stream, "noise_init", err.Error())
 	}
@@ -180,19 +185,22 @@ func noiseStaticKeyFromSecret(secret []byte) (noise.DHKey, error) {
 	return kp, nil
 }
 
-// staticReader hands out a fixed byte slice once and then returns EOF. We use
-// it to feed GenerateKeypair a deterministic "random" stream so it returns a
-// keypair built from our configured secret.
+// staticReader serves a fixed byte slice, tracking an offset so callers that
+// read in multiple smaller chunks still get every byte before EOF. Feeding
+// GenerateKeypair a deterministic "random" stream makes it return a keypair
+// built from our configured secret. (A one-shot reader that marked itself
+// consumed after a single partial Read could hand back a short buffer and make
+// key derivation flaky if the cipher suite ever reads in pieces.)
 type staticReader struct {
-	buf      []byte
-	consumed bool
+	buf []byte
+	off int
 }
 
 func (r *staticReader) Read(p []byte) (int, error) {
-	if r.consumed {
+	if r.off >= len(r.buf) {
 		return 0, io.EOF
 	}
-	n := copy(p, r.buf)
-	r.consumed = true
+	n := copy(p, r.buf[r.off:])
+	r.off += n
 	return n, nil
 }

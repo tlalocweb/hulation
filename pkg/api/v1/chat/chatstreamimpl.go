@@ -57,33 +57,37 @@ type sessionStore interface {
 // StreamServer is the running instance bound to the gRPC server.
 type StreamServer struct {
 	chatspec.UnimplementedChatStreamServiceServer
-	store             sessionStore
-	hubFn             func() *chatpkg.Hub
-	routerFn          func() *chatpkg.Router
-	acl               ACLLookup
-	noiseStaticSecret []byte // 32-byte X25519 private key; nil disables Noise mode.
+	store    sessionStore
+	hubFn    func() *chatpkg.Hub
+	routerFn func() *chatpkg.Router
+	acl      ACLLookup
+	// noiseStaticFn resolves the server's 32-byte X25519 responder static key on
+	// each Noise handshake. A getter (not a captured []byte) so a config reload /
+	// key rotation takes effect for new chat streams without a restart, keeping
+	// the gRPC handshake consistent with what /api/v1/installation/identity
+	// serves. Returns nil/non-32 → Noise mode disabled (plaintext still works).
+	noiseStaticFn func() []byte
 }
 
 // NewStreamServer wires the dependencies. `hubFn` / `routerFn` are lazy accessors — the
 // hub + router singletons aren't constructed until `registerChatPublic()` runs, which is
 // AFTER service registration. Passing closures avoids the temporal coupling.
 //
-// `noiseStaticSecret` (optional) is the server's 32-byte X25519 private key used as the
-// responder static key in Noise_IK handshakes. When nil, clients attempting Noise mode
-// receive an error frame; plaintext streams still work.
+// `noiseStaticFn` (optional, may be nil) resolves the responder static key per
+// handshake so rotation is picked up live. nil → Noise mode disabled.
 func NewStreamServer(
 	store *chatpkg.Store,
 	hubFn func() *chatpkg.Hub,
 	routerFn func() *chatpkg.Router,
 	acl ACLLookup,
-	noiseStaticSecret []byte,
+	noiseStaticFn func() []byte,
 ) *StreamServer {
 	return &StreamServer{
-		store:             store,
-		hubFn:             hubFn,
-		routerFn:          routerFn,
-		acl:               acl,
-		noiseStaticSecret: noiseStaticSecret,
+		store:         store,
+		hubFn:         hubFn,
+		routerFn:      routerFn,
+		acl:           acl,
+		noiseStaticFn: noiseStaticFn,
 	}
 }
 

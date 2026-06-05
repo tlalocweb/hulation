@@ -223,6 +223,18 @@ func (s *deviceNonceSet) remember(deviceID, nonce string, ts time.Time) bool {
 				delete(s.by, k)
 			}
 		}
+		// Hard cap: if every entry was still fresh (e.g. a client/attacker
+		// flooding many unique nonces within the skew window), pruning frees
+		// nothing and the map would grow without bound. Evict entries (map range
+		// order is pseudo-random) until we're back under cap so memory stays
+		// bounded. This can weaken replay protection for the evicted nonces, but
+		// only under an active flood — the bound matters more there.
+		for k := range s.by {
+			if len(s.by) < s.cap {
+				break
+			}
+			delete(s.by, k)
+		}
 	}
 	s.by[key] = ts
 	return true

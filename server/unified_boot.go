@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
@@ -332,21 +333,30 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// The Noise static secret is optional — when set, gRPC clients can opt into a
 	// Noise_IK session-wrap around the per-session stream. Missing / malformed keys
 	// degrade the chat stream to plaintext-only mode (mobile clients that demand
-	// Noise will see noise_unavailable). We log but don't fail boot on decode error.
-	var noiseStatic []byte
-	if cfg.NoiseStaticKey != "" {
-		if k, err := utils.DecodeNoiseStaticKey(cfg.NoiseStaticKey); err != nil {
-			log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
-		} else {
-			noiseStatic = k
+	// Noise will see noise_unavailable).
+	//
+	// Resolved through a getter (re-reading config each handshake) rather than
+	// captured once, so a config reload / key rotation takes effect for new
+	// streams without a restart — and stays consistent with what
+	// /api/v1/installation/identity serves, which also re-reads per request.
+	noiseStaticFn := func() []byte {
+		c := hulaapp.GetConfig()
+		if c == nil || c.NoiseStaticKey == "" {
+			return nil
 		}
+		k, err := utils.DecodeNoiseStaticKey(c.NoiseStaticKey)
+		if err != nil {
+			log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
+			return nil
+		}
+		return k
 	}
 	chatStreamSvc := chatimpl.NewStreamServer(
 		chatStore,
 		ChatHub,
 		ChatRouter,
 		chatACLLookup(cfg),
-		noiseStatic,
+		noiseStaticFn,
 	)
 	chatspec.RegisterChatStreamServiceServer(grpcSrv, chatStreamSvc)
 

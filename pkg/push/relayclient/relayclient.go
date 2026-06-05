@@ -72,8 +72,10 @@ type Config struct {
 	// InstallationID issued by the relay at enrollment time. Travels on every
 	// signed request via Hula-Installation-Id.
 	InstallationID string
-	// SigningKey is the 32-byte ed25519 private seed (raw, not the 64-byte expanded
-	// form). The relay holds the matching public.
+	// SigningKey is the full ed25519 private key (the 64-byte expanded form,
+	// ed25519.PrivateKeySize) — New() rejects anything else. Callers holding a
+	// 32-byte seed must expand it first via ed25519.NewKeyFromSeed. The relay
+	// holds the matching public key.
 	SigningKey ed25519.PrivateKey
 	// HTTPClient is optional; defaults to a fresh client with sensible timeouts.
 	HTTPClient *http.Client

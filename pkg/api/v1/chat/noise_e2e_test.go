@@ -48,7 +48,7 @@ func TestNoiseAgentStreamEndToEnd(t *testing.T) {
 	//    handshake completes before any of those are touched, and runAgentStream
 	//    will emit an "unauthorized" frame when it sees no claims in context.
 	//    That error round-tripping is exactly what we want to verify here.
-	svr := &StreamServer{noiseStaticSecret: serverSecret}
+	svr := &StreamServer{noiseStaticFn: func() []byte { return serverSecret }}
 	lis := bufconn.Listen(1 << 20)
 	grpcSrv := grpc.NewServer()
 	chatspec.RegisterChatStreamServiceServer(grpcSrv, svr)
@@ -202,7 +202,7 @@ func TestNoiseAgentStreamHappyPath(t *testing.T) {
 		hubFn:             func() *chatpkg.Hub { return hub },
 		routerFn:          func() *chatpkg.Router { return nil }, // optional dep; nil is fine.
 		acl:               func(context.Context) ACLResolution { return ACLResolution{Superadmin: true} },
-		noiseStaticSecret: serverSecret,
+		noiseStaticFn: func() []byte { return serverSecret },
 	}
 
 	// gRPC server with a stream interceptor that injects claims — the real
@@ -468,7 +468,7 @@ func (f *fakeSessionStore) AppendMessage(_ context.Context, m chatpkg.Message) e
 // frame indicating Noise is unavailable, not silently fall through to
 // plaintext mode.
 func TestNoiseAgentStreamRejectsNoiseWhenServerHasNoKey(t *testing.T) {
-	svr := &StreamServer{} // noiseStaticSecret left nil
+	svr := &StreamServer{} // noiseStaticFn nil -> Noise disabled
 	lis := bufconn.Listen(1 << 20)
 	grpcSrv := grpc.NewServer()
 	chatspec.RegisterChatStreamServiceServer(grpcSrv, svr)
