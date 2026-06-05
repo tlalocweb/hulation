@@ -47,6 +47,29 @@ type DeviceKeyStore interface {
 	LookupDeviceKey(ctx context.Context, deviceID string) (DeviceKey, bool)
 }
 
+// DeviceKeyWriter is the small write surface the QR pair redeem handler uses to
+// persist a newly-redeemed device. Both the in-memory store and the bolt-backed
+// store (in pkg/store/bolt) satisfy it. Keeping it separate from `DeviceKeyStore`
+// matches the read-vs-write boundary the auth interceptor cares about: handlers
+// that only read the store should depend on the narrower interface.
+type DeviceKeyWriter interface {
+	PutDeviceKey(DeviceKey) error
+}
+
+// DeviceKeyRevoker is the delete-side counterpart to `DeviceKeyWriter`. The
+// admin "revoke device" handler depends on this so we don't tunnel a concrete
+// store type through the handler signature.
+type DeviceKeyRevoker interface {
+	Delete(deviceID string) error
+}
+
+// DeviceKeyLister is the list-side counterpart. Today both backings expose
+// `ListForUser`; the in-memory variant adds it here to satisfy the interface
+// even though it's only ever exercised in tests.
+type DeviceKeyLister interface {
+	ListForUser(ctx context.Context, userID string) ([]DeviceKey, error)
+}
+
 // InMemoryDeviceKeyStore is a sync-safe map used by tests + the v1 boot path until a
 // persistent store lands alongside the QR-pairing endpoint. Production swaps this for a
 // real backing store.
@@ -65,10 +88,32 @@ func (s *InMemoryDeviceKeyStore) Put(key DeviceKey) {
 	s.byID[key.DeviceID] = key
 }
 
-func (s *InMemoryDeviceKeyStore) Delete(deviceID string) {
+// PutDeviceKey satisfies DeviceKeyWriter. Wraps Put with the error-returning
+// signature persistent stores naturally need; the in-memory variant always
+// succeeds.
+func (s *InMemoryDeviceKeyStore) PutDeviceKey(key DeviceKey) error {
+	s.Put(key)
+	return nil
+}
+
+func (s *InMemoryDeviceKeyStore) Delete(deviceID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.byID, deviceID)
+	return nil
+}
+
+// ListForUser satisfies DeviceKeyLister.
+func (s *InMemoryDeviceKeyStore) ListForUser(_ context.Context, userID string) ([]DeviceKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]DeviceKey, 0, len(s.byID))
+	for _, k := range s.byID {
+		if k.UserID == userID {
+			out = append(out, k)
+		}
+	}
+	return out, nil
 }
 
 func (s *InMemoryDeviceKeyStore) LookupDeviceKey(_ context.Context, deviceID string) (DeviceKey, bool) {

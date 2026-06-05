@@ -112,10 +112,28 @@ message Device {
 message RegisterDeviceRequest {
   Platform platform = 1;
   // Raw push token — APNs device token (hex) or FCM registration
-  // token. The server encrypts before persisting.
+  // token. The server encrypts before persisting. Used by the
+  // legacy direct-APNs/FCM fan-out path; new devices that pair via
+  // the relay typically leave this empty and fill the relay_*
+  // fields below instead.
   string token = 2;
   string device_fingerprint = 3;
   string label = 4;
+  // hula-push-relay channel id (`pch_...`), returned by the relay
+  // when the device called POST /v1/channels/register. Stored as
+  // plaintext (non-secret).
+  string relay_channel_id = 5;
+  // hula-push-relay channel auth — per-channel shared secret the
+  // relay validates on every push. Sealed alongside `token` and
+  // never logged in plaintext.
+  string relay_channel_auth = 6;
+  // Device's per-server X25519 public key (32 raw bytes,
+  // base64-encoded). hulation seals the visible push preview to
+  // this key; the device unseals on-receipt inside the iOS NSE or
+  // Android FirebaseMessagingService. See
+  // hula-mobile/common/src/keys.rs::ensure_device_keypair for the
+  // device-side keypair generation.
+  string noise_encryption_pub_b64 = 7;
 }
 
 message UnregisterDeviceRequest {

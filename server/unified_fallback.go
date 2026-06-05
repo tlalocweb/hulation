@@ -100,6 +100,7 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 	// renders the embedded mustache template with per-host variables.
 	for _, asset := range []handler.BuiltinStaticAsset{
 		handler.BuiltinChatJSAsset(),
+		handler.BuiltinChatCryptoJSAsset(),
 		handler.BuiltinChatCSSAsset(),
 	} {
 		srv.RegisterCustomHandler("GET "+asset.URLPath, handler.BuiltinStaticHandler(asset))

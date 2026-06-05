@@ -846,6 +846,19 @@ type Admin struct {
 	TotpRequired bool   `yaml:"totp_required,omitempty"`
 }
 
+// PushRelayConfig is the per-installation hula-push-relay binding. All three fields
+// are issued by the relay at enrollment (`hula-relay admin issue-code` then redeem
+// via POST /v1/installations/enroll) — operators paste them into this block.
+type PushRelayConfig struct {
+	// BaseURL of the relay, e.g. "https://relay.tlaloc.us". Trailing slash optional.
+	BaseURL string `yaml:"base_url,omitempty" env:"HULA_RELAY_BASE_URL"`
+	// InstallationID returned by the relay at enrollment, opaque (`inst_...`).
+	InstallationID string `yaml:"installation_id,omitempty" env:"HULA_RELAY_INSTALLATION_ID"`
+	// Base64-standard-encoded ed25519 *private seed* (32 bytes). The relay holds the
+	// matching public. Keep off disk in production — pass via env / secrets manager.
+	SigningKeyB64 string `yaml:"signing_key_b64,omitempty" env:"HULA_RELAY_SIGNING_KEY"`
+}
+
 type Config struct {
 	Admin *Admin `yaml:"admin,omitempty"`
 	Port  int    `yaml:"port,omitempty" env:"APP_PORT" test:">0,<65536" default:"8080"`
@@ -893,6 +906,21 @@ type Config struct {
 	// hulactl noise-static-key. When empty, plaintext gRPC streams still work but
 	// Noise-mode connections are rejected with a noise_unavailable error.
 	NoiseStaticKey string `yaml:"noise_static_key,omitempty" env:"HULA_NOISE_STATIC_KEY"`
+	// Base64url-encoded 32-byte X25519 private key the visitor chat widget seals
+	// message content to (app-layer encryption on top of HTTPS, so TLS-inspecting
+	// middleboxes can't read visitor email / chat). Distinct from NoiseStaticKey for
+	// crypto domain separation between the gRPC Noise_IK protocol and the widget
+	// sealed-box protocol. Generate with: hulactl visitor-chat-key. When empty, the
+	// widget falls back to plaintext (chat still works) and /installation/identity
+	// omits the visitor_chat_public_key_b64 field.
+	VisitorChatKey string `yaml:"visitor_chat_key,omitempty" env:"HULA_VISITOR_CHAT_KEY"`
+	// PushRelay is the per-installation hula-push-relay binding. Operators populate it
+	// with the relay base URL plus the installation_id + ed25519 signing key the relay
+	// issued at enrollment time. When set, chat / alert push fan-out routes through the
+	// relay for any device that registered with relay_* fields (preview is sealed to
+	// the device's X25519 pub before leaving hulation, so the relay never sees
+	// plaintext). When unset, only the legacy direct-APNs/FCM path fires.
+	PushRelay *PushRelayConfig `yaml:"push_relay,omitempty"`
 	// Auth providers (OIDC SSO + internal password). See pkg/server/
 	// authware/provider for the runtime. Use AuthConfig.Providers.
 	Auth *AuthConfig `yaml:"auth,omitempty"`

@@ -86,7 +86,11 @@ var chatWSUpgrader = websocket.Upgrader{
 type visitorFrameIn struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
-	Active  *bool  `json:"active,omitempty"`
+	// Enc, when present on a "msg" frame, is a base64url visitorcrypto
+	// envelope sealing the message content to the installation's visitor-chat
+	// key. The server Opens it and treats the result as Content.
+	Enc    string `json:"enc,omitempty"`
+	Active *bool  `json:"active,omitempty"`
 }
 
 func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
@@ -96,6 +100,15 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 		if token == "" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
 			return
+		}
+		// Optional per-connection visitor session public key (?vpub=). When
+		// present + valid + the installation has a visitor-chat key, the
+		// writer seals outbound agent message content to it. Absence → this
+		// connection runs in plaintext (old widget, unsupported browser, or
+		// encryption disabled server-side).
+		visitorPub, encOutbound := decodeVisitorSessionPub(r.URL.Query().Get("vpub"))
+		if _, ok := visitorChatPrivateKey(); !ok {
+			encOutbound = false // no server key → can't be in encrypted mode
 		}
 		claims, err := chatpkg.ParseToken(svc.JWTKey, token)
 		if err != nil {
@@ -199,6 +212,20 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 						"active": active,
 					}), sub)
 				case "msg":
+					// Encrypted inbound: Open the sealed envelope to recover
+					// the content. A present `enc` that fails to open is a hard
+					// error — never silently fall back to plaintext, which
+					// would let a middlebox strip encryption by mangling the
+					// envelope.
+					if fr.Enc != "" {
+						pt, derr := openVisitorEnvelope(fr.Enc)
+						if derr != nil {
+							log.Warnf("chat ws: open visitor envelope: %s", derr)
+							_ = trySend(sub.Out, errFrame("enc_invalid", "could not decrypt message"))
+							continue
+						}
+						fr.Content = string(pt)
+					}
 					content := strings.TrimSpace(fr.Content)
 					if content == "" {
 						_ = trySend(sub.Out, errFrame("empty_content", "message cannot be empty"))
@@ -249,6 +276,9 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			case msg, ok := <-sub.Out:
 				if !ok {
 					return
+				}
+				if encOutbound {
+					msg = maybeSealOutbound(msg, visitorPub)
 				}
 				_ = conn.SetWriteDeadline(time.Now().Add(cfg.WriteTimeout))
 				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {

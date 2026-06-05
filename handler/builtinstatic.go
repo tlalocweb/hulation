@@ -19,6 +19,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/base64"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ import (
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/tune"
+	"github.com/tlalocweb/hulation/pkg/visitorcrypto"
+	"github.com/tlalocweb/hulation/utils"
 	builtinstatics "github.com/tlalocweb/hulation/web/builtin-statics"
 )
 
@@ -49,6 +52,18 @@ func BuiltinChatJSAsset() BuiltinStaticAsset {
 	return BuiltinStaticAsset{
 		EmbedPath:   "scripts/hula-chat.js",
 		URLPath:     "/" + tune.GetBuiltinStaticPrefix() + "scripts/hula-chat.js",
+		ContentType: "text/javascript; charset=utf-8",
+	}
+}
+
+// BuiltinChatCryptoJSAsset returns the descriptor for the visitor-chat
+// encryption module, at /<prefix>scripts/hula-visitor-crypto.js. Static (no
+// per-host template vars) — the widget loads it on demand when the install has
+// a visitor_chat_key.
+func BuiltinChatCryptoJSAsset() BuiltinStaticAsset {
+	return BuiltinStaticAsset{
+		EmbedPath:   "scripts/hula-visitor-crypto.js",
+		URLPath:     "/" + tune.GetBuiltinStaticPrefix() + "scripts/hula-visitor-crypto.js",
 		ContentType: "text/javascript; charset=utf-8",
 	}
 }
@@ -231,6 +246,19 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 		captchaSitekey = cfg.Chat.Captcha.SiteKey
 	}
 
+	// Visitor-chat encryption. When the install has a visitor_chat_key, derive
+	// its public and template it in so the widget can seal content to it. Empty
+	// → widget runs plaintext. The crypto module lives beside the widget under
+	// the same static prefix.
+	visitorChatPub := ""
+	if cfg != nil && cfg.VisitorChatKey != "" {
+		if priv, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey); err == nil {
+			if pub, perr := visitorcrypto.PublicKeyFromPrivate(priv); perr == nil {
+				visitorChatPub = base64.RawURLEncoding.EncodeToString(pub)
+			}
+		}
+	}
+
 	return map[string]string{
 		"server_id":             srv.ID,
 		"chat_start_url":        "/api/v1/chat/start",
@@ -239,5 +267,9 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 		"captcha_provider":      captchaProvider,
 		"captcha_sitekey":       captchaSitekey,
 		"captcha_token_default": captchaDefault,
+		// Empty string when encryption isn't configured; widget treats that as
+		// "plaintext mode".
+		"visitor_chat_public_key_b64": visitorChatPub,
+		"visitor_crypto_url":          "/" + prefix + "scripts/hula-visitor-crypto.js",
 	}
 }

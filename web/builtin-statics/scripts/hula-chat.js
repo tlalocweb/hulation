@@ -32,7 +32,63 @@
     captchaProvider:  "{{captcha_provider}}",
     captchaSitekey:   "{{captcha_sitekey}}",
     captchaDefault:   "{{captcha_token_default}}",
+    // Visitor-chat encryption. visitorChatPub is the installation's
+    // visitor-chat X25519 public (base64url, no padding); empty when the
+    // install hasn't configured visitor_chat_key. cryptoUrl loads the crypto
+    // module on demand. When either is missing — or the browser lacks
+    // WebCrypto X25519 — the widget runs in plaintext (chat still works).
+    visitorChatPub:   "{{visitor_chat_public_key_b64}}",
+    cryptoUrl:        "{{visitor_crypto_url}}",
   };
+
+  // --- Visitor-chat encryption -------------------------------------
+  //
+  // enc holds the negotiated crypto state for this page session:
+  //   .ready       — true once the module loaded + a session keypair exists
+  //   .serverPub   — Uint8Array(32) server recipient key
+  //   .sessionPriv — Uint8Array(32) our per-session private (opens agent replies)
+  //   .sessionPub  — Uint8Array(32) our per-session public (sent as ?vpub=)
+  // All null/false when encryption is unavailable → widget falls back to
+  // plaintext transparently.
+  var enc = { ready: false, serverPub: null, sessionPriv: null, sessionPub: null };
+
+  function loadCryptoModule() {
+    return new Promise(function (resolve) {
+      if (window.HulaVisitorCrypto) return resolve(window.HulaVisitorCrypto);
+      if (!CFG.cryptoUrl) return resolve(null);
+      var s = document.createElement("script");
+      s.src = CFG.cryptoUrl;
+      s.async = true;
+      s.onload = function () { resolve(window.HulaVisitorCrypto || null); };
+      s.onerror = function () { resolve(null); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // Best-effort: returns a promise that resolves true when encryption is set
+  // up for this session, false when we should run plaintext. Never rejects.
+  function initEncryption() {
+    if (!CFG.visitorChatPub || !CFG.cryptoUrl) return Promise.resolve(false);
+    return loadCryptoModule().then(function (mod) {
+      if (!mod || !mod.isSupported()) return false;
+      var serverPub;
+      try {
+        serverPub = mod.b64urlDecode(CFG.visitorChatPub);
+      } catch (_) { return false; }
+      if (serverPub.length !== 32) return false;
+      // Generate a per-session keypair. We need the raw private to open agent
+      // replies, so generate raw bytes and derive the public via the module.
+      var priv = new Uint8Array(32);
+      (window.crypto || {}).getRandomValues && window.crypto.getRandomValues(priv);
+      return mod.publicFromPrivate(priv).then(function (pub) {
+        enc.serverPub = serverPub;
+        enc.sessionPriv = priv;
+        enc.sessionPub = pub;
+        enc.ready = true;
+        return true;
+      }).catch(function () { return false; });
+    });
+  }
 
   // --- CSS injection ------------------------------------------------
 
@@ -269,6 +325,11 @@
 
   function mount() {
     injectStylesheet();
+    // Kick off encryption setup as early as possible so enc.ready is set by
+    // the time the visitor finishes typing the form. Non-blocking; the submit
+    // handler tolerates it not yet being ready (falls back to plaintext for
+    // that one chat-start, then the WS still uses whatever state exists).
+    initEncryption().catch(function () { /* plaintext fallback */ });
     var panel = buildPanel();
 
     var startEl    = panel.querySelector(".hc-start");
@@ -341,14 +402,31 @@
       trySilentGeolocation().then(function (coords) {
         var body = {
           server_id:       CFG.serverId,
-          email:           email,
-          first_message:   first,
           turnstile_token: token,
         };
         if (coords) {
           body.latitude  = coords.latitude;
           body.longitude = coords.longitude;
         }
+        // Encrypted path: seal {email, first_message} to the server's
+        // visitor-chat key so a TLS-inspecting middlebox sees only ciphertext.
+        // Falls back to plaintext fields when encryption isn't available.
+        if (enc.ready) {
+          var payload = new TextEncoder().encode(
+            JSON.stringify({ email: email, first_message: first })
+          );
+          return window.HulaVisitorCrypto.seal(enc.serverPub, payload).then(function (envBytes) {
+            body.enc = window.HulaVisitorCrypto.b64urlEncode(envBytes);
+            return fetch(CFG.chatStartUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "omit",
+              body: JSON.stringify(body),
+            });
+          });
+        }
+        body.email = email;
+        body.first_message = first;
         return fetch(CFG.chatStartUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -386,6 +464,10 @@
       var wsBase = session.chat_url
         || (location.origin.replace(/^http/, "ws") + CFG.chatWsUrl);
       var url = wsBase + "?token=" + encodeURIComponent(session.chat_token);
+      // Present our per-session public so the server seals agent replies to it.
+      if (enc.ready) {
+        url += "&vpub=" + encodeURIComponent(window.HulaVisitorCrypto.b64urlEncode(enc.sessionPub));
+      }
       ws = new WebSocket(url);
       ws.onopen = function () {
         sendBtn.disabled = false;
@@ -396,7 +478,21 @@
         try { frame = JSON.parse(ev.data); } catch (_) { return; }
         switch (frame.type) {
           case "msg":
-            appendMsg(frame.direction === "agent" ? "them" : "me", frame.content || "");
+            // Encrypted inbound: open the sealed envelope with our session
+            // private. On failure show a placeholder rather than dropping —
+            // the operator's message still arrived, we just can't render it.
+            if (frame.enc && enc.ready) {
+              var env;
+              try { env = window.HulaVisitorCrypto.b64urlDecode(frame.enc); } catch (_) { return; }
+              var who = frame.direction === "agent" ? "them" : "me";
+              window.HulaVisitorCrypto.open(enc.sessionPriv, env).then(function (pt) {
+                appendMsg(who, new TextDecoder().decode(pt));
+              }).catch(function () {
+                appendMsg(who, "[could not decrypt message]");
+              });
+            } else {
+              appendMsg(frame.direction === "agent" ? "them" : "me", frame.content || "");
+            }
             break;
           case "presence":
             // not surfaced today
@@ -415,7 +511,18 @@
     function sendMessage() {
       var text = (msgInput.value || "").trim();
       if (!text || !ws || ws.readyState !== 1) return;
-      ws.send(JSON.stringify({ type: "msg", content: text }));
+      if (enc.ready) {
+        // Seal content to the server's visitor-chat key. Append optimistically
+        // so the UI feels instant; the seal + send happen async.
+        var payload = new TextEncoder().encode(text);
+        window.HulaVisitorCrypto.seal(enc.serverPub, payload).then(function (envBytes) {
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "msg", enc: window.HulaVisitorCrypto.b64urlEncode(envBytes) }));
+          }
+        });
+      } else {
+        ws.send(JSON.stringify({ type: "msg", content: text }));
+      }
       appendMsg("me", text);
       msgInput.value = "";
     }

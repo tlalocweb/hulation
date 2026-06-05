@@ -39,6 +39,8 @@ var Buckets = []string{
 	"chat_acl",
 	"consent_log",
 	"cookieless_salts",
+	"pair_codes",  // QR-pair issued codes (pkg/store/bolt/paircode.go)
+	"device_keys", // QR-paired device public keys (pkg/store/bolt/devicekey.go)
 	// _team holds HA Stage 3 cluster-coordination state:
 	// _team/bootstrap_token, _team/ch_connected/<node>, future
 	// _team/<feature>/... keys. Lives in the Raft FSM so every

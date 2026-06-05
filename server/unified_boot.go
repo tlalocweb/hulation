@@ -54,6 +54,8 @@ import (
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	"github.com/tlalocweb/hulation/utils"
 
 	"gopkg.in/yaml.v3"
@@ -149,9 +151,25 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	clientCAs := agentClientCAPool()
 
 	// Device-key store powers Hula-Device-* signature auth (QR-paired mobile devices).
-	// Until the QR-pairing endpoint is wired, the in-memory store is empty — bearer auth
-	// continues to be the only working path. Tests insert keys directly.
-	deviceKeyStore := authware.NewInMemoryDeviceKeyStore()
+	// The QR-pairing endpoints (/api/v1/pair/{issue,redeem}, see pair_handlers.go)
+	// write into this store when a marketer redeems a code; the auth interceptors
+	// read from it to validate signed requests. Tests insert keys directly.
+	//
+	// We prefer the bolt-backed stores when storage.Global() is online so paired
+	// devices + unredeemed codes survive a hulation restart. Falls back to the
+	// in-memory variants when bolt isn't available (no-storage dev runs, tests).
+	var deviceKeyStore authware.DeviceKeyStore
+	var pairCodeStore authware.PairCodeStore
+	if s := storage.Global(); s != nil {
+		log.Infof("pair: using bolt-backed device-key + pair-code stores")
+		deviceKeyStore = hulabolt.NewDeviceKeyStore(s)
+		pairCodeStore = hulabolt.NewPairCodeStore(s)
+	} else {
+		log.Warnf("pair: storage.Global() unavailable — using in-memory device-key + pair-code stores (state lost on restart)")
+		deviceKeyStore = authware.NewInMemoryDeviceKeyStore()
+		pairCodeStore = authware.NewInMemoryPairCodeStore()
+	}
+	wirePairHandlers(pairCodeStore, deviceKeyStore)
 
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
@@ -414,6 +432,19 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// authenticating. No-op when no Noise key is configured; the handler
 	// returns 404 in that case.
 	srv.RegisterCustomHandler("GET /api/v1/installation/identity", installationIdentityHandler())
+
+	// QR pair flow — admin issues a single-use code via /pair/issue (bearer-
+	// authed); the mobile app redeems it via /pair/redeem (unauthenticated;
+	// the code is the proof). Redemption writes a DeviceKey into the
+	// deviceKeyStore above so subsequent signed requests from the device
+	// satisfy the AdminBearerInterceptor's `claimsFromDeviceSignature` path.
+	srv.RegisterCustomHandler("POST /api/v1/pair/issue", pairIssueHandler())
+	srv.RegisterCustomHandler("POST /api/v1/pair/redeem", pairRedeemHandler())
+	// Self-service + admin list/revoke. List is GET so curl-ability for
+	// operators is preserved; revoke is POST since it mutates and we want
+	// the CSRF protections the existing middleware applies to POST routes.
+	srv.RegisterCustomHandler("GET /api/v1/pair/devices", pairListDevicesHandler())
+	srv.RegisterCustomHandler("POST /api/v1/pair/devices/revoke", pairRevokeDeviceHandler())
 
 	// CORS — must be among the OUTERMOST middleware. CORS needs to
 	// see OPTIONS preflights before auth/proxy middleware drops them,

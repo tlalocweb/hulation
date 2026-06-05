@@ -77,6 +77,12 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 			FirstMessage   string         `json:"first_message"`
 			Country        string         `json:"country"`
 			Device         string         `json:"device"`
+			// enc, when present, is a base64url visitorcrypto envelope sealing
+			// {email, first_message} to the installation's visitor-chat key.
+			// Lets the widget keep PII + the opening message opaque to a
+			// TLS-inspecting middlebox. When set it overrides the plaintext
+			// email / first_message fields above.
+			Enc string `json:"enc,omitempty"`
 			// Latitude / Longitude come from visitor widgets that
 			// successfully obtained browser geolocation. Pointers so
 			// "field absent" is distinguishable from "zero coords".
@@ -87,6 +93,31 @@ func chatStartHandler(svc *chatpkg.Service, isKnown chatpkg.IsServerKnown) http.
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&body); err != nil {
 			writeStartError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 			return
+		}
+		// Encrypted path: decrypt the sealed envelope and pull email +
+		// first_message out of it, overriding any plaintext fields. A present
+		// `enc` that fails to open is a hard error — we don't silently fall
+		// back to plaintext, since that would let a middlebox strip the
+		// encryption by mangling the envelope.
+		if strings.TrimSpace(body.Enc) != "" {
+			pt, err := openVisitorEnvelope(body.Enc)
+			if err != nil {
+				log.Warnf("chat/start: open visitor envelope: %s", err)
+				writeStartError(w, http.StatusBadRequest, "enc_invalid",
+					"encrypted payload could not be decrypted")
+				return
+			}
+			var inner struct {
+				Email        string `json:"email"`
+				FirstMessage string `json:"first_message"`
+			}
+			if err := json.Unmarshal(pt, &inner); err != nil {
+				writeStartError(w, http.StatusBadRequest, "enc_invalid",
+					"encrypted payload is not valid JSON")
+				return
+			}
+			body.Email = inner.Email
+			body.FirstMessage = inner.FirstMessage
 		}
 		if strings.TrimSpace(body.ServerID) == "" || strings.TrimSpace(body.Email) == "" {
 			writeStartError(w, http.StatusBadRequest, "bad_request", "server_id and email required")

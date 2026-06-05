@@ -5,6 +5,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/rivo/tview"
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/crypto/curve25519"
 	"gopkg.in/yaml.v3"
 
 	"github.com/tlalocweb/hulation/client"
@@ -1166,6 +1168,31 @@ func main() {
 		fmt.Printf("TOTP encryption key: %s\n", key)
 		fmt.Printf("\nAdd to your hulation config:\n  totp_encryption_key: \"%s\"\n", key)
 
+	case CMD_NOISESTATICKEY:
+		privB64, pubB64, err := generateNoiseStaticKeyPair()
+		if err != nil {
+			fmt.Printf("Error generating key: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Noise static private:  %s\n", privB64)
+		fmt.Printf("Noise static public:   %s\n", pubB64)
+		fmt.Printf("\nAdd to your hulation config:\n  noise_static_key: \"%s\"\n", privB64)
+		fmt.Printf("\nThe public key above is what `GET /api/v1/installation/identity`\nreturns — mobile clients pin it at pair time.\n")
+
+	case CMD_VISITORCHATKEY:
+		// Same 32-byte X25519 base64url shape as the Noise static key; the
+		// generator + derivation are identical, only the config field and
+		// purpose differ. Reuse the shared helper.
+		privB64, pubB64, err := generateNoiseStaticKeyPair()
+		if err != nil {
+			fmt.Printf("Error generating key: %s\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Visitor-chat private:  %s\n", privB64)
+		fmt.Printf("Visitor-chat public:   %s\n", pubB64)
+		fmt.Printf("\nAdd to your hulation config:\n  visitor_chat_key: \"%s\"\n", privB64)
+		fmt.Printf("\nThe public key above is published at\n`GET /api/v1/installation/identity` as visitor_chat_public_key_b64 —\nthe browser widget seals visitor messages to it.\n")
+
 	case CMD_OPAQUESEED:
 		// Generate fresh OPAQUE OPRF seed + AKE secret, both
 		// base64url-encoded. Operator pastes into config or env.
@@ -1857,4 +1884,30 @@ func main() {
 		printHelp()
 	}
 
+}
+
+// generateNoiseStaticKeyPair mints a fresh 32-byte X25519 private key (matching
+// the `noise_static_key` config field's wire format) and derives the matching
+// public via curve25519 scalar mult — the same derivation
+// server/installation_identity.go runs at request time. Returns both halves
+// base64url-no-pad encoded.
+//
+// Extracted from the CMD_NOISESTATICKEY case so the round-trip is unit-testable
+// without forking the binary.
+func generateNoiseStaticKeyPair() (privB64, pubB64 string, err error) {
+	privB64, err = utils.GenerateNoiseStaticKey()
+	if err != nil {
+		return "", "", err
+	}
+	privBytes, err := utils.DecodeNoiseStaticKey(privB64)
+	if err != nil {
+		// Should be impossible — Generate emits exactly what Decode accepts.
+		return "", "", fmt.Errorf("generated key does not round-trip: %w", err)
+	}
+	pubBytes, err := curve25519.X25519(privBytes, curve25519.Basepoint)
+	if err != nil {
+		return "", "", fmt.Errorf("derive public key: %w", err)
+	}
+	pubB64 = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(pubBytes)
+	return privB64, pubB64, nil
 }
