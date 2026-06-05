@@ -191,12 +191,30 @@ type RegisterDeviceRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Platform Platform               `protobuf:"varint,1,opt,name=platform,proto3,enum=hulation.v1.mobile.Platform" json:"platform,omitempty"`
 	// Raw push token — APNs device token (hex) or FCM registration
-	// token. The server encrypts before persisting.
+	// token. The server encrypts before persisting. Used by the
+	// legacy direct-APNs/FCM fan-out path; new devices that pair via
+	// the relay typically leave this empty and fill the relay_*
+	// fields below instead.
 	Token             string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	DeviceFingerprint string `protobuf:"bytes,3,opt,name=device_fingerprint,json=deviceFingerprint,proto3" json:"device_fingerprint,omitempty"`
 	Label             string `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// hula-push-relay channel id (`pch_...`), returned by the relay
+	// when the device called POST /v1/channels/register. Stored as
+	// plaintext (non-secret).
+	RelayChannelId string `protobuf:"bytes,5,opt,name=relay_channel_id,json=relayChannelId,proto3" json:"relay_channel_id,omitempty"`
+	// hula-push-relay channel auth — per-channel shared secret the
+	// relay validates on every push. Sealed alongside `token` and
+	// never logged in plaintext.
+	RelayChannelAuth string `protobuf:"bytes,6,opt,name=relay_channel_auth,json=relayChannelAuth,proto3" json:"relay_channel_auth,omitempty"`
+	// Device's per-server X25519 public key (32 raw bytes,
+	// base64-encoded). hulation seals the visible push preview to
+	// this key; the device unseals on-receipt inside the iOS NSE or
+	// Android FirebaseMessagingService. See
+	// hula-mobile/common/src/keys.rs::ensure_device_keypair for the
+	// device-side keypair generation.
+	NoiseEncryptionPubB64 string `protobuf:"bytes,7,opt,name=noise_encryption_pub_b64,json=noiseEncryptionPubB64,proto3" json:"noise_encryption_pub_b64,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RegisterDeviceRequest) Reset() {
@@ -253,6 +271,27 @@ func (x *RegisterDeviceRequest) GetDeviceFingerprint() string {
 func (x *RegisterDeviceRequest) GetLabel() string {
 	if x != nil {
 		return x.Label
+	}
+	return ""
+}
+
+func (x *RegisterDeviceRequest) GetRelayChannelId() string {
+	if x != nil {
+		return x.RelayChannelId
+	}
+	return ""
+}
+
+func (x *RegisterDeviceRequest) GetRelayChannelAuth() string {
+	if x != nil {
+		return x.RelayChannelAuth
+	}
+	return ""
+}
+
+func (x *RegisterDeviceRequest) GetNoiseEncryptionPubB64() string {
+	if x != nil {
+		return x.NoiseEncryptionPubB64
 	}
 	return ""
 }
@@ -970,12 +1009,15 @@ const file_pkg_apispec_v1_mobile_mobile_proto_rawDesc = "" +
 	"\rregistered_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\fregisteredAt\x12<\n" +
 	"\flast_seen_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"lastSeenAt\x12\x16\n" +
-	"\x06active\x18\b \x01(\bR\x06active\"\xac\x01\n" +
+	"\x06active\x18\b \x01(\bR\x06active\"\xbd\x02\n" +
 	"\x15RegisterDeviceRequest\x128\n" +
 	"\bplatform\x18\x01 \x01(\x0e2\x1c.hulation.v1.mobile.PlatformR\bplatform\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12-\n" +
 	"\x12device_fingerprint\x18\x03 \x01(\tR\x11deviceFingerprint\x12\x14\n" +
-	"\x05label\x18\x04 \x01(\tR\x05label\"6\n" +
+	"\x05label\x18\x04 \x01(\tR\x05label\x12(\n" +
+	"\x10relay_channel_id\x18\x05 \x01(\tR\x0erelayChannelId\x12,\n" +
+	"\x12relay_channel_auth\x18\x06 \x01(\tR\x10relayChannelAuth\x127\n" +
+	"\x18noise_encryption_pub_b64\x18\a \x01(\tR\x15noiseEncryptionPubB64\"6\n" +
 	"\x17UnregisterDeviceRequest\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\"*\n" +
 	"\x18UnregisterDeviceResponse\x12\x0e\n" +

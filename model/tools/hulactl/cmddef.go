@@ -63,6 +63,12 @@ const (
 	CMD_RELOAD_HELP           = "Send SIGHUP to the running hula process to reload config"
 	CMD_TOTPKEY               = "totp-key"
 	CMD_TOTPKEY_HELP          = "Generate a TOTP encryption key for the config file"
+	CMD_NOISESTATICKEY        = "noise-static-key"
+	CMD_NOISESTATICKEY_HELP   = "Generate a Noise_IK static keypair for the chat-stream encryption (config: noise_static_key)"
+	CMD_NOISESTATICKEY_USAGE  = "noise-static-key\n\nGenerates a fresh 32-byte X25519 private key, base64url-encoded\n(no padding), suitable for the `noise_static_key:` field in\nhulation's config (or HULA_NOISE_STATIC_KEY env). Also prints the\nmatching public key so operators can pin it out-of-band on mobile\nclients (`HulaClient::setNoiseServerPublicKey`).\n\nThe printed values are stable secrets — store the private half in\nyour secrets manager and rotate by issuing a new pair and switching\nthe config. Existing mobile clients that pinned the old public will\nrefuse to open a Noise stream against the new key until they fetch\nthe new identity via GET /api/v1/installation/identity."
+	CMD_VISITORCHATKEY        = "visitor-chat-key"
+	CMD_VISITORCHATKEY_HELP   = "Generate a visitor-chat widget sealed-box keypair (config: visitor_chat_key)"
+	CMD_VISITORCHATKEY_USAGE  = "visitor-chat-key\n\nGenerates a fresh 32-byte X25519 private key, base64url-encoded\n(no padding), for the `visitor_chat_key:` field in hulation's config\n(or HULA_VISITOR_CHAT_KEY env). The browser chat widget seals visitor\nmessage content to the matching public key before the bytes hit HTTPS,\nso a TLS-inspecting middlebox sees only ciphertext. The public is\npublished at GET /api/v1/installation/identity as\nvisitor_chat_public_key_b64.\n\nDistinct from noise-static-key — separate keys keep the gRPC Noise_IK\nprotocol and the widget sealed-box protocol cryptographically\ndomain-separated. When unset, the widget falls back to plaintext\nchat (still functional, just not middlebox-opaque)."
 	CMD_TOTPSETUP             = "totp-setup"
 	CMD_TOTPSETUP_HELP        = "Set up TOTP for the admin user (interactive)"
 	CMD_SETPASSWORD           = "set-password"
@@ -159,6 +165,8 @@ func init() {
 		Command{CMD_UPDATEADMINHASH, CMD_UPDATEADMINHASH_HELP, CMD_UPDATEADMINHASH_USAGE},
 		Command{CMD_RELOAD, CMD_RELOAD_HELP, ""},
 		Command{CMD_TOTPKEY, CMD_TOTPKEY_HELP, ""},
+		Command{CMD_NOISESTATICKEY, CMD_NOISESTATICKEY_HELP, CMD_NOISESTATICKEY_USAGE},
+		Command{CMD_VISITORCHATKEY, CMD_VISITORCHATKEY_HELP, CMD_VISITORCHATKEY_USAGE},
 		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
 		Command{CMD_SETPASSWORD, CMD_SETPASSWORD_HELP, CMD_SETPASSWORD_USAGE},
 		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},

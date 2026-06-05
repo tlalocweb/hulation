@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
@@ -50,9 +51,12 @@ import (
 	reportsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/reports"
 	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
 	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
+	"github.com/tlalocweb/hulation/pkg/server/authware"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
+	hulabolt "github.com/tlalocweb/hulation/pkg/store/bolt"
+	"github.com/tlalocweb/hulation/pkg/store/storage"
 	"github.com/tlalocweb/hulation/utils"
 
 	"gopkg.in/yaml.v3"
@@ -147,12 +151,34 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// middleware too) when the Agent CA hasn't loaded yet.
 	clientCAs := agentClientCAPool()
 
+	// Device-key store powers Hula-Device-* signature auth (QR-paired mobile devices).
+	// The QR-pairing endpoints (/api/v1/pair/{issue,redeem}, see pair_handlers.go)
+	// write into this store when a marketer redeems a code; the auth interceptors
+	// read from it to validate signed requests. Tests insert keys directly.
+	//
+	// We prefer the bolt-backed stores when storage.Global() is online so paired
+	// devices + unredeemed codes survive a hulation restart. Falls back to the
+	// in-memory variants when bolt isn't available (no-storage dev runs, tests).
+	var deviceKeyStore authware.DeviceKeyStore
+	var pairCodeStore authware.PairCodeStore
+	if s := storage.Global(); s != nil {
+		log.Infof("pair: using bolt-backed device-key + pair-code stores")
+		deviceKeyStore = hulabolt.NewDeviceKeyStore(s)
+		pairCodeStore = hulabolt.NewPairCodeStore(s)
+	} else {
+		log.Warnf("pair: storage.Global() unavailable — using in-memory device-key + pair-code stores (state lost on restart)")
+		deviceKeyStore = authware.NewInMemoryDeviceKeyStore()
+		pairCodeStore = authware.NewInMemoryPairCodeStore()
+	}
+	wirePairHandlers(pairCodeStore, deviceKeyStore)
+
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
 		GetCertificate: getCert,
 		ClientCAs:      clientCAs,
 		GRPCServerOptions: []grpc.ServerOption{
-			grpc.UnaryInterceptor(AdminBearerInterceptor()),
+			grpc.UnaryInterceptor(AdminBearerInterceptor(deviceKeyStore)),
+			grpc.StreamInterceptor(AdminBearerStreamInterceptor(deviceKeyStore)),
 		},
 		MuxOptions: []runtime.ServeMuxOption{
 			// Emit proto field names as-is (snake_case) and keep default
@@ -298,6 +324,42 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("register chat handler: %w", err)
 	}
 
+	// ChatStreamService — bidirectional agent stream + per-server control stream
+	// that replace the two WebSocket endpoints (chat_ws_agent.go,
+	// chat_ws_control.go). Hub + router are constructed lazily by
+	// registerChatPublic() later in boot; the closures here re-resolve each call so
+	// the gRPC path comes online the moment the singletons land.
+	//
+	// The Noise static secret is optional — when set, gRPC clients can opt into a
+	// Noise_IK session-wrap around the per-session stream. Missing / malformed keys
+	// degrade the chat stream to plaintext-only mode (mobile clients that demand
+	// Noise will see noise_unavailable).
+	//
+	// Resolved through a getter (re-reading config each handshake) rather than
+	// captured once, so a config reload / key rotation takes effect for new
+	// streams without a restart — and stays consistent with what
+	// /api/v1/installation/identity serves, which also re-reads per request.
+	noiseStaticFn := func() []byte {
+		c := hulaapp.GetConfig()
+		if c == nil || c.NoiseStaticKey == "" {
+			return nil
+		}
+		k, err := utils.DecodeNoiseStaticKey(c.NoiseStaticKey)
+		if err != nil {
+			log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
+			return nil
+		}
+		return k
+	}
+	chatStreamSvc := chatimpl.NewStreamServer(
+		chatStore,
+		ChatHub,
+		ChatRouter,
+		chatACLLookup(cfg),
+		noiseStaticFn,
+	)
+	chatspec.RegisterChatStreamServiceServer(grpcSrv, chatStreamSvc)
+
 	// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
 	// device registration. Delegates the analytics math to the
 	// already-registered analyticsSvc; device storage rides on Bolt
@@ -374,6 +436,25 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// POST /api/v1/chat/start (token issuer); the WS endpoint
 	// arrives in stage 4b.4.
 	registerChatPublic(srv, cfg)
+
+	// Public installation-identity endpoint — returns the Noise static public
+	// key so mobile clients can pin it at pair time without first
+	// authenticating. No-op when no Noise key is configured; the handler
+	// returns 404 in that case.
+	srv.RegisterCustomHandler("GET /api/v1/installation/identity", installationIdentityHandler())
+
+	// QR pair flow — admin issues a single-use code via /pair/issue (bearer-
+	// authed); the mobile app redeems it via /pair/redeem (unauthenticated;
+	// the code is the proof). Redemption writes a DeviceKey into the
+	// deviceKeyStore above so subsequent signed requests from the device
+	// satisfy the AdminBearerInterceptor's `claimsFromDeviceSignature` path.
+	srv.RegisterCustomHandler("POST /api/v1/pair/issue", pairIssueHandler())
+	srv.RegisterCustomHandler("POST /api/v1/pair/redeem", pairRedeemHandler())
+	// Self-service + admin list/revoke. List is GET so curl-ability for
+	// operators is preserved; revoke is POST since it mutates and we want
+	// the CSRF protections the existing middleware applies to POST routes.
+	srv.RegisterCustomHandler("GET /api/v1/pair/devices", pairListDevicesHandler())
+	srv.RegisterCustomHandler("POST /api/v1/pair/devices/revoke", pairRevokeDeviceHandler())
 
 	// CORS — must be among the OUTERMOST middleware. CORS needs to
 	// see OPTIONS preflights before auth/proxy middleware drops them,

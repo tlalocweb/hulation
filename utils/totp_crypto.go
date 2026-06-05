@@ -131,3 +131,31 @@ func GenerateTOTPEncryptionKey() (string, error) {
 	}
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(key), nil
 }
+
+// DecodeNoiseStaticKey decodes the base64url-encoded 32-byte X25519 private key used as
+// the Hula installation's Noise_IK responder static. Same encoding rules as TOTP keys so
+// operators have one mental model for "32 byte secrets we ship in config".
+func DecodeNoiseStaticKey(base64Key string) ([]byte, error) {
+	if base64Key == "" {
+		return nil, fmt.Errorf("Noise static key is not configured")
+	}
+	key, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(base64Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode Noise static key: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("Noise static key must be 32 bytes, got %d", len(key))
+	}
+	return key, nil
+}
+
+// GenerateNoiseStaticKey generates a fresh 32-byte X25519 private key and returns it as a
+// base64url-encoded string (no padding) suitable for storing in the `noise_static_key`
+// config field.
+func GenerateNoiseStaticKey() (string, error) {
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return "", fmt.Errorf("failed to generate Noise static key: %w", err)
+	}
+	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(key), nil
+}

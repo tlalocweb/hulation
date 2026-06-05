@@ -12,6 +12,8 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -34,6 +36,7 @@ import (
 	"github.com/tlalocweb/hulation/pkg/notifier/apns"
 	"github.com/tlalocweb/hulation/pkg/notifier/email"
 	"github.com/tlalocweb/hulation/pkg/notifier/fcm"
+	"github.com/tlalocweb/hulation/pkg/push/relayclient"
 	"github.com/tlalocweb/hulation/pkg/realtime"
 	"github.com/tlalocweb/hulation/pkg/reports/dispatch"
 	"github.com/tlalocweb/hulation/pkg/server/unified"
@@ -286,6 +289,20 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 		log.Warnf("push delivery disabled: no TOTP encryption key (alerts evaluator + chat hook)")
 	}
 
+	// Relay-push client — when configured, the chat push hook seals previews and
+	// fans them out through hula-push-relay (server-blind central push relay) for
+	// any device that registered with relay_* fields. Operators leave PushRelay
+	// nil to keep the legacy direct-APNs/FCM path as the only fan-out.
+	if conf.PushRelay != nil && conf.PushRelay.BaseURL != "" {
+		if client, err := buildPushRelayClient(conf.PushRelay); err != nil {
+			log.Warnf("push relay: not enabling — %s", err)
+		} else {
+			chatpkg.SetRelayPushClient(client)
+			log.Infof("push relay: enabled (base=%s installation=%s)",
+				conf.PushRelay.BaseURL, conf.PushRelay.InstallationID)
+		}
+	}
+
 	// Alert rule evaluator. The 1-minute ticker + queue are cheap to
 	// spin up; only firings touch ClickHouse, and those are tolerant
 	// of transient unavailability.
@@ -425,5 +442,52 @@ func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncident
 			go buildMgr.StartupBuildAll(conf.Servers)
 		}
 	}
+}
+
+// buildPushRelayClient turns the operator-supplied config into a relayclient.Client.
+// The signing key on the wire is a 32-byte ed25519 seed (`ed25519.NewKeyFromSeed`
+// expands it to the 64-byte private form the stdlib signs with); we accept any
+// base64 flavour (standard, URL-safe, with or without padding) so operators don't
+// have to remember the exact one their secrets manager emits.
+func buildPushRelayClient(cfg *config.PushRelayConfig) (*relayclient.Client, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil config")
+	}
+	if cfg.InstallationID == "" {
+		return nil, fmt.Errorf("installation_id required")
+	}
+	if cfg.SigningKeyB64 == "" {
+		return nil, fmt.Errorf("signing_key_b64 required")
+	}
+	seed, err := decodeAnyBase64(cfg.SigningKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode signing_key_b64: %w", err)
+	}
+	if len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("signing_key_b64 must decode to %d bytes, got %d",
+			ed25519.SeedSize, len(seed))
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	return relayclient.New(relayclient.Config{
+		BaseURL:        cfg.BaseURL,
+		InstallationID: cfg.InstallationID,
+		SigningKey:     priv,
+	})
+}
+
+// decodeAnyBase64 is forgiving about which base64 variant the operator's secrets
+// manager produces: standard, URL-safe, with or without padding. ed25519 seeds are
+// 32 bytes ⇒ 44 chars with padding, 43 without — both shapes are common.
+func decodeAnyBase64(s string) ([]byte, error) {
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(s)
 }
 

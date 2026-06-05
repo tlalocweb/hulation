@@ -1,8 +1,66 @@
 package chat
 
 import (
+	"encoding/json"
 	"testing"
 )
+
+func TestBuildNewChatPreview_HappyPath(t *testing.T) {
+	p := buildNewChatPreview(ChatPushInput{
+		SessionID:      "abc-123",
+		ServerID:       "gravhl.com",
+		VisitorID:      "guest-xyz",
+		VisitorEmail:   "ed@tlaloc.us",
+		VisitorCountry: "Austin, TX",
+		FirstMessage:   "Hi — I met you all at the startup event yesterday",
+	})
+	if p.Title != "ed@tlaloc.us" {
+		t.Errorf("title: want ed@tlaloc.us, got %q", p.Title)
+	}
+	if p.Subtitle != "New chat · Austin, TX" {
+		t.Errorf("subtitle: want %q, got %q", "New chat · Austin, TX", p.Subtitle)
+	}
+	if p.Body != "Hi — I met you all at the startup event yesterday" {
+		t.Errorf("body: got %q", p.Body)
+	}
+	if p.Kind != "chat.new" {
+		t.Errorf("kind: got %q", p.Kind)
+	}
+	if p.SrvID != "gravhl.com" || p.SesID != "abc-123" {
+		t.Errorf("ids: got %+v", p)
+	}
+}
+
+func TestBuildNewChatPreview_TruncatesByRune(t *testing.T) {
+	long := make([]rune, 300)
+	for i := range long {
+		long[i] = 'é' // multi-byte rune; truncation must not split it.
+	}
+	p := buildNewChatPreview(ChatPushInput{FirstMessage: string(long)})
+	if got := []rune(p.Body); len(got) != 178 || got[177] != '…' {
+		t.Fatalf("expected 177-rune prefix + ellipsis, got %d runes", len(got))
+	}
+}
+
+func TestBuildNewChatPreview_JSONShape(t *testing.T) {
+	// The on-device NSE / FBMS parses this exact JSON shape; pin the field
+	// names so accidental renames are caught.
+	b, err := json.Marshal(buildNewChatPreview(ChatPushInput{
+		SessionID: "s", ServerID: "srv", VisitorEmail: "v@x", FirstMessage: "hi",
+	}))
+	if err != nil {
+		t.Fatalf("marshal: %s", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("unmarshal: %s", err)
+	}
+	for _, k := range []string{"title", "subtitle", "body", "kind", "server_id", "session_id"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("missing field %q in marshaled payload: %s", k, b)
+		}
+	}
+}
 
 func TestBuildNewChatEnvelope_HappyPath(t *testing.T) {
 	env := BuildNewChatEnvelope(ChatPushInput{

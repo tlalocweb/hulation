@@ -21,16 +21,39 @@ import (
 // registration. TokenCipher holds the AES-GCM sealed push token
 // (see pkg/mobile/tokenbox). Nonce is appended to the ciphertext
 // by the sealer; this struct never sees plaintext.
+//
+// The four `Relay*` / `NoiseEncryptionPub` fields are populated when the device
+// pairs through the hula-push-relay path (which is the v1 default for the published
+// mobile app). When all four are present, the chat-push fan-out seals the visible
+// preview to NoiseEncryptionPub and POSTs the ciphertext through the relay using
+// (RelayChannelID, RelayChannelAuthCipher) — TokenCipher is then unused for that
+// device. When any are missing the legacy direct-APNs/FCM path through `notifier`
+// fires instead, so legacy hulation installs without a relay configured keep
+// working.
 type StoredDevice struct {
 	ID                string    `json:"id"`
 	UserID            string    `json:"user_id"`
 	Platform          string    `json:"platform"` // "apns" | "fcm"
 	DeviceFingerprint string    `json:"device_fingerprint"`
 	Label             string    `json:"label,omitempty"`
-	TokenCipher       []byte    `json:"token_cipher"` // sealed push token
+	TokenCipher       []byte    `json:"token_cipher"` // sealed push token (legacy direct path)
 	RegisteredAt      time.Time `json:"registered_at"`
 	LastSeenAt        time.Time `json:"last_seen_at"`
 	Active            bool      `json:"active"`
+
+	// --- Relay-path fields (v1 default) -----------------------------------------
+
+	// RelayChannelID is the relay-issued opaque identifier (`pch_...`) for this
+	// device's push channel. Plain text — non-secret, the auth pairs with it.
+	RelayChannelID string `json:"relay_channel_id,omitempty"`
+	// RelayChannelAuthCipher is the relay-issued per-channel auth secret, sealed
+	// with the same tokenbox key as TokenCipher. Treated as sensitive material;
+	// the relay validates it with constant-time comparison on every push.
+	RelayChannelAuthCipher []byte `json:"relay_channel_auth_cipher,omitempty"`
+	// NoiseEncryptionPub is the device's per-server X25519 public key (32 raw
+	// bytes, base64-encoded). hulation seals the visible push preview to this
+	// key; the device unseals on-receipt inside the iOS NSE or Android FBMS.
+	NoiseEncryptionPub string `json:"noise_encryption_pub,omitempty"`
 }
 
 func deviceKey(id string) string                 { return "mobile_devices/" + id }

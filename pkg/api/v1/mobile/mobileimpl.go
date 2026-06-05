@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -175,9 +176,25 @@ func storedDeviceToProto(d hulabolt.StoredDevice) *mobilespec.Device {
 // --- RPCs ------------------------------------------------------------
 
 func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDeviceRequest) (*mobilespec.Device, error) {
-	if req == nil || req.GetToken() == "" || req.GetPlatform() == mobilespec.Platform_PLATFORM_UNSPECIFIED {
-		return nil, status.Error(codes.InvalidArgument, "token and platform required")
+	if req == nil || req.GetPlatform() == mobilespec.Platform_PLATFORM_UNSPECIFIED {
+		return nil, status.Error(codes.InvalidArgument, "platform required")
 	}
+	// At least one path must be supplied — relay (3 fields) or legacy (raw token).
+	hasRelay := req.GetRelayChannelId() != "" ||
+		req.GetRelayChannelAuth() != "" ||
+		req.GetNoiseEncryptionPubB64() != ""
+	if !hasRelay && req.GetToken() == "" {
+		return nil, status.Error(codes.InvalidArgument,
+			"either `token` (legacy path) or all three relay fields are required")
+	}
+	if hasRelay {
+		if req.GetRelayChannelId() == "" || req.GetRelayChannelAuth() == "" ||
+			req.GetNoiseEncryptionPubB64() == "" {
+			return nil, status.Error(codes.InvalidArgument,
+				"relay_channel_id, relay_channel_auth, and noise_encryption_pub_b64 must all be set together")
+		}
+	}
+
 	userID := currentUserID(ctx)
 	if userID == "" {
 		return nil, status.Error(codes.Unauthenticated, "caller has no identity")
@@ -189,9 +206,36 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "token key: %s", err)
 	}
-	sealed, err := tokenbox.Seal(req.GetToken(), key)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "seal token: %s", err)
+
+	// Seal the legacy token (if supplied) and the relay channel auth (if supplied)
+	// with the same tokenbox key — both are sensitive material we never want at
+	// rest in plaintext.
+	var tokenSealed []byte
+	if t := req.GetToken(); t != "" {
+		tokenSealed, err = tokenbox.Seal(t, key)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "seal token: %s", err)
+		}
+	}
+	var relayAuthSealed []byte
+	var noisePubB64 string
+	if hasRelay {
+		relayAuthSealed, err = tokenbox.Seal(req.GetRelayChannelAuth(), key)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "seal relay auth: %s", err)
+		}
+		// Validate the noise public key parses cleanly and is exactly 32 bytes —
+		// fan-out time is the wrong place to discover a malformed key.
+		pubBytes, derr := base64.StdEncoding.DecodeString(req.GetNoiseEncryptionPubB64())
+		if derr != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"noise_encryption_pub_b64 is not valid base64: %s", derr)
+		}
+		if len(pubBytes) != 32 {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"noise_encryption_pub_b64 must decode to 32 bytes, got %d", len(pubBytes))
+		}
+		noisePubB64 = req.GetNoiseEncryptionPubB64()
 	}
 
 	// Idempotency: replace an existing (user_id, fingerprint) row
@@ -205,13 +249,16 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 	}
 
 	d := hulabolt.StoredDevice{
-		ID:                id,
-		UserID:            userID,
-		Platform:          platformString(req.GetPlatform()),
-		DeviceFingerprint: req.GetDeviceFingerprint(),
-		Label:             req.GetLabel(),
-		TokenCipher:       sealed,
-		Active:            true,
+		ID:                     id,
+		UserID:                 userID,
+		Platform:               platformString(req.GetPlatform()),
+		DeviceFingerprint:      req.GetDeviceFingerprint(),
+		Label:                  req.GetLabel(),
+		TokenCipher:            tokenSealed,
+		Active:                 true,
+		RelayChannelID:         req.GetRelayChannelId(),
+		RelayChannelAuthCipher: relayAuthSealed,
+		NoiseEncryptionPub:     noisePubB64,
 	}
 	saved, err := hulabolt.PutDevice(ctx, storage.Global(), d)
 	if err != nil {
