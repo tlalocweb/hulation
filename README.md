@@ -258,6 +258,12 @@ Staging
   staging-mount  <server-id> <folder> [--autobuild] [--dangerous]
                                               Live-sync a local folder to the staging site
 
+Mobile & push (encryption keys)
+  noise-static-key           Generate the Noise_IK chat-stream static keypair
+                             (config: noise_static_key)
+  visitor-chat-key           Generate the visitor-widget sealed-box keypair
+                             (config: visitor_chat_key)
+
 Operations
   badactors                  List scored IPs with block status
   initdb / deletedb          Initialize / drop the analytics schema
@@ -266,6 +272,82 @@ Operations
 ```
 
 Run `hulactl` with no arguments for the full inline help.
+
+## Mobile app, QR pairing & encrypted push
+
+The Hula mobile app (iOS + Android) talks to your installation over three
+encrypted surfaces. All of them are **optional** — omit the keys and the server
+still runs; the affected feature just degrades gracefully (plaintext / no push).
+
+**1. Generate the keypairs** (one-time, store the private halves in your secrets
+manager):
+
+```bash
+./hulactl noise-static-key     # → noise_static_key  (gRPC chat-stream Noise_IK)
+./hulactl visitor-chat-key     # → visitor_chat_key  (browser widget sealed-box)
+```
+
+Each prints a base64url private key for `config.yaml` plus the matching **public**
+key. The mobile app pins the Noise public during pairing and refuses to open a
+Noise session against any other server identity, so rotating a key requires
+clients to re-fetch the identity (see below).
+
+**2. Add them to `config.yaml`:**
+
+```yaml
+# Noise_IK responder static key for the gRPC chat stream. Empty ⇒ plaintext
+# streams still work, but Noise-mode mobile clients get noise_unavailable.
+noise_static_key: "BASE64URL_FROM_hulactl_noise-static-key"
+
+# Sealed-box key the browser chat widget encrypts visitor messages to (app-layer
+# crypto on top of HTTPS). Empty ⇒ widget falls back to plaintext.
+visitor_chat_key: "BASE64URL_FROM_hulactl_visitor-chat-key"
+
+# Per-installation binding to a hula-push-relay (server-blind APNs/FCM fan-out).
+# Omit entirely to disable relayed push (only the legacy direct path fires).
+push_relay:
+  base_url: "https://relay.example.com"
+  installation_id: "inst_..."        # issued by the relay at enrollment
+  signing_key_b64: "..."             # 32-byte ed25519 seed (base64 standard)
+```
+
+These are hot-reloadable — `./hulactl reload` (SIGHUP) picks up rotated keys for
+new chat streams without a restart.
+
+**3. Enroll with a push relay** (only if you want push notifications). On the
+relay host:
+
+```bash
+hula-relay admin issue-code --account-id <acct>   # → HULA-ENROLL-XXXX-...
+```
+
+Redeem the code from your install to obtain the `installation_id` +
+`signing_key_b64` for the `push_relay:` block above. Relay operators can also
+self-serve an account at the relay's public `GET /signup` (pending until an
+operator approves). The relay forwards only **sealed** preview ciphertext — it
+never sees plaintext visitor data. See the `hula-push-relay` repo for setup.
+
+**4. Pair a device.** Issue a single-use QR/text code (admin-gated) and redeem
+it from the app:
+
+```bash
+# Mint a pair code (admin auth required)
+curl -X POST https://example.com/api/v1/pair/issue -H "Authorization: Bearer $TOKEN"
+# → { "code": "HULA-PAIR-XXXX-..." }
+```
+
+The app scans/enters the code, which provisions a device keypair and registers
+its relay channel + Noise/X25519 public keys.
+
+### Mobile-facing endpoints (reference)
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/v1/installation/identity` | none | Serves `noise_static_public_key_b64` and/or `visitor_chat_public_key_b64` for clients to pin |
+| `POST /api/v1/pair/issue` | admin bearer | Mint a single-use pair code |
+| `POST /api/v1/pair/redeem` | none (code is the secret) | Provision a device from a pair code |
+| `GET /api/v1/pair/devices` | bearer or device sig | List a user's paired devices |
+| `POST /api/v1/pair/devices/revoke` | owner or admin | Revoke a paired device |
 
 ## Building from Source
 
