@@ -35,5 +35,14 @@ dbconfig:
   host: hula-clickhouse
   port: 9000
   user: hula
-  pass: hula 
+  pass: hula
   dbname: hula
+# Mobile app + encrypted push (all optional — see README "Mobile app, QR pairing
+# & encrypted push"). Generate the keys with `hulactl noise-static-key` and
+# `hulactl visitor-chat-key`; store the private halves in a secrets manager.
+# noise_static_key: "BASE64URL"   # gRPC chat-stream Noise_IK responder static key
+# visitor_chat_key: "BASE64URL"   # browser widget sealed-box key
+# push_relay:                     # server-blind APNs/FCM fan-out via hula-push-relay
+#   base_url: "https://relay.example.com"
+#   installation_id: "inst_..."   # issued by the relay at enrollment
+#   signing_key_b64: "..."        # 32-byte ed25519 seed (base64 standard)
