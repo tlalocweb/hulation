@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -118,6 +119,28 @@ func staticAssetSRI(embedPath string) (string, error) {
 	sri := sriSHA384(data)
 	staticSRICache.Store(embedPath, sri)
 	return sri, nil
+}
+
+// overlaySRI returns the SRI of a customer overlay file for urlPath under the
+// host's static root, when one exists. BuiltinStaticHandler serves overlay
+// files as-is (no templating), so when an overlay is present the SRI we pin /
+// publish MUST be the overlay's hash, not the embedded asset's — otherwise the
+// browser's integrity check fails the load on overlay installs. hadOverlay
+// reports whether an overlay was found so callers fall back to embedded/rendered
+// bytes when it isn't. Overlay files are not cached (they can change on disk).
+func overlaySRI(srv *config.Server, urlPath string) (sri string, hadOverlay bool, err error) {
+	if srv == nil {
+		return "", false, nil
+	}
+	overlay, ok := resolveOverlay(srv.Root, urlPath)
+	if !ok {
+		return "", false, nil
+	}
+	data, rerr := os.ReadFile(overlay)
+	if rerr != nil {
+		return "", true, rerr
+	}
+	return sriSHA384(data), true, nil
 }
 
 // deriveManifestSigningKey turns the 32-byte visitor_chat secret into a
@@ -217,7 +240,9 @@ func WidgetManifestHandler() http.HandlerFunc {
 	hosts := buildHostLookup(cfg)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// GET only — the route is registered as "GET <path>"; Go 1.22 method
+		// patterns mean HEAD wouldn't reach here anyway.
+		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -250,17 +275,28 @@ func WidgetManifestHandler() http.HandlerFunc {
 			return
 		}
 
-		// Hash the rendered entry script for this host so the customer can pin
-		// it via SRI (its bytes vary with host config). Rendering reuses the
-		// same template + vars the static handler serves, so the hash matches
-		// exactly what a browser fetches.
-		entryBytes, err := renderBuiltinAsset(BuiltinChatJSAsset().EmbedPath, vars)
-		if err != nil {
-			log.Errorf("widget-manifest: render entry: %s", err)
-			http.Error(w, "manifest unavailable", http.StatusInternalServerError)
-			return
+		// SRI of the entry script as the browser will actually receive it: the
+		// customer overlay file when present (served as-is), otherwise the
+		// rendered embedded template. Rendering reuses the same template + vars
+		// the static handler serves, so the hash matches the served bytes.
+		entryAsset := BuiltinChatJSAsset()
+		var entrySRI string
+		if sri, had, oerr := overlaySRI(srv, entryAsset.URLPath); had {
+			if oerr != nil {
+				log.Errorf("widget-manifest: read entry overlay for SRI: %s", oerr)
+				http.Error(w, "manifest unavailable", http.StatusInternalServerError)
+				return
+			}
+			entrySRI = sri
+		} else {
+			entryBytes, rerr := renderBuiltinAsset(entryAsset.EmbedPath, vars)
+			if rerr != nil {
+				log.Errorf("widget-manifest: render entry: %s", rerr)
+				http.Error(w, "manifest unavailable", http.StatusInternalServerError)
+				return
+			}
+			entrySRI = sriSHA384(entryBytes)
 		}
-		entrySRI := sriSHA384(entryBytes)
 
 		manifest := buildSignedManifest(
 			priv, srv.ID, visitorPub, entrySRI, cryptoSRI,

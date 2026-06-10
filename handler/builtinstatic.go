@@ -285,8 +285,17 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 	// manifest. All empty when encryption is off → widget runs plaintext and
 	// skips the integrity machinery.
 	cryptoSRI := ""
-	if sri, err := staticAssetSRI(BuiltinChatCryptoJSAsset().EmbedPath); err == nil {
+	cryptoAsset := BuiltinChatCryptoJSAsset()
+	if sri, had, err := overlaySRI(srv, cryptoAsset.URLPath); had && err == nil {
+		// Customer overlay is what the browser actually fetches — pin its hash.
 		cryptoSRI = sri
+	} else {
+		if had && err != nil {
+			log.Errorf("builtinstatic: read crypto-module overlay for SRI: %s", err)
+		}
+		if sri, err := staticAssetSRI(cryptoAsset.EmbedPath); err == nil {
+			cryptoSRI = sri
+		}
 	}
 	manifestPub := ""
 	manifestURL := ""

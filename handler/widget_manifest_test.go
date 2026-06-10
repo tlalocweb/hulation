@@ -6,7 +6,12 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/tlalocweb/hulation/config"
 )
 
 // fixedVisitorSecret is a stable 32-byte "visitor_chat_key" secret used across
@@ -109,6 +114,47 @@ func TestBuildSignedManifestRoundTrip(t *testing.T) {
 	}
 	// Pin the signature for the JS cross-language test.
 	t.Logf("golden sig (b64url): %s", signed.Sig)
+}
+
+func TestOverlaySRIUsesOverlayBytes(t *testing.T) {
+	root := t.TempDir()
+	cryptoAsset := BuiltinChatCryptoJSAsset()
+	// Place an overlay at exactly the path resolveOverlay looks for (root +
+	// the URL path), so BuiltinStaticHandler would serve these bytes.
+	rel := strings.TrimPrefix(cryptoAsset.URLPath, "/")
+	dest := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := []byte("// customer overlay crypto module\n")
+	if err := os.WriteFile(dest, overlay, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &config.Server{Root: root}
+	sri, had, err := overlaySRI(srv, cryptoAsset.URLPath)
+	if err != nil || !had {
+		t.Fatalf("expected overlay found, had=%v err=%v", had, err)
+	}
+	if want := sriSHA384(overlay); sri != want {
+		t.Fatalf("overlay SRI = %q, want %q (hash of the overlay bytes)", sri, want)
+	}
+	// Must differ from the embedded module's SRI — otherwise the overlay wasn't
+	// actually used and an overlay install would get a mismatched integrity.
+	emb, _ := staticAssetSRI(cryptoAsset.EmbedPath)
+	if sri == emb {
+		t.Fatal("overlay SRI equals embedded SRI — overlay bytes not hashed")
+	}
+}
+
+func TestOverlaySRINoneWithoutFile(t *testing.T) {
+	srv := &config.Server{Root: t.TempDir()}
+	if _, had, err := overlaySRI(srv, BuiltinChatCryptoJSAsset().URLPath); had || err != nil {
+		t.Fatalf("expected no overlay, had=%v err=%v", had, err)
+	}
+	if _, had, _ := overlaySRI(nil, BuiltinChatCryptoJSAsset().URLPath); had {
+		t.Fatal("nil srv must report no overlay")
+	}
 }
 
 func TestStaticAssetSRIMatchesEmbed(t *testing.T) {
