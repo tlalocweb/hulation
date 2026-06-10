@@ -34,6 +34,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -149,12 +150,16 @@ func overlaySRI(srv *config.Server, urlPath string) (sri string, hadOverlay bool
 // deriveManifestSigningKey turns the 32-byte visitor_chat secret into a
 // deterministic ed25519 signing key via HKDF-SHA256 with a domain-separating
 // info label. Same secret → same key across restarts and hosts.
-func deriveManifestSigningKey(visitorChatSecret []byte) ed25519.PrivateKey {
+func deriveManifestSigningKey(visitorChatSecret []byte) (ed25519.PrivateKey, error) {
 	r := hkdf.New(sha256.New, visitorChatSecret, nil, []byte(manifestSignInfo))
 	seed := make([]byte, ed25519.SeedSize)
-	// HKDF-Expand can serve up to 255*32 bytes; ReadFull of 32 cannot short-read.
-	_, _ = io.ReadFull(r, seed)
-	return ed25519.NewKeyFromSeed(seed)
+	// HKDF-Expand can serve up to 255*32 bytes, so ReadFull of 32 cannot
+	// short-read — but surface the error rather than ever deriving a signing
+	// identity from a partial/zero seed silently.
+	if _, err := io.ReadFull(r, seed); err != nil {
+		return nil, fmt.Errorf("derive manifest signing seed: %w", err)
+	}
+	return ed25519.NewKeyFromSeed(seed), nil
 }
 
 // manifestSigningKey resolves the install's manifest signing key from config,
@@ -168,7 +173,12 @@ func manifestSigningKey(cfg *config.Config) (ed25519.PrivateKey, bool) {
 		log.Warnf("widget-manifest: decode visitor_chat_key: %s", err)
 		return nil, false
 	}
-	return deriveManifestSigningKey(secret), true
+	priv, err := deriveManifestSigningKey(secret)
+	if err != nil {
+		log.Errorf("widget-manifest: %s (manifest signing disabled)", err)
+		return nil, false
+	}
+	return priv, true
 }
 
 // ManifestSigningPublicB64 returns the base64url (no pad) ed25519 public key
@@ -307,7 +317,10 @@ func WidgetManifestHandler() http.HandlerFunc {
 		)
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		// no-store, not just no-cache: this is a per-host, integrity-critical
+		// response — a shared/intermediary cache serving one host's manifest for
+		// another would force needless plaintext fallback.
+		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(&manifest)
 	}
 }

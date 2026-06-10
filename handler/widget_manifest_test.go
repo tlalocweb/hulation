@@ -21,6 +21,17 @@ func fixedVisitorSecret() []byte {
 	return bytes.Repeat([]byte{0x11}, 32)
 }
 
+// mustDerive derives a signing key or fails the test (the error path can't
+// happen for a 32-byte HKDF read, but we assert it rather than ignore it).
+func mustDerive(t *testing.T, secret []byte) ed25519.PrivateKey {
+	t.Helper()
+	k, err := deriveManifestSigningKey(secret)
+	if err != nil {
+		t.Fatalf("deriveManifestSigningKey: %v", err)
+	}
+	return k
+}
+
 func TestSRISHA384Format(t *testing.T) {
 	got := sriSHA384([]byte("hello"))
 	sum := sha512.Sum384([]byte("hello"))
@@ -35,13 +46,13 @@ func TestSRISHA384Format(t *testing.T) {
 
 func TestDeriveManifestSigningKeyDeterministicAndSeparated(t *testing.T) {
 	secret := fixedVisitorSecret()
-	k1 := deriveManifestSigningKey(secret)
-	k2 := deriveManifestSigningKey(secret)
+	k1 := mustDerive(t, secret)
+	k2 := mustDerive(t, secret)
 	if !bytes.Equal(k1, k2) {
 		t.Fatal("derivation not deterministic for the same secret")
 	}
 	// Different secret → different key.
-	other := deriveManifestSigningKey(bytes.Repeat([]byte{0x22}, 32))
+	other := mustDerive(t, bytes.Repeat([]byte{0x22}, 32))
 	if bytes.Equal(k1, other) {
 		t.Fatal("different secrets produced the same key")
 	}
@@ -86,7 +97,7 @@ func TestCanonicalManifestMessageGolden(t *testing.T) {
 }
 
 func TestBuildSignedManifestRoundTrip(t *testing.T) {
-	priv := deriveManifestSigningKey(fixedVisitorSecret())
+	priv := mustDerive(t, fixedVisitorSecret())
 	m := canonicalGoldenManifest()
 	signed := buildSignedManifest(
 		priv, m.ServerID, m.VisitorPub,
@@ -141,7 +152,10 @@ func TestOverlaySRIUsesOverlayBytes(t *testing.T) {
 	}
 	// Must differ from the embedded module's SRI — otherwise the overlay wasn't
 	// actually used and an overlay install would get a mismatched integrity.
-	emb, _ := staticAssetSRI(cryptoAsset.EmbedPath)
+	emb, err := staticAssetSRI(cryptoAsset.EmbedPath)
+	if err != nil {
+		t.Fatalf("embedded SRI: %v", err)
+	}
 	if sri == emb {
 		t.Fatal("overlay SRI equals embedded SRI — overlay bytes not hashed")
 	}
@@ -168,7 +182,10 @@ func TestStaticAssetSRIMatchesEmbed(t *testing.T) {
 		t.Fatalf("bad SRI: %q", sri)
 	}
 	// Cached second call returns the same value.
-	sri2, _ := staticAssetSRI(BuiltinChatCryptoJSAsset().EmbedPath)
+	sri2, err := staticAssetSRI(BuiltinChatCryptoJSAsset().EmbedPath)
+	if err != nil {
+		t.Fatalf("staticAssetSRI (cached): %v", err)
+	}
 	if sri != sri2 {
 		t.Fatalf("cached SRI differs: %q vs %q", sri, sri2)
 	}
