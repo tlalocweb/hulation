@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cbroglie/mustache"
 
@@ -86,10 +87,6 @@ func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
 	cfg := app.GetConfig()
 	hosts := buildHostLookup(cfg)
 
-	var (
-		parsedTmpl *mustache.Template
-	)
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -110,34 +107,48 @@ func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
 			return
 		}
 
-		// 2. Embedded fallback — parse once, render per request.
-		if parsedTmpl == nil {
-			data, err := builtinstatics.Get(asset.EmbedPath)
-			if err != nil {
-				log.Errorf("builtinstatic: read %s: %s", asset.EmbedPath, err.Error())
-				http.Error(w, "asset unavailable", http.StatusInternalServerError)
-				return
-			}
-			t, err := mustache.ParseString(string(data))
-			if err != nil {
-				log.Errorf("builtinstatic: parse %s: %s", asset.EmbedPath, err.Error())
-				http.Error(w, "asset unavailable", http.StatusInternalServerError)
-				return
-			}
-			parsedTmpl = t
-		}
-
-		vars := buildBuiltinVars(srv)
-		var buf bytes.Buffer
-		if err := parsedTmpl.FRender(&buf, vars); err != nil {
+		// 2. Embedded fallback — parse (cached) + render per request.
+		rendered, err := renderBuiltinAsset(asset.EmbedPath, buildBuiltinVars(srv))
+		if err != nil {
 			log.Errorf("builtinstatic: render %s: %s", asset.EmbedPath, err.Error())
-			http.Error(w, "render error", http.StatusInternalServerError)
+			http.Error(w, "asset unavailable", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", asset.ContentType)
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-		_, _ = w.Write(buf.Bytes())
+		_, _ = w.Write(rendered)
 	}
+}
+
+// builtinTmplCache memoises parsed mustache templates by embed path so each
+// asset is parsed once across all requests (and across the static handler +
+// the widget-manifest handler, which both render the same templates).
+var builtinTmplCache sync.Map // map[string]*mustache.Template
+
+// renderBuiltinAsset parses (cached) and renders an embedded asset with vars.
+// Shared by BuiltinStaticHandler and the widget-manifest handler so the bytes a
+// browser fetches and the bytes we hash for SRI are produced by identical code.
+func renderBuiltinAsset(embedPath string, vars map[string]string) ([]byte, error) {
+	var tmpl *mustache.Template
+	if v, ok := builtinTmplCache.Load(embedPath); ok {
+		tmpl = v.(*mustache.Template)
+	} else {
+		data, err := builtinstatics.Get(embedPath)
+		if err != nil {
+			return nil, err
+		}
+		t, err := mustache.ParseString(string(data))
+		if err != nil {
+			return nil, err
+		}
+		builtinTmplCache.Store(embedPath, t)
+		tmpl = t
+	}
+	var buf bytes.Buffer
+	if err := tmpl.FRender(&buf, vars); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // buildHostLookup builds host-header → *config.Server for the registered
@@ -259,6 +270,22 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 		}
 	}
 
+	// Widget integrity hardening (see widget_manifest.go). visitor_crypto_sri is
+	// the SRI of the static crypto module so the widget can pin it when it loads
+	// it dynamically. widget_manifest_* let the widget fetch + verify the signed
+	// manifest. All empty when encryption is off → widget runs plaintext and
+	// skips the integrity machinery.
+	cryptoSRI := ""
+	if sri, err := staticAssetSRI(BuiltinChatCryptoJSAsset().EmbedPath); err == nil {
+		cryptoSRI = sri
+	}
+	manifestPub := ""
+	manifestURL := ""
+	if pub, ok := ManifestSigningPublicB64(cfg); ok {
+		manifestPub = pub
+		manifestURL = BuiltinWidgetManifestURL()
+	}
+
 	return map[string]string{
 		"server_id":             srv.ID,
 		"chat_start_url":        "/api/v1/chat/start",
@@ -271,5 +298,8 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 		// "plaintext mode".
 		"visitor_chat_public_key_b64": visitorChatPub,
 		"visitor_crypto_url":          "/" + prefix + "scripts/hula-visitor-crypto.js",
+		"visitor_crypto_sri":          cryptoSRI,
+		"widget_manifest_url":         manifestURL,
+		"widget_manifest_public_key_b64": manifestPub,
 	}
 }

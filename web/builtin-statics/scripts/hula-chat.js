@@ -39,6 +39,14 @@
     // WebCrypto X25519 — the widget runs in plaintext (chat still works).
     visitorChatPub:   "{{visitor_chat_public_key_b64}}",
     cryptoUrl:        "{{visitor_crypto_url}}",
+    // Integrity hardening (see docs/visitor-chat-encryption.md §Hardening).
+    // cryptoSri pins the dynamically-loaded crypto module via Subresource
+    // Integrity. manifestUrl + manifestKey let the widget fetch + verify the
+    // signed widget manifest (ed25519) and cross-check the server pubkey it's
+    // about to seal to. All empty when encryption / manifest signing is off.
+    cryptoSri:        "{{visitor_crypto_sri}}",
+    manifestUrl:      "{{widget_manifest_url}}",
+    manifestKey:      "{{widget_manifest_public_key_b64}}",
   };
 
   // --- Visitor-chat encryption -------------------------------------
@@ -59,10 +67,106 @@
       var s = document.createElement("script");
       s.src = CFG.cryptoUrl;
       s.async = true;
+      // Pin the crypto module via SRI when the server published a hash. A
+      // tampered module fails the integrity check, the browser refuses to run
+      // it, onerror fires, and we fall back to plaintext — i.e. attacker code
+      // can never execute in place of the real crypto. crossOrigin is required
+      // for the browser to enforce integrity on the fetched script.
+      if (CFG.cryptoSri) {
+        s.integrity = CFG.cryptoSri;
+        s.crossOrigin = "anonymous";
+      }
       s.onload = function () { resolve(window.HulaVisitorCrypto || null); };
       s.onerror = function () { resolve(null); };
       document.head.appendChild(s);
     });
+  }
+
+  // --- Signed widget manifest verification -------------------------
+  //
+  // Best-effort integrity cross-check. Returns a promise resolving to:
+  //   "ok"       — manifest signature valid AND its pubkey/SRI match what this
+  //                page received (proceed with encryption).
+  //   "skip"     — no manifest configured, ed25519 verify unavailable, or the
+  //                manifest couldn't be fetched/parsed (transient). Proceed
+  //                with SRI-only protection.
+  //   "tampered" — a cryptographic contradiction: the manifest fails to verify,
+  //                or verifies but pins a DIFFERENT pubkey/SRI than we hold.
+  //                Treat the encrypted path as untrustworthy.
+  //
+  // This is detection + an out-of-band-verifiable artifact, not enforcement:
+  // on "tampered" the widget refuses to seal to the suspect key and runs
+  // plaintext (the documented graceful-fallback policy). Hard fail-closed is
+  // the separate "require encryption" config knob.
+  function ed25519Supported() {
+    return !!(window.crypto && window.crypto.subtle);
+  }
+
+  function manifestCanonical(m) {
+    // MUST match handler/widget_manifest.go::canonicalManifestMessage byte-for-byte.
+    var lines = ["hula-widget-manifest-v1"];
+    lines.push("server_id=" + (m.server_id || ""));
+    lines.push("visitor_chat_public_key_b64=" + (m.visitor_chat_public_key_b64 || ""));
+    var scripts = m.scripts || {};
+    Object.keys(scripts).sort().forEach(function (name) {
+      lines.push("script=" + name + "=" + scripts[name]);
+    });
+    lines.push("issued_at=" + (m.issued_at || ""));
+    // Trailing newline after every line, including the last (Go writes '\n' per line).
+    return new TextEncoder().encode(lines.join("\n") + "\n");
+  }
+
+  function verifyManifest(mod) {
+    if (!CFG.manifestUrl || !CFG.manifestKey) return Promise.resolve("skip");
+    if (!ed25519Supported()) return Promise.resolve("skip");
+    var pinnedKey, sigBytes, msgBytes, manifest;
+    return fetch(CFG.manifestUrl, { credentials: "omit", cache: "no-store" })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("manifest fetch " + resp.status);
+        return resp.json();
+      })
+      .then(function (m) {
+        manifest = m;
+        pinnedKey = mod.b64urlDecode(CFG.manifestKey);
+        sigBytes = mod.b64urlDecode(m.sig || "");
+        msgBytes = manifestCanonical(m);
+        return window.crypto.subtle.importKey(
+          "raw", pinnedKey, { name: "Ed25519" }, false, ["verify"]
+        );
+      })
+      .then(function (key) {
+        return window.crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, msgBytes);
+      })
+      .then(function (valid) {
+        if (!valid) {
+          warn("widget manifest signature did not verify — refusing to trust encryption keys");
+          return "tampered";
+        }
+        // Signature is authentic. Now ensure the page got the SAME pubkey + SRI
+        // the install signed. A mismatch means something on the wire swapped the
+        // key/module after signing.
+        if (manifest.visitor_chat_public_key_b64 !== CFG.visitorChatPub) {
+          warn("widget manifest pubkey mismatch — refusing to seal to a swapped key");
+          return "tampered";
+        }
+        var sm = (manifest.scripts || {})["hula-visitor-crypto.js"];
+        if (CFG.cryptoSri && sm && sm !== CFG.cryptoSri) {
+          warn("widget manifest crypto-module SRI mismatch");
+          return "tampered";
+        }
+        return "ok";
+      })
+      .catch(function (e) {
+        // ed25519 unsupported (importKey throws), fetch/parse error, etc. —
+        // transient or capability gap, not a proof of tampering. Proceed with
+        // the SRI-only protection already in force.
+        warn("widget manifest check skipped: " + (e && e.message ? e.message : e));
+        return "skip";
+      });
+  }
+
+  function warn(msg) {
+    try { (window.console || {}).warn && console.warn("[hula] " + msg); } catch (_) {}
   }
 
   // Best-effort: returns a promise that resolves true when encryption is set
@@ -71,6 +175,18 @@
     if (!CFG.visitorChatPub || !CFG.cryptoUrl) return Promise.resolve(false);
     return loadCryptoModule().then(function (mod) {
       if (!mod || !mod.isSupported()) return false;
+      // Cross-check the signed widget manifest before trusting any key. On a
+      // positive tamper signal, refuse encryption (run plaintext) rather than
+      // seal to a key an attacker may have swapped.
+      return verifyManifest(mod).then(function (status) {
+        if (status === "tampered") return false;
+        return finishInitEncryption(mod);
+      });
+    });
+  }
+
+  function finishInitEncryption(mod) {
+    return Promise.resolve().then(function () {
       var serverPub;
       try {
         serverPub = mod.b64urlDecode(CFG.visitorChatPub);
