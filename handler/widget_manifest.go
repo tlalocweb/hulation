@@ -96,14 +96,23 @@ func sriSHA384(data []byte) string {
 	return "sha384-" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
+// sriErrLogged dedupes the "couldn't hash an embedded asset" error log so a
+// misbuild is visible once rather than on every widget request.
+var sriErrLogged sync.Map // map[string]struct{}
+
 // staticAssetSRI returns the SRI of an embedded, non-templated asset, computing
-// it once and caching. Errors only if the embed read fails.
+// it once and caching. A read failure means a missing/unreadable embedded asset
+// (a build error) — it disables SRI pinning for that asset, so log it once so
+// the misbuild is detectable rather than silently dropping `integrity`.
 func staticAssetSRI(embedPath string) (string, error) {
 	if v, ok := staticSRICache.Load(embedPath); ok {
 		return v.(string), nil
 	}
 	data, err := builtinstatics.Get(embedPath)
 	if err != nil {
+		if _, dup := sriErrLogged.LoadOrStore(embedPath, struct{}{}); !dup {
+			log.Errorf("widget-manifest: cannot hash embedded asset %q for SRI: %s (integrity pinning disabled for it)", embedPath, err)
+		}
 		return "", err
 	}
 	sri := sriSHA384(data)
@@ -228,7 +237,10 @@ func WidgetManifestHandler() http.HandlerFunc {
 			return
 		}
 
-		vars := buildBuiltinVars(srv)
+		// Same config snapshot for both the signing key (above) and the template
+		// vars (below) so the signature can't be over a pubkey from a different
+		// reload generation.
+		vars := buildBuiltinVarsFromConfig(srv, liveCfg)
 		visitorPub := vars["visitor_chat_public_key_b64"]
 		cryptoSRI := vars["visitor_crypto_sri"]
 		if cryptoSRI == "" {

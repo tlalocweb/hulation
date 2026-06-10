@@ -223,8 +223,17 @@ func resolveOverlay(root, urlPath string) (string, bool) {
 // here. Stays a flat string map so the same dict feeds JS, CSS, and
 // future HTML templates uniformly.
 func buildBuiltinVars(srv *config.Server) map[string]string {
+	return buildBuiltinVarsFromConfig(srv, app.GetConfig())
+}
+
+// buildBuiltinVarsFromConfig is buildBuiltinVars against an explicit config
+// snapshot. The widget-manifest handler uses this so the signing key and the
+// templated vars (visitor pubkey, SRIs) it signs over come from the SAME config
+// pointer — a concurrent ReloadConfig() between two app.GetConfig() reads could
+// otherwise sign with one visitor_chat_key while emitting another's public key,
+// yielding an intermittently invalid signature.
+func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[string]string {
 	prefix := tune.GetBuiltinStaticPrefix()
-	cfg := app.GetConfig()
 
 	captchaProvider := ""
 	captchaSitekey := ""

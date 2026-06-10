@@ -119,49 +119,68 @@
   function verifyManifest(mod) {
     if (!CFG.manifestUrl || !CFG.manifestKey) return Promise.resolve("skip");
     if (!ed25519Supported()) return Promise.resolve("skip");
-    var pinnedKey, sigBytes, msgBytes, manifest;
-    return fetch(CFG.manifestUrl, { credentials: "omit", cache: "no-store" })
-      .then(function (resp) {
-        if (!resp.ok) throw new Error("manifest fetch " + resp.status);
-        return resp.json();
-      })
-      .then(function (m) {
-        manifest = m;
-        pinnedKey = mod.b64urlDecode(CFG.manifestKey);
-        sigBytes = mod.b64urlDecode(m.sig || "");
-        msgBytes = manifestCanonical(m);
-        return window.crypto.subtle.importKey(
-          "raw", pinnedKey, { name: "Ed25519" }, false, ["verify"]
-        );
-      })
+
+    // `fetched` flips once we hold a parsed manifest. It's the line between
+    // "couldn't check" and "checked and it's wrong":
+    //   - errors BEFORE it (bad pinned key, ed25519 unsupported, fetch/parse
+    //     failure) are capability/transient → "skip" (SRI-only protection).
+    //   - errors AFTER it (sig won't base64-decode, importKey/verify throws a
+    //     DataError/OperationError on malformed material, sig invalid, or a
+    //     pubkey/SRI mismatch) are properties of the manifest we received →
+    //     "tampered". WebCrypto can THROW rather than return false on malformed
+    //     signatures, so a bare catch must not silently downgrade those.
+    var fetched = false;
+
+    // Decode + import the *pinned* key first. A failure here is our own config
+    // or a capability gap, not manifest tampering.
+    var pinnedKey;
+    try {
+      pinnedKey = mod.b64urlDecode(CFG.manifestKey);
+    } catch (_) {
+      warn("widget manifest: pinned key not decodable (config); skipping check");
+      return Promise.resolve("skip");
+    }
+
+    return window.crypto.subtle
+      .importKey("raw", pinnedKey, { name: "Ed25519" }, false, ["verify"])
       .then(function (key) {
-        return window.crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, msgBytes);
-      })
-      .then(function (valid) {
-        if (!valid) {
-          warn("widget manifest signature did not verify — refusing to trust encryption keys");
-          return "tampered";
-        }
-        // Signature is authentic. Now ensure the page got the SAME pubkey + SRI
-        // the install signed. A mismatch means something on the wire swapped the
-        // key/module after signing.
-        if (manifest.visitor_chat_public_key_b64 !== CFG.visitorChatPub) {
-          warn("widget manifest pubkey mismatch — refusing to seal to a swapped key");
-          return "tampered";
-        }
-        var sm = (manifest.scripts || {})["hula-visitor-crypto.js"];
-        if (CFG.cryptoSri && sm && sm !== CFG.cryptoSri) {
-          warn("widget manifest crypto-module SRI mismatch");
-          return "tampered";
-        }
-        return "ok";
+        return fetch(CFG.manifestUrl, { credentials: "omit", cache: "no-store" })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error("manifest fetch " + resp.status);
+            return resp.json();
+          })
+          .then(function (m) {
+            fetched = true; // from here, any failure is the manifest's fault
+            var sigBytes = mod.b64urlDecode(m.sig || "");
+            var msgBytes = manifestCanonical(m);
+            return window.crypto.subtle
+              .verify({ name: "Ed25519" }, key, sigBytes, msgBytes)
+              .then(function (valid) {
+                if (!valid) {
+                  warn("widget manifest signature did not verify — refusing to trust encryption keys");
+                  return "tampered";
+                }
+                // Authentic signature. Ensure the page got the SAME pubkey + SRI
+                // the install signed; a mismatch means something swapped the
+                // key/module after signing.
+                if (m.visitor_chat_public_key_b64 !== CFG.visitorChatPub) {
+                  warn("widget manifest pubkey mismatch — refusing to seal to a swapped key");
+                  return "tampered";
+                }
+                var sm = (m.scripts || {})["hula-visitor-crypto.js"];
+                if (CFG.cryptoSri && sm && sm !== CFG.cryptoSri) {
+                  warn("widget manifest crypto-module SRI mismatch");
+                  return "tampered";
+                }
+                return "ok";
+              });
+          });
       })
       .catch(function (e) {
-        // ed25519 unsupported (importKey throws), fetch/parse error, etc. —
-        // transient or capability gap, not a proof of tampering. Proceed with
-        // the SRI-only protection already in force.
-        warn("widget manifest check skipped: " + (e && e.message ? e.message : e));
-        return "skip";
+        warn("widget manifest check: " + (e && e.message ? e.message : e));
+        // A manifest we fetched but couldn't decode/verify is a tamper signal;
+        // an importKey/capability or fetch failure is not.
+        return fetched ? "tampered" : "skip";
       });
   }
 
