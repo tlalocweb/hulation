@@ -84,9 +84,12 @@ type WidgetManifest struct {
 	Sig        string            `json:"sig,omitempty"`
 }
 
-// BuiltinWidgetManifestURL is the request path the manifest is served at.
+// BuiltinWidgetManifestURL is the request path the manifest is served at. The
+// builtin-static prefix already carries the "hula-" branding (default
+// "hula-scripts/…"), so the file part is just "widget-manifest.json" — giving
+// "/hula-widget-manifest.json" by default rather than a doubled "hula-hula-".
 func BuiltinWidgetManifestURL() string {
-	return "/" + tune.GetBuiltinStaticPrefix() + "hula-widget-manifest.json"
+	return "/" + tune.GetBuiltinStaticPrefix() + "widget-manifest.json"
 }
 
 // sriSHA384 returns the Subresource Integrity token for data: the standard
