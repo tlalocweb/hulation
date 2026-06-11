@@ -32,6 +32,7 @@
     { href: 'admin/reports', label: 'Reports' },
     { href: 'admin/alerts', label: 'Alerts' },
     { href: 'admin/notifications', label: 'Notifications' },
+    { href: 'admin/devices', label: 'Paired devices' },
     { href: 'admin/security', label: 'Security' },
   ];
 

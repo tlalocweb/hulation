@@ -172,3 +172,31 @@ func (s *DeviceKeyStore) ListForUser(ctx context.Context, userID string) ([]auth
 	}
 	return out, nil
 }
+
+// ListAll returns every persisted device key across all users — the admin "all
+// paired devices" surface (gated to admins in the handler). Satisfies
+// authware.DeviceKeyAllLister. A thin full-bucket scan like ListForUser; the
+// bucket stays small (one row per pair redemption). Unsorted — callers (the SPA)
+// order for display.
+func (s *DeviceKeyStore) ListAll(ctx context.Context) ([]authware.DeviceKey, error) {
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("device_key: store not open")
+	}
+	rows, err := s.store.List(ctx, deviceKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]authware.DeviceKey, 0, len(rows))
+	for _, raw := range rows {
+		var stored storedDeviceKey
+		if uerr := json.Unmarshal(raw, &stored); uerr != nil {
+			continue
+		}
+		dk, derr := fromStored(stored)
+		if derr != nil {
+			continue
+		}
+		out = append(out, dk)
+	}
+	return out, nil
+}

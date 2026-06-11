@@ -330,6 +330,43 @@ func TestPairListDevices_NonAdminCannotQueryOtherUser(t *testing.T) {
 	}
 }
 
+func TestPairListDevices_AdminAllListsEveryUser(t *testing.T) {
+	_, devices := setupPairFixtures(t)
+	seedDevice(t, devices, "d-a", "alice", "site-1")
+	seedDevice(t, devices, "d-b", "alice", "site-2")
+	seedDevice(t, devices, "d-c", "bob", "site-1")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/pair/devices?all=true", nil)
+	r = r.WithContext(adminContext())
+	w := httptest.NewRecorder()
+	pairListDevicesHandler()(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	rows, _ := resp["devices"].([]any)
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3 (all devices across users)", len(rows))
+	}
+}
+
+func TestPairListDevices_NonAdminAllForbidden(t *testing.T) {
+	_, devices := setupPairFixtures(t)
+	seedDevice(t, devices, "d-a", "alice", "site-1")
+	seedDevice(t, devices, "d-b", "bob", "site-1")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/pair/devices?all=true", nil)
+	r = r.WithContext(ownerContext("alice"))
+	w := httptest.NewRecorder()
+	pairListDevicesHandler()(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status: %d; body=%s (non-admin must not list all devices)", w.Code, w.Body.String())
+	}
+}
+
 func TestPairListDevices_RejectsUnauthenticated(t *testing.T) {
 	setupPairFixtures(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pair/devices", nil)

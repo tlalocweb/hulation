@@ -239,6 +239,32 @@ func pairListDevicesHandler() http.HandlerFunc {
 				"missing or invalid bearer token")
 			return
 		}
+		// Admin "all devices" view (?all=true) — the SPA paired-devices screen.
+		// Admin-only; lists every device across users via the optional
+		// DeviceKeyAllLister capability.
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("all")), "true") {
+			if !hasAdminRole(claims) {
+				writePairError(w, http.StatusForbidden, "forbidden",
+					"only admin users may list all devices")
+				return
+			}
+			allLister, ok := deviceKeyStoreSingleton.(authware.DeviceKeyAllLister)
+			if !ok {
+				writePairError(w, http.StatusServiceUnavailable, "not_ready",
+					"device-key store does not support listing all devices")
+				return
+			}
+			devices, err := allLister.ListAll(r.Context())
+			if err != nil {
+				log.Warnf("pair: list all devices: %s", err)
+				writePairError(w, http.StatusInternalServerError, "internal",
+					"could not list devices")
+				return
+			}
+			writeDeviceList(w, devices)
+			return
+		}
+
 		lister, ok := deviceKeyStoreSingleton.(authware.DeviceKeyLister)
 		if !ok {
 			writePairError(w, http.StatusServiceUnavailable, "not_ready",
@@ -260,20 +286,26 @@ func pairListDevicesHandler() http.HandlerFunc {
 				"could not list devices")
 			return
 		}
-		out := make([]map[string]any, 0, len(devices))
-		for _, d := range devices {
-			out = append(out, map[string]any{
-				"device_id":      d.DeviceID,
-				"user_id":        d.UserID,
-				"server_id":      d.ServerID,
-				"public_key_b64": base64.StdEncoding.EncodeToString(d.PublicKey),
-				"created_at":     d.CreatedAt.Format(time.RFC3339),
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"devices": out})
+		writeDeviceList(w, devices)
 	}
+}
+
+// writeDeviceList encodes a device-key slice as the public list response shape:
+// {"devices":[{device_id,user_id,server_id,public_key_b64,created_at}]}.
+func writeDeviceList(w http.ResponseWriter, devices []authware.DeviceKey) {
+	out := make([]map[string]any, 0, len(devices))
+	for _, d := range devices {
+		out = append(out, map[string]any{
+			"device_id":      d.DeviceID,
+			"user_id":        d.UserID,
+			"server_id":      d.ServerID,
+			"public_key_b64": base64.StdEncoding.EncodeToString(d.PublicKey),
+			"created_at":     d.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{"devices": out})
 }
 
 // pairRevokeDeviceHandler returns the handler for POST /api/v1/pair/devices/revoke.

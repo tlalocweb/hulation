@@ -70,6 +70,14 @@ type DeviceKeyLister interface {
 	ListForUser(ctx context.Context, userID string) ([]DeviceKey, error)
 }
 
+// DeviceKeyAllLister lists every device across all users — the admin "all paired
+// devices" surface (GET /api/v1/pair/devices?all=true). A separate, optional
+// interface so the narrower per-user DeviceKeyLister path can't reach it; the
+// handler also gates it on the admin role.
+type DeviceKeyAllLister interface {
+	ListAll(ctx context.Context) ([]DeviceKey, error)
+}
+
 // InMemoryDeviceKeyStore is a sync-safe map used by tests + the v1 boot path until a
 // persistent store lands alongside the QR-pairing endpoint. Production swaps this for a
 // real backing store.
@@ -112,6 +120,17 @@ func (s *InMemoryDeviceKeyStore) ListForUser(_ context.Context, userID string) (
 		if k.UserID == userID {
 			out = append(out, k)
 		}
+	}
+	return out, nil
+}
+
+// ListAll satisfies DeviceKeyAllLister.
+func (s *InMemoryDeviceKeyStore) ListAll(_ context.Context) ([]DeviceKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]DeviceKey, 0, len(s.byID))
+	for _, k := range s.byID {
+		out = append(out, k)
 	}
 	return out, nil
 }
