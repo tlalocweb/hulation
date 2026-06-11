@@ -106,6 +106,10 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 		srv.RegisterCustomHandler("GET "+asset.URLPath, handler.BuiltinStaticHandler(asset))
 	}
 
+	// Signed widget integrity manifest (ed25519 over the script SRIs + the
+	// visitor-chat public key). 404s when the install has no visitor_chat_key.
+	srv.RegisterCustomHandler("GET "+handler.BuiltinWidgetManifestURL(), handler.WidgetManifestHandler())
+
 	// Mobile realtime WebSocket — Phase 5a.6. Registers on the
 	// ServeMux fallback because gRPC server-streaming isn't worth
 	// the toolchain load for a single endpoint.

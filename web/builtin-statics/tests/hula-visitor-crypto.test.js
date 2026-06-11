@@ -9,7 +9,7 @@
  * standalone assert-or-throw script. Exit 0 = pass, non-zero = fail.
  */
 "use strict";
-const c = require("./hula-visitor-crypto.js");
+const c = require("../scripts/hula-visitor-crypto.js");
 
 function hex(bytes) {
   return Array.prototype.map

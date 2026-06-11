@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cbroglie/mustache"
 
@@ -86,10 +87,6 @@ func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
 	cfg := app.GetConfig()
 	hosts := buildHostLookup(cfg)
 
-	var (
-		parsedTmpl *mustache.Template
-	)
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -110,34 +107,53 @@ func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
 			return
 		}
 
-		// 2. Embedded fallback — parse once, render per request.
-		if parsedTmpl == nil {
-			data, err := builtinstatics.Get(asset.EmbedPath)
-			if err != nil {
-				log.Errorf("builtinstatic: read %s: %s", asset.EmbedPath, err.Error())
-				http.Error(w, "asset unavailable", http.StatusInternalServerError)
-				return
-			}
-			t, err := mustache.ParseString(string(data))
-			if err != nil {
-				log.Errorf("builtinstatic: parse %s: %s", asset.EmbedPath, err.Error())
-				http.Error(w, "asset unavailable", http.StatusInternalServerError)
-				return
-			}
-			parsedTmpl = t
-		}
-
-		vars := buildBuiltinVars(srv)
-		var buf bytes.Buffer
-		if err := parsedTmpl.FRender(&buf, vars); err != nil {
+		// 2. Embedded fallback — parse (cached) + render per request.
+		rendered, err := renderBuiltinAsset(asset.EmbedPath, buildBuiltinVars(srv))
+		if err != nil {
 			log.Errorf("builtinstatic: render %s: %s", asset.EmbedPath, err.Error())
-			http.Error(w, "render error", http.StatusInternalServerError)
+			http.Error(w, "asset unavailable", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", asset.ContentType)
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-		_, _ = w.Write(buf.Bytes())
+		_, _ = w.Write(rendered)
 	}
+}
+
+// builtinTmplCache memoises parsed mustache templates by embed path so each
+// asset is parsed once across all requests (and across the static handler +
+// the widget-manifest handler, which both render the same templates).
+var builtinTmplCache sync.Map // map[string]*mustache.Template
+
+// badVisitorChatKeyLogged dedupes the "visitor_chat_key set but unusable" warning
+// (buildBuiltinVarsFromConfig runs per widget render) so a misconfig is logged
+// once per distinct bad value, not on every request.
+var badVisitorChatKeyLogged sync.Map // map[string]struct{}
+
+// renderBuiltinAsset parses (cached) and renders an embedded asset with vars.
+// Shared by BuiltinStaticHandler and the widget-manifest handler so the bytes a
+// browser fetches and the bytes we hash for SRI are produced by identical code.
+func renderBuiltinAsset(embedPath string, vars map[string]string) ([]byte, error) {
+	var tmpl *mustache.Template
+	if v, ok := builtinTmplCache.Load(embedPath); ok {
+		tmpl = v.(*mustache.Template)
+	} else {
+		data, err := builtinstatics.Get(embedPath)
+		if err != nil {
+			return nil, err
+		}
+		t, err := mustache.ParseString(string(data))
+		if err != nil {
+			return nil, err
+		}
+		builtinTmplCache.Store(embedPath, t)
+		tmpl = t
+	}
+	var buf bytes.Buffer
+	if err := tmpl.FRender(&buf, vars); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // buildHostLookup builds host-header → *config.Server for the registered
@@ -212,8 +228,17 @@ func resolveOverlay(root, urlPath string) (string, bool) {
 // here. Stays a flat string map so the same dict feeds JS, CSS, and
 // future HTML templates uniformly.
 func buildBuiltinVars(srv *config.Server) map[string]string {
+	return buildBuiltinVarsFromConfig(srv, app.GetConfig())
+}
+
+// buildBuiltinVarsFromConfig is buildBuiltinVars against an explicit config
+// snapshot. The widget-manifest handler uses this so the signing key and the
+// templated vars (visitor pubkey, SRIs) it signs over come from the SAME config
+// pointer — a concurrent ReloadConfig() between two app.GetConfig() reads could
+// otherwise sign with one visitor_chat_key while emitting another's public key,
+// yielding an intermittently invalid signature.
+func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[string]string {
 	prefix := tune.GetBuiltinStaticPrefix()
-	cfg := app.GetConfig()
 
 	captchaProvider := ""
 	captchaSitekey := ""
@@ -252,10 +277,51 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 	// the same static prefix.
 	visitorChatPub := ""
 	if cfg != nil && cfg.VisitorChatKey != "" {
-		if priv, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey); err == nil {
-			if pub, perr := visitorcrypto.PublicKeyFromPrivate(priv); perr == nil {
+		priv, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey)
+		if err == nil {
+			pub, perr := visitorcrypto.PublicKeyFromPrivate(priv)
+			if perr == nil {
 				visitorChatPub = base64.RawURLEncoding.EncodeToString(pub)
+			} else {
+				err = perr
 			}
+		}
+		if err != nil {
+			// A set-but-malformed key would otherwise look exactly like
+			// "encryption off" (empty pubkey → plaintext widget), silently
+			// hiding operator misconfiguration. Log once per distinct bad value.
+			if _, dup := badVisitorChatKeyLogged.LoadOrStore(cfg.VisitorChatKey, struct{}{}); !dup {
+				log.Errorf("builtinstatic: visitor_chat_key is set but unusable (%s); widget runs plaintext", err)
+			}
+		}
+	}
+
+	// Widget integrity hardening (see widget_manifest.go). visitor_crypto_sri is
+	// the SRI of the static crypto module so the widget can pin it when it loads
+	// it dynamically. widget_manifest_* let the widget fetch + verify the signed
+	// manifest. ALL gated on encryption being configured (visitorChatPub != "")
+	// so they're genuinely empty when it's off — the widget runs plaintext and
+	// never loads the crypto module, so there's nothing to pin, and we skip the
+	// per-render overlay filesystem lookup for non-encryption installs.
+	cryptoSRI := ""
+	manifestPub := ""
+	manifestURL := ""
+	if visitorChatPub != "" {
+		cryptoAsset := BuiltinChatCryptoJSAsset()
+		if sri, had, err := overlaySRI(srv, cryptoAsset.URLPath); had && err == nil {
+			// Customer overlay is what the browser actually fetches — pin its hash.
+			cryptoSRI = sri
+		} else {
+			if had && err != nil {
+				log.Errorf("builtinstatic: read crypto-module overlay for SRI: %s", err)
+			}
+			if sri, err := staticAssetSRI(cryptoAsset.EmbedPath); err == nil {
+				cryptoSRI = sri
+			}
+		}
+		if pub, ok := ManifestSigningPublicB64(cfg); ok {
+			manifestPub = pub
+			manifestURL = BuiltinWidgetManifestURL()
 		}
 	}
 
@@ -271,5 +337,8 @@ func buildBuiltinVars(srv *config.Server) map[string]string {
 		// "plaintext mode".
 		"visitor_chat_public_key_b64": visitorChatPub,
 		"visitor_crypto_url":          "/" + prefix + "scripts/hula-visitor-crypto.js",
+		"visitor_crypto_sri":          cryptoSRI,
+		"widget_manifest_url":         manifestURL,
+		"widget_manifest_public_key_b64": manifestPub,
 	}
 }

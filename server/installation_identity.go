@@ -29,6 +29,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/pkg/visitorcrypto"
 	"github.com/tlalocweb/hulation/utils"
@@ -92,6 +93,14 @@ func installationIdentityHandler() http.HandlerFunc {
 			}
 			resp["visitor_chat_public_key_b64"] =
 				base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(pub)
+
+			// The widget-manifest signing key is HKDF-derived from the same
+			// visitor_chat_key. Publish its public so integrators can pin it
+			// out-of-band and verify the signed widget manifest off the TLS
+			// channel.
+			if mpub, ok := handler.ManifestSigningPublicB64(cfg); ok {
+				resp["widget_manifest_public_key_b64"] = mpub
+			}
 		}
 
 		// Nothing configured at all → 404 so mobile + widget both treat the

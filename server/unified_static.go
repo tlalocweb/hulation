@@ -27,6 +27,34 @@ type staticRoute struct {
 	handler   http.Handler
 }
 
+// staticPassthrough reports whether path p must bypass the per-host static
+// FileServer and reach hula's own routing layers: service routes (/api, /v,
+// /scripts, /analytics, /hulastatus) and the built-in assets under the
+// configured builtin-static prefix (chat widget JS/CSS/HTML + the signed widget
+// manifest). Standalone + unit-tested because a missing entry silently disables
+// a feature on every static-root install — exactly how the widget manifest,
+// which lives at /<prefix>widget-manifest.json (outside the scripts/styles/html
+// namespaces), would have 404'd before it was added here.
+func staticPassthrough(p string) bool {
+	if strings.HasPrefix(p, "/api/") ||
+		strings.HasPrefix(p, "/v/") ||
+		strings.HasPrefix(p, "/scripts/") ||
+		strings.HasPrefix(p, "/analytics/") ||
+		p == "/analytics" ||
+		p == "/hulastatus" {
+		return true
+	}
+	if bp := tune.GetBuiltinStaticPrefix(); bp != "" {
+		if strings.HasPrefix(p, "/"+bp+"scripts/") ||
+			strings.HasPrefix(p, "/"+bp+"styles/") ||
+			strings.HasPrefix(p, "/"+bp+"html/") ||
+			p == "/"+bp+"widget-manifest.json" {
+			return true
+		}
+	}
+	return false
+}
+
 // registerStaticSites walks cfg.Servers and attaches a static FileServer
 // middleware on the unified listener. No-op when no server has a Root
 // configured.
@@ -70,30 +98,10 @@ func registerStaticSites(srv *unified.Server, cfg *config.Config) {
 			// same listener.
 			p := r.URL.Path
 			log.Debugf("static-mw: host=%q path=%q", r.Host, p)
-			if strings.HasPrefix(p, "/api/") ||
-				strings.HasPrefix(p, "/v/") ||
-				strings.HasPrefix(p, "/scripts/") ||
-				strings.HasPrefix(p, "/analytics/") ||
-				p == "/analytics" ||
-				p == "/hulastatus" {
-				log.Debugf("static-mw: passthrough for service path %s", p)
+			if staticPassthrough(p) {
+				log.Debugf("static-mw: passthrough %s", p)
 				next.ServeHTTP(w, r)
 				return
-			}
-			// Built-in static namespace (chat widget JS/CSS, future
-			// bundled assets). The handler in handler/builtinstatic.go
-			// does its own per-host overlay check against srv.Root and
-			// only renders the embedded template when no overlay
-			// exists; passing through here keeps both halves of the
-			// overlay+fallback story in one place.
-			if bp := tune.GetBuiltinStaticPrefix(); bp != "" {
-				if strings.HasPrefix(p, "/"+bp+"scripts/") ||
-					strings.HasPrefix(p, "/"+bp+"styles/") ||
-					strings.HasPrefix(p, "/"+bp+"html/") {
-					log.Debugf("static-mw: passthrough for builtin asset %s", p)
-					next.ServeHTTP(w, r)
-					return
-				}
 			}
 			host := strings.ToLower(r.Host)
 			if i := strings.LastIndex(host, ":"); i >= 0 {
