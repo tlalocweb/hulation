@@ -250,9 +250,6 @@ func buildSignedManifest(priv ed25519.PrivateKey, serverID, visitorPub, entrySRI
 // visitor_chat_key (nothing to protect); 500 only on internal render/embed
 // failure.
 func WidgetManifestHandler() http.HandlerFunc {
-	cfg := app.GetConfig()
-	hosts := buildHostLookup(cfg)
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		// GET only — the route is registered as "GET <path>"; Go 1.22 method
 		// patterns mean HEAD wouldn't reach here anyway.
@@ -260,25 +257,28 @@ func WidgetManifestHandler() http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		// Read config ONCE per request and derive everything — host lookup,
+		// signing key, and template vars — from that single snapshot. Capturing
+		// the host map at construction time (while re-reading the key live) could
+		// sign with a rotated key over a stale *config.Server (wrong
+		// server_id/root/overlay), or 400 "unknown host" for a host added by a
+		// reload. One snapshot keeps the whole manifest self-consistent.
+		liveCfg := app.GetConfig()
+
 		host := normaliseHost(r.Host)
-		srv := hosts[host]
+		srv := buildHostLookup(liveCfg)[host]
 		if srv == nil {
 			http.Error(w, "unknown host", http.StatusBadRequest)
 			return
 		}
 
-		// Re-read config each request so a key rotation / reload is reflected
-		// without a restart (consistent with installationIdentityHandler).
-		liveCfg := app.GetConfig()
 		priv, ok := manifestSigningKey(liveCfg)
 		if !ok {
 			http.Error(w, "widget manifest not configured", http.StatusNotFound)
 			return
 		}
 
-		// Same config snapshot for both the signing key (above) and the template
-		// vars (below) so the signature can't be over a pubkey from a different
-		// reload generation.
 		vars := buildBuiltinVarsFromConfig(srv, liveCfg)
 		visitorPub := vars["visitor_chat_public_key_b64"]
 		cryptoSRI := vars["visitor_crypto_sri"]

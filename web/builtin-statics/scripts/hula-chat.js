@@ -39,7 +39,8 @@
     // WebCrypto X25519 — the widget runs in plaintext (chat still works).
     visitorChatPub:   "{{visitor_chat_public_key_b64}}",
     cryptoUrl:        "{{visitor_crypto_url}}",
-    // Integrity hardening (see docs/visitor-chat-encryption.md §Hardening).
+    // Integrity hardening (see the hula-mobile repo's
+    // docs/visitor-chat-encryption.md §Hardening; not in this repo).
     // cryptoSri pins the dynamically-loaded crypto module via Subresource
     // Integrity. manifestUrl + manifestKey let the widget fetch + verify the
     // signed widget manifest (ed25519) and cross-check the server pubkey it's
