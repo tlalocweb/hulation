@@ -59,7 +59,10 @@
   }
 
   function day(ts: string | undefined): string {
-    return ts?.replace('T', ' ').slice(0, 16) ?? '—';
+    // Treat empty/whitespace as missing — `?? '—'` wouldn't fire for "" since
+    // an empty string is "defined", so a blank created_at would render blank.
+    if (!ts || !ts.trim()) return '—';
+    return ts.replace('T', ' ').slice(0, 16);
   }
 </script>
 
@@ -131,9 +134,9 @@
         {:else}
           {#each filtered as d (d.device_id)}
             <tr class="border-t transition-colors hover:bg-accent/40">
-              <td class="px-3 py-2">{d.user_id ?? '—'}</td>
-              <td class="px-3 py-2 text-muted-foreground">{d.server_id ?? '—'}</td>
-              <td class="px-3 py-2 font-mono text-xs" title={d.device_id}>{d.device_id ?? '—'}</td>
+              <td class="px-3 py-2">{d.user_id || '—'}</td>
+              <td class="px-3 py-2 text-muted-foreground">{d.server_id || '—'}</td>
+              <td class="px-3 py-2 font-mono text-xs" title={d.device_id}>{d.device_id || '—'}</td>
               <td class="px-3 py-2 font-mono text-xs text-muted-foreground" title={d.public_key_b64}>
                 {short(d.public_key_b64)}
               </td>

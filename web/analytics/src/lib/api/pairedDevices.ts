@@ -10,11 +10,14 @@
 import { ApiError } from './analytics';
 
 export interface PairedDevice {
-  device_id?: string;
-  user_id?: string;
-  server_id?: string;
-  public_key_b64?: string;
-  created_at?: string;
+  // The handler (writeDeviceList in server/pair_handlers.go) always emits all
+  // five keys, so they're required strings here — though some (notably
+  // server_id) may be the empty string, which the UI renders as a placeholder.
+  device_id: string;
+  user_id: string;
+  server_id: string;
+  public_key_b64: string;
+  created_at: string;
 }
 
 export interface ListDevicesResponse {
@@ -37,11 +40,15 @@ function authHeaders(): Record<string, string> {
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let body: unknown = null;
+    // Read the body ONCE. Calling res.json() first consumes the stream, so a
+    // subsequent res.text() would throw "body stream already read" and mask the
+    // real ApiError. Read text, then best-effort JSON.parse it.
+    const raw = await res.text().catch(() => '');
+    let body: unknown = raw;
     try {
-      body = await res.json();
+      body = raw ? JSON.parse(raw) : null;
     } catch {
-      body = await res.text();
+      // not JSON — keep the raw text
     }
     throw new ApiError(res.status, body);
   }

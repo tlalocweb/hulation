@@ -54,10 +54,12 @@ describe('pairedDevices API client', () => {
   });
 
   it('throws ApiError on a non-2xx response', async () => {
+    // A real Response exposes .text(); handle() reads the body once via text()
+    // then best-effort JSON.parse, so the mock must provide text().
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: false,
       status: 403,
-      json: async () => ({ error: { code: 'forbidden', message: 'nope' } }),
+      text: async () => JSON.stringify({ error: { code: 'forbidden', message: 'nope' } }),
     }) as any);
     await expect(pairedDevices.listAll()).rejects.toBeInstanceOf(ApiError);
   });
