@@ -99,7 +99,10 @@
   // plaintext (the documented graceful-fallback policy). Hard fail-closed is
   // the separate "require encryption" config knob.
   function ed25519Supported() {
-    return !!(window.crypto && window.crypto.subtle);
+    // crypto.subtle for importKey/verify AND TextEncoder for manifestCanonical.
+    // Missing either is a capability gap → we want a clean "skip", not a false
+    // "tampered" from manifestCanonical throwing after the manifest is fetched.
+    return !!(window.crypto && window.crypto.subtle && typeof TextEncoder !== "undefined");
   }
 
   function manifestCanonical(m) {

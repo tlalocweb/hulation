@@ -171,6 +171,28 @@ func TestOverlaySRINoneWithoutFile(t *testing.T) {
 	}
 }
 
+func TestBuiltinVarsGateIntegrityOnEncryption(t *testing.T) {
+	srv := &config.Server{ID: "mysite"}
+
+	// Encryption OFF (no visitor_chat_key): integrity vars must be empty so the
+	// widget's "all empty when off" contract holds and we skip overlay lookups.
+	off := buildBuiltinVarsFromConfig(srv, &config.Config{})
+	for _, k := range []string{"visitor_chat_public_key_b64", "visitor_crypto_sri", "widget_manifest_url", "widget_manifest_public_key_b64"} {
+		if off[k] != "" {
+			t.Fatalf("encryption off: %s = %q, want empty", k, off[k])
+		}
+	}
+
+	// Encryption ON: the same vars become non-empty.
+	key := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x33}, 32))
+	on := buildBuiltinVarsFromConfig(srv, &config.Config{VisitorChatKey: key})
+	for _, k := range []string{"visitor_chat_public_key_b64", "visitor_crypto_sri", "widget_manifest_url", "widget_manifest_public_key_b64"} {
+		if on[k] == "" {
+			t.Fatalf("encryption on: %s is empty, want set", k)
+		}
+	}
+}
+
 func TestStaticAssetSRIMatchesEmbed(t *testing.T) {
 	// The crypto module must hash to a real sha384 SRI (it's the value templated
 	// into the widget + listed in the manifest).

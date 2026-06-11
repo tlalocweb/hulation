@@ -282,26 +282,30 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 	// Widget integrity hardening (see widget_manifest.go). visitor_crypto_sri is
 	// the SRI of the static crypto module so the widget can pin it when it loads
 	// it dynamically. widget_manifest_* let the widget fetch + verify the signed
-	// manifest. All empty when encryption is off → widget runs plaintext and
-	// skips the integrity machinery.
+	// manifest. ALL gated on encryption being configured (visitorChatPub != "")
+	// so they're genuinely empty when it's off — the widget runs plaintext and
+	// never loads the crypto module, so there's nothing to pin, and we skip the
+	// per-render overlay filesystem lookup for non-encryption installs.
 	cryptoSRI := ""
-	cryptoAsset := BuiltinChatCryptoJSAsset()
-	if sri, had, err := overlaySRI(srv, cryptoAsset.URLPath); had && err == nil {
-		// Customer overlay is what the browser actually fetches — pin its hash.
-		cryptoSRI = sri
-	} else {
-		if had && err != nil {
-			log.Errorf("builtinstatic: read crypto-module overlay for SRI: %s", err)
-		}
-		if sri, err := staticAssetSRI(cryptoAsset.EmbedPath); err == nil {
-			cryptoSRI = sri
-		}
-	}
 	manifestPub := ""
 	manifestURL := ""
-	if pub, ok := ManifestSigningPublicB64(cfg); ok {
-		manifestPub = pub
-		manifestURL = BuiltinWidgetManifestURL()
+	if visitorChatPub != "" {
+		cryptoAsset := BuiltinChatCryptoJSAsset()
+		if sri, had, err := overlaySRI(srv, cryptoAsset.URLPath); had && err == nil {
+			// Customer overlay is what the browser actually fetches — pin its hash.
+			cryptoSRI = sri
+		} else {
+			if had && err != nil {
+				log.Errorf("builtinstatic: read crypto-module overlay for SRI: %s", err)
+			}
+			if sri, err := staticAssetSRI(cryptoAsset.EmbedPath); err == nil {
+				cryptoSRI = sri
+			}
+		}
+		if pub, ok := ManifestSigningPublicB64(cfg); ok {
+			manifestPub = pub
+			manifestURL = BuiltinWidgetManifestURL()
+		}
 	}
 
 	return map[string]string{
