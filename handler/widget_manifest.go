@@ -2,7 +2,8 @@ package handler
 
 // Signed widget integrity manifest — the "trust root off the TLS channel" half
 // of the visitor-chat hardening (see hula-mobile/docs/visitor-chat-encryption.md
-// §Hardening). Served at GET /<prefix>hula-widget-manifest.json.
+// §Hardening). Served at GET /<prefix>widget-manifest.json (default prefix
+// "hula-" → /hula-widget-manifest.json).
 //
 // The manifest lets a customer (and the running widget) verify that the bytes
 // they received for the chat widget + crypto module, and the visitor-chat
