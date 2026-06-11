@@ -66,17 +66,20 @@
       if (window.HulaVisitorCrypto) return resolve(window.HulaVisitorCrypto);
       if (!CFG.cryptoUrl) return resolve(null);
       var s = document.createElement("script");
-      s.src = CFG.cryptoUrl;
-      s.async = true;
-      // Pin the crypto module via SRI when the server published a hash. A
-      // tampered module fails the integrity check, the browser refuses to run
-      // it, onerror fires, and we fall back to plaintext — i.e. attacker code
-      // can never execute in place of the real crypto. crossOrigin is required
-      // for the browser to enforce integrity on the fetched script.
+      // Pin the crypto module via SRI when the server published a hash. Set
+      // integrity + crossOrigin BEFORE src: some browsers may start the fetch
+      // the instant src is assigned, so the integrity attribute must already be
+      // in place for the request to be consistently integrity-protected. A
+      // tampered module then fails the check, the browser refuses to run it,
+      // onerror fires, and we fall back to plaintext — attacker code can never
+      // execute in place of the real crypto. crossOrigin is required for the
+      // browser to enforce integrity on the fetched script.
       if (CFG.cryptoSri) {
         s.integrity = CFG.cryptoSri;
         s.crossOrigin = "anonymous";
       }
+      s.async = true;
+      s.src = CFG.cryptoUrl;
       s.onload = function () { resolve(window.HulaVisitorCrypto || null); };
       s.onerror = function () { resolve(null); };
       document.head.appendChild(s);

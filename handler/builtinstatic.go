@@ -125,6 +125,11 @@ func BuiltinStaticHandler(asset BuiltinStaticAsset) http.HandlerFunc {
 // the widget-manifest handler, which both render the same templates).
 var builtinTmplCache sync.Map // map[string]*mustache.Template
 
+// badVisitorChatKeyLogged dedupes the "visitor_chat_key set but unusable" warning
+// (buildBuiltinVarsFromConfig runs per widget render) so a misconfig is logged
+// once per distinct bad value, not on every request.
+var badVisitorChatKeyLogged sync.Map // map[string]struct{}
+
 // renderBuiltinAsset parses (cached) and renders an embedded asset with vars.
 // Shared by BuiltinStaticHandler and the widget-manifest handler so the bytes a
 // browser fetches and the bytes we hash for SRI are produced by identical code.
@@ -272,9 +277,21 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 	// the same static prefix.
 	visitorChatPub := ""
 	if cfg != nil && cfg.VisitorChatKey != "" {
-		if priv, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey); err == nil {
-			if pub, perr := visitorcrypto.PublicKeyFromPrivate(priv); perr == nil {
+		priv, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey)
+		if err == nil {
+			pub, perr := visitorcrypto.PublicKeyFromPrivate(priv)
+			if perr == nil {
 				visitorChatPub = base64.RawURLEncoding.EncodeToString(pub)
+			} else {
+				err = perr
+			}
+		}
+		if err != nil {
+			// A set-but-malformed key would otherwise look exactly like
+			// "encryption off" (empty pubkey → plaintext widget), silently
+			// hiding operator misconfiguration. Log once per distinct bad value.
+			if _, dup := badVisitorChatKeyLogged.LoadOrStore(cfg.VisitorChatKey, struct{}{}); !dup {
+				log.Errorf("builtinstatic: visitor_chat_key is set but unusable (%s); widget runs plaintext", err)
 			}
 		}
 	}

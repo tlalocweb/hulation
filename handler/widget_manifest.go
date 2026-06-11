@@ -163,31 +163,37 @@ func deriveManifestSigningKey(visitorChatSecret []byte) (ed25519.PrivateKey, err
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// manifestSigningKey resolves the install's manifest signing key from config,
-// reporting false when visitor-chat encryption (hence the manifest) is disabled.
-func manifestSigningKey(cfg *config.Config) (ed25519.PrivateKey, bool) {
+// manifestSigningKey resolves the install's manifest signing key from config.
+// It distinguishes "off" from "broken" so callers can react differently:
+//
+//	(key, nil) — configured + valid
+//	(nil, nil) — not configured (no visitor_chat_key); manifest legitimately off
+//	(nil, err) — visitor_chat_key IS set but malformed / underivable: operator
+//	             error, not "off" (the manifest endpoint should 500, like
+//	             /api/v1/installation/identity does for a malformed key).
+func manifestSigningKey(cfg *config.Config) (ed25519.PrivateKey, error) {
 	if cfg == nil || cfg.VisitorChatKey == "" {
-		return nil, false
+		return nil, nil
 	}
 	secret, err := utils.DecodeNoiseStaticKey(cfg.VisitorChatKey)
 	if err != nil {
-		log.Warnf("widget-manifest: decode visitor_chat_key: %s", err)
-		return nil, false
+		return nil, fmt.Errorf("decode visitor_chat_key: %w", err)
 	}
 	priv, err := deriveManifestSigningKey(secret)
 	if err != nil {
-		log.Errorf("widget-manifest: %s (manifest signing disabled)", err)
-		return nil, false
+		return nil, err
 	}
-	return priv, true
+	return priv, nil
 }
 
 // ManifestSigningPublicB64 returns the base64url (no pad) ed25519 public key
 // that signs this install's widget manifest, for publishing at
-// /api/v1/installation/identity. Reports false when the manifest is disabled.
+// /api/v1/installation/identity. Reports false when the manifest is disabled
+// OR misconfigured — the caller (template vars / identity endpoint) treats both
+// as "no manifest key" and surfaces a malformed key through its own logging.
 func ManifestSigningPublicB64(cfg *config.Config) (string, bool) {
-	priv, ok := manifestSigningKey(cfg)
-	if !ok {
+	priv, err := manifestSigningKey(cfg)
+	if err != nil || priv == nil {
 		return "", false
 	}
 	pub := priv.Public().(ed25519.PublicKey)
@@ -273,8 +279,15 @@ func WidgetManifestHandler() http.HandlerFunc {
 			return
 		}
 
-		priv, ok := manifestSigningKey(liveCfg)
-		if !ok {
+		priv, err := manifestSigningKey(liveCfg)
+		if priv == nil {
+			if err != nil {
+				// visitor_chat_key is set but malformed — surface the operator
+				// error (500) rather than implying the manifest is off (404).
+				log.Errorf("widget-manifest: %s (operator misconfiguration)", err)
+				http.Error(w, "widget manifest misconfigured", http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, "widget manifest not configured", http.StatusNotFound)
 			return
 		}

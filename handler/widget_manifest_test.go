@@ -171,6 +171,22 @@ func TestOverlaySRINoneWithoutFile(t *testing.T) {
 	}
 }
 
+func TestManifestSigningKeyTriState(t *testing.T) {
+	// Not configured → (nil, nil): manifest legitimately off (handler 404s).
+	if k, err := manifestSigningKey(&config.Config{}); k != nil || err != nil {
+		t.Fatalf("no key: got (key=%v, err=%v), want (nil, nil)", k != nil, err)
+	}
+	// Configured + valid → (key, nil).
+	good := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x44}, 32))
+	if k, err := manifestSigningKey(&config.Config{VisitorChatKey: good}); k == nil || err != nil {
+		t.Fatalf("valid key: got (key=%v, err=%v), want (key, nil)", k != nil, err)
+	}
+	// Set but malformed → (nil, err): operator error (handler should 500).
+	if k, err := manifestSigningKey(&config.Config{VisitorChatKey: "tooshort"}); k != nil || err == nil {
+		t.Fatalf("bad key: got (key=%v, err=%v), want (nil, err)", k != nil, err)
+	}
+}
+
 func TestBuiltinVarsGateIntegrityOnEncryption(t *testing.T) {
 	srv := &config.Server{ID: "mysite"}
 
