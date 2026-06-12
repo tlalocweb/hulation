@@ -25,7 +25,6 @@ type proxyRoute struct {
 	byDomain string // lowercased host to match; "" matches any host
 	byPath   string // path prefix to match; "" matches any path
 	handler  http.Handler
-	target   string
 }
 
 func (r *proxyRoute) matchesHost(req *http.Request) bool {
@@ -68,11 +67,14 @@ func newPlainProxy(target *url.URL) http.Handler {
 			// Proto (a public request could otherwise spoof them) ...
 			req.Header.Set("X-Forwarded-Host", origHost)
 			req.Header.Set("X-Forwarded-Proto", scheme)
-			// ... and DROP the client-supplied client-IP headers so a spoofed
+			// ... and DROP every client-supplied forwarding header so a spoofed
 			// value can't survive: ReverseProxy then rebuilds X-Forwarded-For
-			// from RemoteAddr, and a forged X-Real-IP never reaches the upstream.
+			// from RemoteAddr, a forged X-Real-IP never reaches the upstream, and
+			// the RFC 7239 `Forwarded` header (which some upstreams prefer over
+			// the X-Forwarded-* set) can't smuggle host/proto/for past us either.
 			req.Header.Del("X-Forwarded-For")
 			req.Header.Del("X-Real-IP")
+			req.Header.Del("Forwarded")
 			// The relay routes by path and ignores Host; send the upstream's
 			// own host so a vhosted target resolves correctly.
 			req.Host = target.Host
@@ -130,7 +132,6 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 			byDomain: domain,
 			byPath:   path,
 			handler:  newPlainProxy(target),
-			target:   targetRaw,
 		})
 		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, targetRaw)
 	}

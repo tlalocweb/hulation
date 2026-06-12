@@ -168,12 +168,13 @@ func TestMatchesHostPortAndIPv6(t *testing.T) {
 }
 
 func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
-	var xfHost, xfProto, xff, xRealIP string
+	var xfHost, xfProto, xff, xRealIP, forwarded string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		xfHost = r.Header.Get("X-Forwarded-Host")
 		xfProto = r.Header.Get("X-Forwarded-Proto")
 		xff = r.Header.Get("X-Forwarded-For")
 		xRealIP = r.Header.Get("X-Real-IP")
+		forwarded = r.Header.Get("Forwarded")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer backend.Close()
@@ -187,6 +188,7 @@ func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "http")
 	req.Header.Set("X-Forwarded-For", "1.2.3.4")
 	req.Header.Set("X-Real-IP", "1.2.3.4")
+	req.Header.Set("Forwarded", "for=1.2.3.4;host=evil.example.com;proto=http")
 	rec := httptest.NewRecorder()
 	newPlainProxy(target).ServeHTTP(rec, req)
 
@@ -203,6 +205,10 @@ func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
 	// A spoofed X-Real-IP must not reach the upstream at all.
 	if xRealIP != "" {
 		t.Errorf("X-Real-IP = %q, want empty (spoof must be dropped)", xRealIP)
+	}
+	// Nor a spoofed RFC 7239 Forwarded header.
+	if forwarded != "" {
+		t.Errorf("Forwarded = %q, want empty (spoof must be dropped)", forwarded)
 	}
 }
 
