@@ -5,8 +5,9 @@
 // files. Centralising them here fixes it in one place and stops it recurring.
 
 /** localStorage key for the admin bearer token — the single source of truth.
- * `authHeaders()` reads it; `setToken`/`clearToken`/`getToken` (in auth.ts +
- * analytics.ts) import it so a writer and reader can't drift to different keys. */
+ * `authHeaders()` reads it; the token writers import it so a writer and reader
+ * can't drift to different keys: `setToken`/`clearToken` live in both auth.ts
+ * and analytics.ts, and `getToken` in auth.ts. */
 export const TOKEN_KEY = 'hula:token';
 
 /** Thrown by `handle()` on a non-2xx response. `body` is the parsed JSON error
