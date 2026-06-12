@@ -60,8 +60,13 @@ describe('analytics fetch wrapper', () => {
       status: 401,
       text: async () => JSON.stringify({ code: 16, message: 'no claims' }),
     }));
-    await expect(
-      analytics.summary({ serverId: 's', filters: { from: 'x', to: 'y' } })
-    ).rejects.toBeInstanceOf(ApiError);
+    const err = await analytics
+      .summary({ serverId: 's', filters: { from: 'x', to: 'y' } })
+      .catch((e) => e);
+    // Assert the error path decodes the JSON body (read once via text()), not
+    // just that *some* error was thrown.
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).body).toEqual({ code: 16, message: 'no claims' });
   });
 });
