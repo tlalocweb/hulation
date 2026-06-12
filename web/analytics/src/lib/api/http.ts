@@ -18,6 +18,7 @@ export class ApiError extends Error {
     public body: unknown
   ) {
     super(`API error ${status}`);
+    this.name = 'ApiError';
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { goals } from './goals';
-import { ApiError } from './http';
+import { ApiError, TOKEN_KEY } from './http';
 
 // localStorage shim for the bearer header (Vitest node env).
 beforeEach(() => {
@@ -14,7 +14,7 @@ beforeEach(() => {
 
 describe('goals API client (shared http.handle)', () => {
   it('list() sends the bearer token and unwraps goals', async () => {
-    localStorage.setItem('hula:token', 'tok');
+    localStorage.setItem(TOKEN_KEY, 'tok');
     const calls: { url: string; init: any }[] = [];
     (globalThis as any).fetch = vi.fn(async (url: string, init: any) => {
       calls.push({ url, init });
