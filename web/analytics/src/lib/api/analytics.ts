@@ -19,13 +19,11 @@ import type {
   VisitorResponse,
   VisitorsResponse,
 } from './types';
-import { ApiError, authHeaders, handle } from './http';
+import { ApiError, authHeaders, handle, TOKEN_KEY } from './http';
 
 // Re-export ApiError so existing `import { ApiError } from './analytics'` sites
 // (clients, routes, useQuery, specs) keep working after the move to ./http.
 export { ApiError } from './http';
-
-const TOKEN_KEY = 'hula:token';
 
 export function setToken(token: string): void {
   if (typeof localStorage === 'undefined') return;

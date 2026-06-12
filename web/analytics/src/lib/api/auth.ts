@@ -5,7 +5,7 @@
 // mirror pkg/apispec/v1/auth/auth.proto (snake_case because the
 // gateway runs with UseProtoNames=true).
 
-import { authHeaders, handle } from './http';
+import { authHeaders, handle, TOKEN_KEY } from './http';
 
 export interface User {
   uuid?: string;
@@ -41,8 +41,6 @@ export interface ListServerAccessResponse {
   error?: string;
   entries?: ServerAccessEntry[];
 }
-
-const TOKEN_KEY = 'hula:token';
 
 export function setToken(token: string): void {
   if (typeof localStorage !== 'undefined') localStorage.setItem(TOKEN_KEY, token);

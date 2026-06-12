@@ -4,7 +4,10 @@
 // the `res.json()` → `res.text()` body double-read bug got pasted into nine
 // files. Centralising them here fixes it in one place and stops it recurring.
 
-const TOKEN_KEY = 'hula:token';
+/** localStorage key for the admin bearer token — the single source of truth.
+ * `authHeaders()` reads it; `setToken`/`clearToken`/`getToken` (in auth.ts +
+ * analytics.ts) import it so a writer and reader can't drift to different keys. */
+export const TOKEN_KEY = 'hula:token';
 
 /** Thrown by `handle()` on a non-2xx response. `body` is the parsed JSON error
  * (or the raw text when it isn't JSON). Clients/UI parse `status` + `body`. */
