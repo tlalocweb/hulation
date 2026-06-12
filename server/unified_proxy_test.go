@@ -87,6 +87,10 @@ func TestCompileProxyRoutes(t *testing.T) {
 		{"empty target skipped", &config.Proxy{ByDomain: "relay.example.com"}, 0, "", ""},
 		{"neither domain nor path skipped", &config.Proxy{Target: "http://127.0.0.1:8088"}, 0, "", ""},
 		{"invalid target rejected", &config.Proxy{Target: "127.0.0.1:8088", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"non-http scheme rejected", &config.Proxy{Target: "ftp://127.0.0.1:8088", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"ws scheme rejected", &config.Proxy{Target: "ws://127.0.0.1:8088", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"scheme without host rejected", &config.Proxy{Target: "http://", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"https target accepted", &config.Proxy{Target: "https://relay.internal:8443", ByDomain: "relay.example.com"}, 1, "relay.example.com", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

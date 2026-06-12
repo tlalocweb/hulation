@@ -150,8 +150,17 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			continue
 		}
 		target, err := url.Parse(targetRaw)
-		if err != nil || target.Scheme == "" || target.Host == "" {
-			log.Errorf("proxy: invalid target %q (need scheme://host[:port]): %v", targetRaw, err)
+		if err != nil {
+			log.Errorf("proxy: invalid target %q: %v", targetRaw, err)
+			continue
+		}
+		// httputil.ReverseProxy only speaks http/https.
+		if target.Scheme != "http" && target.Scheme != "https" {
+			log.Errorf("proxy: target %q must use http:// or https:// (got scheme %q); skipping", targetRaw, target.Scheme)
+			continue
+		}
+		if target.Host == "" {
+			log.Errorf("proxy: target %q is missing a host (need scheme://host[:port]); skipping", targetRaw)
 			continue
 		}
 		// The request path is always preserved, so a path/query/fragment on the
