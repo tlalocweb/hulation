@@ -422,6 +422,11 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// httputil.ReverseProxy before the rest of the pipeline runs.
 	registerBackendProxies(srv, cfg)
 
+	// Top-level `proxies:` — path-preserving reverse proxy to an arbitrary
+	// target URL (e.g. a hula-push-relay sidecar on localhost). Distinct from
+	// `backends:` above, which manage containers + rewrite the path.
+	registerProxies(srv, cfg)
+
 	// Per-host static file serving (server.Root directory). Attached
 	// AFTER backend proxies so backend paths like /api take priority
 	// over static files when both are configured on the same host.

@@ -1039,12 +1039,23 @@ func (cfg *Config) GetHulaACMEHTTPPort() int {
 	return cfg.hulaACMEHTTPPort
 }
 
+// Proxy is a top-level reverse-proxy route (the `proxies:` config). Unlike
+// per-server `backends:` — which manage Docker containers and rewrite the
+// request path — a proxy forwards to an arbitrary Target URL and PRESERVES the
+// path. That makes it safe to front a sidecar HTTP service whose request
+// signatures cover the path, e.g. running the hula-push-relay on localhost
+// behind hulation's TLS via `by_domain: relay.example.com` → `http://127.0.0.1:8088`
+// (add the domain to ssl.acme.domains so hulation provisions its cert).
 type Proxy struct {
-	// The taret URL to proxy to - such http://127.0.0.1:8080 for a local server
+	// Target URL to forward to, e.g. http://127.0.0.1:8088 (scheme + host[:port]).
 	Target string `yaml:"target,omitempty" test:"~.+"`
-	// use by_domain if you want to proxy an entire host
+	// by_domain proxies an entire host (recommended; the matched host is fully
+	// delegated to the target, so use a dedicated subdomain).
 	ByDomain string `yaml:"by_domain,omitempty"`
-	ByPath   string `yaml:"by_path,omitempty"`
+	// by_path proxies requests under a path prefix on any host. hula's own
+	// service routes (admin API, REST gateway) take precedence so a path proxy
+	// can't shadow them. The prefix is NOT stripped.
+	ByPath string `yaml:"by_path,omitempty"`
 }
 
 const (
