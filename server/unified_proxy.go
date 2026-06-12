@@ -32,11 +32,10 @@ func (r *proxyRoute) matchesHost(req *http.Request) bool {
 	if r.byDomain == "" {
 		return true
 	}
-	host := strings.ToLower(req.Host)
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		host = host[:i]
-	}
-	return host == r.byDomain
+	// hostOnly (unified_cors.go) lowercases and strips an optional ":port",
+	// handling bracketed IPv6 ("[::1]:8443" → "::1") — a naive LastIndex(":")
+	// would truncate the address.
+	return hostOnly(req.Host) == r.byDomain
 }
 
 func (r *proxyRoute) matchesPath(req *http.Request) bool {
@@ -64,12 +63,11 @@ func newPlainProxy(target *url.URL) http.Handler {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			// Path left intact.
-			if req.Header.Get("X-Forwarded-Host") == "" {
-				req.Header.Set("X-Forwarded-Host", origHost)
-			}
-			if req.Header.Get("X-Forwarded-Proto") == "" {
-				req.Header.Set("X-Forwarded-Proto", scheme)
-			}
+			// hulation is the TLS edge, so it is authoritative for these:
+			// overwrite any client-supplied values (a request from the public
+			// internet could otherwise spoof them) rather than trusting them.
+			req.Header.Set("X-Forwarded-Host", origHost)
+			req.Header.Set("X-Forwarded-Proto", scheme)
 			// The relay routes by path and ignores Host; send the upstream's
 			// own host so a vhosted target resolves correctly.
 			req.Host = target.Host
@@ -93,7 +91,9 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 			continue
 		}
 		targetRaw := strings.TrimSpace(p.Target)
-		domain := strings.ToLower(strings.TrimSpace(p.ByDomain))
+		// Normalise the same way as the request Host so a config value with a
+		// stray ":port" (or IPv6 brackets) still matches.
+		domain := hostOnly(strings.TrimSpace(p.ByDomain))
 		path := strings.TrimSpace(p.ByPath)
 		if targetRaw == "" {
 			continue
@@ -153,20 +153,43 @@ func proxyDispatch(
 	w http.ResponseWriter,
 	r *http.Request,
 ) bool {
-	for _, rt := range routes {
-		if rt.byDomain != "" && rt.matchesHost(r) && rt.matchesPath(r) {
-			rt.handler.ServeHTTP(w, r)
-			return true
-		}
+	// 1. Host-scoped (by_domain) routes win first.
+	if rt := longestMatch(routes, r, true); rt != nil {
+		rt.handler.ServeHTTP(w, r)
+		return true
 	}
+	// 2. Never shadow hula's own service routes (admin API, REST gateway).
 	if hasRoute != nil && hasRoute(r) {
 		return false
 	}
-	for _, rt := range routes {
-		if rt.byDomain == "" && rt.matchesPath(r) {
-			rt.handler.ServeHTTP(w, r)
-			return true
-		}
+	// 3. Path-only (by_path) routes.
+	if rt := longestMatch(routes, r, false); rt != nil {
+		rt.handler.ServeHTTP(w, r)
+		return true
 	}
 	return false
+}
+
+// longestMatch returns the matching route with the most specific (longest) path
+// prefix, so overlapping prefixes (e.g. /relay vs /relay/v1) resolve
+// deterministically regardless of config order. hostScoped selects between
+// by_domain routes (true) and path-only routes (false).
+func longestMatch(routes []*proxyRoute, r *http.Request, hostScoped bool) *proxyRoute {
+	var best *proxyRoute
+	bestLen := -1
+	for _, rt := range routes {
+		if hostScoped != (rt.byDomain != "") {
+			continue
+		}
+		if rt.byDomain != "" && !rt.matchesHost(r) {
+			continue
+		}
+		if !rt.matchesPath(r) {
+			continue
+		}
+		if l := len(strings.TrimSuffix(rt.byPath, "/")); l > bestLen {
+			best, bestLen = rt, l
+		}
+	}
+	return best
 }

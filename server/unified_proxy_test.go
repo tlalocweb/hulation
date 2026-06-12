@@ -116,6 +116,83 @@ func TestProxyDispatchPrecedence(t *testing.T) {
 	})
 }
 
+func TestProxyDispatchLongestPrefix(t *testing.T) {
+	marker := func(name string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, name)
+		})
+	}
+	short := &proxyRoute{byPath: "/relay", handler: marker("short")}
+	long := &proxyRoute{byPath: "/relay/v1", handler: marker("long")}
+
+	// The most specific prefix must win regardless of config order.
+	for _, order := range [][]*proxyRoute{{short, long}, {long, short}} {
+		req := httptest.NewRequest("GET", "https://x.test/relay/v1/push", nil)
+		rec := httptest.NewRecorder()
+		if proxyDispatch(order, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "long" {
+			t.Fatalf("order %v: got %q, want long (most specific prefix)", order, rec.Body.String())
+		}
+	}
+	// A path under only the short prefix still routes there.
+	req := httptest.NewRequest("GET", "https://x.test/relay/other", nil)
+	rec := httptest.NewRecorder()
+	if proxyDispatch([]*proxyRoute{long, short}, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "short" {
+		t.Fatalf("got %q, want short", rec.Body.String())
+	}
+}
+
+func TestMatchesHostPortAndIPv6(t *testing.T) {
+	// Config carrying a stray :port still matches (normalised via hostOnly).
+	rt := &proxyRoute{byDomain: hostOnly("Relay.Example.com:443")}
+	if rt.byDomain != "relay.example.com" {
+		t.Fatalf("config not normalised: %q", rt.byDomain)
+	}
+	for _, host := range []string{"relay.example.com", "relay.example.com:8443"} {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Host = host
+		if !rt.matchesHost(req) {
+			t.Errorf("host %q should match", host)
+		}
+	}
+	// Bracketed IPv6 with and without port must not be truncated by a naive
+	// LastIndex(":") split.
+	v6 := &proxyRoute{byDomain: hostOnly("[2001:db8::1]")}
+	if v6.byDomain != "2001:db8::1" {
+		t.Fatalf("IPv6 config not normalised: %q", v6.byDomain)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "[2001:db8::1]:8443"
+	if !v6.matchesHost(req) {
+		t.Error("bracketed IPv6 host with port should match")
+	}
+}
+
+func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
+	var xfHost, xfProto string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		xfHost = r.Header.Get("X-Forwarded-Host")
+		xfProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	target, _ := url.Parse(backend.URL)
+	req := httptest.NewRequest(http.MethodGet, "https://relay.example.com/healthz", nil)
+	req.Host = "relay.example.com"
+	// A client tries to spoof the forwarded headers.
+	req.Header.Set("X-Forwarded-Host", "evil.example.com")
+	req.Header.Set("X-Forwarded-Proto", "http")
+	rec := httptest.NewRecorder()
+	newPlainProxy(target).ServeHTTP(rec, req)
+
+	if xfHost != "relay.example.com" {
+		t.Errorf("X-Forwarded-Host = %q, want relay.example.com (spoof must be overwritten)", xfHost)
+	}
+	if xfProto != "https" {
+		t.Errorf("X-Forwarded-Proto = %q, want https (spoof must be overwritten)", xfProto)
+	}
+}
+
 func TestProxyRouteMatchesHost(t *testing.T) {
 	rt := &proxyRoute{byDomain: "relay.example.com"}
 	cases := map[string]bool{
