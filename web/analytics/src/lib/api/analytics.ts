@@ -81,11 +81,15 @@ async function get<T>(path: string, opts: RequestOpts): Promise<T> {
   if (tok) headers.Authorization = `Bearer ${tok}`;
   const res = await fetch(url, { headers, signal: opts.signal });
   if (!res.ok) {
-    let body: unknown = null;
+    // Read the body ONCE: res.json() consumes the stream even when parsing
+    // fails, so a res.text() fallback would throw "body stream already read"
+    // and mask the real ApiError. Read text, then best-effort JSON.parse.
+    const rawBody = await res.text().catch(() => '');
+    let body: unknown = rawBody;
     try {
-      body = await res.json();
+      body = rawBody ? JSON.parse(rawBody) : null;
     } catch {
-      body = await res.text();
+      // not JSON — keep the raw text
     }
     throw new ApiError(res.status, body);
   }

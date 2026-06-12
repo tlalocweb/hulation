@@ -45,11 +45,15 @@ function authHeaders(): Record<string, string> {
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let body: unknown = null;
+    // Read the body ONCE: res.json() consumes the stream even when parsing
+    // fails, so a res.text() fallback would throw "body stream already read"
+    // and mask the real ApiError. Read text, then best-effort JSON.parse.
+    const raw = await res.text().catch(() => '');
+    let body: unknown = raw;
     try {
-      body = await res.json();
+      body = raw ? JSON.parse(raw) : null;
     } catch {
-      body = await res.text();
+      // not JSON — keep the raw text
     }
     throw new ApiError(res.status, body);
   }
