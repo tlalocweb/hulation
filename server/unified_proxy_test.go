@@ -168,10 +168,12 @@ func TestMatchesHostPortAndIPv6(t *testing.T) {
 }
 
 func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
-	var xfHost, xfProto string
+	var xfHost, xfProto, xff, xRealIP string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		xfHost = r.Header.Get("X-Forwarded-Host")
 		xfProto = r.Header.Get("X-Forwarded-Proto")
+		xff = r.Header.Get("X-Forwarded-For")
+		xRealIP = r.Header.Get("X-Real-IP")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer backend.Close()
@@ -179,9 +181,12 @@ func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
 	target, _ := url.Parse(backend.URL)
 	req := httptest.NewRequest(http.MethodGet, "https://relay.example.com/healthz", nil)
 	req.Host = "relay.example.com"
-	// A client tries to spoof the forwarded headers.
+	req.RemoteAddr = "192.0.2.7:5555"
+	// A client tries to spoof every forwarding header.
 	req.Header.Set("X-Forwarded-Host", "evil.example.com")
 	req.Header.Set("X-Forwarded-Proto", "http")
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.Header.Set("X-Real-IP", "1.2.3.4")
 	rec := httptest.NewRecorder()
 	newPlainProxy(target).ServeHTTP(rec, req)
 
@@ -190,6 +195,14 @@ func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
 	}
 	if xfProto != "https" {
 		t.Errorf("X-Forwarded-Proto = %q, want https (spoof must be overwritten)", xfProto)
+	}
+	// X-Forwarded-For must be rebuilt from RemoteAddr, not the spoofed value.
+	if xff != "192.0.2.7" {
+		t.Errorf("X-Forwarded-For = %q, want 192.0.2.7 (rebuilt from RemoteAddr, spoof dropped)", xff)
+	}
+	// A spoofed X-Real-IP must not reach the upstream at all.
+	if xRealIP != "" {
+		t.Errorf("X-Real-IP = %q, want empty (spoof must be dropped)", xRealIP)
 	}
 }
 

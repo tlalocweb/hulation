@@ -63,17 +63,26 @@ func newPlainProxy(target *url.URL) http.Handler {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			// Path left intact.
-			// hulation is the TLS edge, so it is authoritative for these:
-			// overwrite any client-supplied values (a request from the public
-			// internet could otherwise spoof them) rather than trusting them.
+			// hulation is the TLS edge, so it is authoritative for the
+			// forwarding headers: overwrite any client-supplied X-Forwarded-Host/
+			// Proto (a public request could otherwise spoof them) ...
 			req.Header.Set("X-Forwarded-Host", origHost)
 			req.Header.Set("X-Forwarded-Proto", scheme)
+			// ... and DROP the client-supplied client-IP headers so a spoofed
+			// value can't survive: ReverseProxy then rebuilds X-Forwarded-For
+			// from RemoteAddr, and a forged X-Real-IP never reaches the upstream.
+			req.Header.Del("X-Forwarded-For")
+			req.Header.Del("X-Real-IP")
 			// The relay routes by path and ignores Host; send the upstream's
 			// own host so a vhosted target resolves correctly.
 			req.Host = target.Host
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Warnf("proxy: upstream error for %s%s → %s", r.Host, r.URL.Path, err.Error())
+			// r.URL.Host is the rewritten upstream target; X-Forwarded-Host is
+			// the original client-facing host. Label both so the line isn't read
+			// as "host → target".
+			log.Warnf("proxy: upstream error: target=%q path=%q client_host=%q err=%v",
+				r.URL.Host, r.URL.Path, r.Header.Get("X-Forwarded-Host"), err)
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}
