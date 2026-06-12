@@ -2,7 +2,7 @@
 // pkg/apispec/v1/alerts/alerts.proto. REST gateway runs with
 // UseProtoNames=true so the JSON shape is snake_case.
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders, handle } from './http';
 
 export type AlertKind =
   | 'ALERT_KIND_UNSPECIFIED'
@@ -47,29 +47,6 @@ export interface AlertEvent {
   recipients?: string[];
   delivery_status?: DeliveryStatus;
   error?: string;
-}
-
-const TOKEN_KEY = 'hula:token';
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) h.Authorization = `Bearer ${t}`;
-  }
-  return h;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const alerts = {

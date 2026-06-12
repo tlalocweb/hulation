@@ -1,7 +1,7 @@
 // Typed wrappers for GoalsService. Goals are per-server; every call
 // takes a server_id in the path.
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders, handle } from './http';
 
 export type GoalKind =
   | 'GOAL_KIND_UNSPECIFIED'
@@ -32,32 +32,6 @@ export interface ListGoalsResponse {
 export interface TestGoalResponse {
   would_fire?: number;
   scanned_events?: number;
-}
-
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem('hula:token');
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-  return headers;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    // Read the body ONCE: res.json() consumes the stream even when parsing
-    // fails, so a res.text() fallback would throw "body stream already read"
-    // and mask the real ApiError. Read text, then best-effort JSON.parse.
-    const raw = await res.text().catch(() => '');
-    let body: unknown = raw;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      // not JSON — keep the raw text
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const goals = {

@@ -19,14 +19,13 @@ import type {
   VisitorResponse,
   VisitorsResponse,
 } from './types';
+import { ApiError, authHeaders, handle } from './http';
+
+// Re-export ApiError so existing `import { ApiError } from './analytics'` sites
+// (clients, routes, useQuery, specs) keep working after the move to ./http.
+export { ApiError } from './http';
 
 const TOKEN_KEY = 'hula:token';
-
-export class ApiError extends Error {
-  constructor(public status: number, public body: unknown) {
-    super(`analytics API ${status}`);
-  }
-}
 
 export function setToken(token: string): void {
   if (typeof localStorage === 'undefined') return;
@@ -36,11 +35,6 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(TOKEN_KEY);
-}
-
-function getToken(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
 }
 
 // encodeFilters flattens a Filters object into query params, skipping
@@ -76,24 +70,8 @@ async function get<T>(path: string, opts: RequestOpts): Promise<T> {
     }
   }
   const url = `/api/v1/analytics${path}?${qs.toString()}`;
-  const headers: Record<string, string> = {};
-  const tok = getToken();
-  if (tok) headers.Authorization = `Bearer ${tok}`;
-  const res = await fetch(url, { headers, signal: opts.signal });
-  if (!res.ok) {
-    // Read the body ONCE: res.json() consumes the stream even when parsing
-    // fails, so a res.text() fallback would throw "body stream already read"
-    // and mask the real ApiError. Read text, then best-effort JSON.parse.
-    const rawBody = await res.text().catch(() => '');
-    let body: unknown = rawBody;
-    try {
-      body = rawBody ? JSON.parse(rawBody) : null;
-    } catch {
-      // not JSON — keep the raw text
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
+  const res = await fetch(url, { headers: authHeaders(), signal: opts.signal });
+  return handle<T>(res);
 }
 
 // Typed endpoint wrappers — one per RPC. Each takes the canonical
@@ -159,14 +137,12 @@ export const analytics = {
     qs.set('server_id', opts.serverId);
     qs.set('format', 'csv');
     encodeFilters(opts.filters, qs);
-    const headers: Record<string, string> = {};
-    const tok = getToken();
-    if (tok) headers.Authorization = `Bearer ${tok}`;
     const res = await fetch(`/api/v1/analytics/${endpoint}?${qs.toString()}`, {
-      headers,
+      headers: authHeaders(),
       signal: opts.signal,
     });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
+    // csv returns a Blob, not JSON, so it can't use handle(); read text once.
+    if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
     return await res.blob();
   },
 };

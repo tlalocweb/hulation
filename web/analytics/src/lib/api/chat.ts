@@ -6,7 +6,7 @@
 // modelled here — they're reached from the tlalocwebsite chat
 // widget, not from the hula admin SPA. This file is admin-only.
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders } from './http';
 
 export type ChatSessionStatus =
   | 'CHAT_SESSION_STATUS_UNSPECIFIED'
@@ -60,16 +60,6 @@ export interface LiveSessionRow {
   visitor_online?: boolean;
   agents?: string[];
   last_message_at?: string;
-}
-
-const TOKEN_KEY = 'hula:token';
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) h.Authorization = `Bearer ${t}`;
-  }
-  return h;
 }
 
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {

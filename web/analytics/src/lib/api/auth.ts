@@ -5,7 +5,7 @@
 // mirror pkg/apispec/v1/auth/auth.proto (snake_case because the
 // gateway runs with UseProtoNames=true).
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders, handle } from './http';
 
 export interface User {
   uuid?: string;
@@ -44,15 +44,6 @@ export interface ListServerAccessResponse {
 
 const TOKEN_KEY = 'hula:token';
 
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-  return headers;
-}
-
 export function setToken(token: string): void {
   if (typeof localStorage !== 'undefined') localStorage.setItem(TOKEN_KEY, token);
 }
@@ -64,19 +55,6 @@ export function clearToken(): void {
 export function getToken(): string | null {
   if (typeof localStorage === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEY);
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 // ----- Login (unauthenticated endpoints) -----

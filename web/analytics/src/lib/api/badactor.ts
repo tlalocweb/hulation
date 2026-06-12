@@ -6,7 +6,7 @@
 // only needs to hide the entry point — the browser still gets a 401/403
 // if a non-admin user crafts the request manually.
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders, handle } from './http';
 
 export interface BadActorEntry {
   ip: string;
@@ -33,30 +33,6 @@ export interface SignatureInfo {
   score: number;
   reason: string;
   category: string;
-}
-
-const TOKEN_KEY = 'hula:token';
-
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-  return headers;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const badactor = {

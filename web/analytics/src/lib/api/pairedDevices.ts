@@ -7,7 +7,7 @@
 // (the handler hand-rolls the JSON, matching the gRPC-gateway proto-name style
 // used elsewhere).
 
-import { ApiError } from './analytics';
+import { ApiError, authHeaders, handle } from './http';
 
 export interface PairedDevice {
   // The handler (writeDeviceList in server/pair_handlers.go) always emits all
@@ -27,32 +27,6 @@ export interface ListDevicesResponse {
 export interface RevokeDeviceResponse {
   revoked?: boolean;
   device_id?: string;
-}
-
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem('hula:token');
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-  return headers;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    // Read the body ONCE. Calling res.json() first consumes the stream, so a
-    // subsequent res.text() would throw "body stream already read" and mask the
-    // real ApiError. Read text, then best-effort JSON.parse it.
-    const raw = await res.text().catch(() => '');
-    let body: unknown = raw;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      // not JSON — keep the raw text
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const pairedDevices = {
