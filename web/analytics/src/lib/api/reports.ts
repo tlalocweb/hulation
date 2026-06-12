@@ -1,7 +1,7 @@
 // Typed wrappers for ReportsService — CRUD + Preview + SendNow +
 // ListRuns.
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 import type { Filters } from './types';
 
 export type TemplateVariant =

@@ -1,7 +1,7 @@
 // Typed wrappers for GoalsService. Goals are per-server; every call
 // takes a server_id in the path.
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export type GoalKind =
   | 'GOAL_KIND_UNSPECIFIED'

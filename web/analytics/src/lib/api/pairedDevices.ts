@@ -7,7 +7,7 @@
 // (the handler hand-rolls the JSON, matching the gRPC-gateway proto-name style
 // used elsewhere).
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export interface PairedDevice {
   // The handler (writeDeviceList in server/pair_handlers.go) always emits all

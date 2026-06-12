@@ -1,7 +1,7 @@
 // Typed fetch wrappers for NotifyService. REST gateway uses
 // UseProtoNames=true so the JSON shape is snake_case.
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export interface NotificationPrefs {
   user_id: string;

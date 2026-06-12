@@ -6,7 +6,7 @@
 // only needs to hide the entry point — the browser still gets a 401/403
 // if a non-admin user crafts the request manually.
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export interface BadActorEntry {
   ip: string;

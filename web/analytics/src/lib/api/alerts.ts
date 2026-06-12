@@ -2,7 +2,7 @@
 // pkg/apispec/v1/alerts/alerts.proto. REST gateway runs with
 // UseProtoNames=true so the JSON shape is snake_case.
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export type AlertKind =
   | 'ALERT_KIND_UNSPECIFIED'

@@ -5,7 +5,7 @@
 // mirror pkg/apispec/v1/auth/auth.proto (snake_case because the
 // gateway runs with UseProtoNames=true).
 
-import { ApiError, authHeaders, handle } from './http';
+import { authHeaders, handle } from './http';
 
 export interface User {
   uuid?: string;
