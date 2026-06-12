@@ -422,15 +422,18 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// httputil.ReverseProxy before the rest of the pipeline runs.
 	registerBackendProxies(srv, cfg)
 
-	// Top-level `proxies:` — path-preserving reverse proxy to an arbitrary
-	// target URL (e.g. a hula-push-relay sidecar on localhost). Distinct from
-	// `backends:` above, which manage containers + rewrite the path.
-	registerProxies(srv, cfg)
-
 	// Per-host static file serving (server.Root directory). Attached
 	// AFTER backend proxies so backend paths like /api take priority
 	// over static files when both are configured on the same host.
 	registerStaticSites(srv, cfg)
+
+	// Top-level `proxies:` — path-preserving reverse proxy to an arbitrary
+	// target URL (e.g. a hula-push-relay sidecar on localhost). Distinct from
+	// `backends:`, which manage containers + rewrite the path. Attached LAST so
+	// it composes as the OUTERMOST middleware (most-recently-attached runs
+	// first): a by_domain proxy then fully owns its host, intercepting before
+	// static serving / backends.
+	registerProxies(srv, cfg)
 
 	// Phase-2 analytics dashboard — serves the SvelteKit build tree
 	// at /analytics/* and a tiny config shim at /analytics/config.json

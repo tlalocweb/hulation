@@ -89,25 +89,41 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 	}
 	var routes []*proxyRoute
 	for _, p := range cfg.Proxies {
-		if p == nil || strings.TrimSpace(p.Target) == "" {
+		if p == nil {
 			continue
 		}
-		if p.ByDomain == "" && p.ByPath == "" {
-			log.Warnf("proxy: target %q has neither by_domain nor by_path; skipping", p.Target)
+		targetRaw := strings.TrimSpace(p.Target)
+		domain := strings.ToLower(strings.TrimSpace(p.ByDomain))
+		path := strings.TrimSpace(p.ByPath)
+		if targetRaw == "" {
 			continue
 		}
-		target, err := url.Parse(strings.TrimSpace(p.Target))
+		if domain == "" && path == "" {
+			log.Warnf("proxy: target %q has neither by_domain nor by_path; skipping", targetRaw)
+			continue
+		}
+		if path != "" && !strings.HasPrefix(path, "/") {
+			log.Errorf("proxy: by_path %q must start with '/'; skipping target %q", path, targetRaw)
+			continue
+		}
+		target, err := url.Parse(targetRaw)
 		if err != nil || target.Scheme == "" || target.Host == "" {
-			log.Errorf("proxy: invalid target %q (need scheme://host[:port]): %v", p.Target, err)
+			log.Errorf("proxy: invalid target %q (need scheme://host[:port]): %v", targetRaw, err)
+			continue
+		}
+		// The request path is always preserved, so a path/query/fragment on the
+		// target would be silently ignored — reject it rather than mislead.
+		if (target.Path != "" && target.Path != "/") || target.RawQuery != "" || target.Fragment != "" {
+			log.Errorf("proxy: target %q must be scheme://host[:port] with no path/query/fragment (the request path is forwarded as-is); skipping", targetRaw)
 			continue
 		}
 		routes = append(routes, &proxyRoute{
-			byDomain: strings.ToLower(p.ByDomain),
-			byPath:   p.ByPath,
+			byDomain: domain,
+			byPath:   path,
 			handler:  newPlainProxy(target),
-			target:   p.Target,
+			target:   targetRaw,
 		})
-		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", p.ByDomain, p.ByPath, p.Target)
+		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, targetRaw)
 	}
 	if len(routes) == 0 {
 		return
@@ -115,22 +131,42 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 
 	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			for _, rt := range routes {
-				if !rt.matchesHost(r) || !rt.matchesPath(r) {
-					continue
-				}
-				// A by_path route (no dedicated host) must not shadow hula's own
-				// service routes (admin API, REST gateway, …) — defer to them,
-				// like the backend proxy does. A by_domain route owns its host
-				// entirely, so it always wins there.
-				if rt.byDomain == "" && srv.HasRoute(r) {
-					break
-				}
-				rt.handler.ServeHTTP(w, r)
+			if proxyDispatch(routes, srv.HasRoute, w, r) {
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	})
 	log.Infof("Registered %d reverse-proxy route(s) on unified server", len(routes))
+}
+
+// proxyDispatch routes r to a matching proxy and reports whether it handled the
+// request. Order-independent precedence:
+//   1. by_domain routes are checked first — a dedicated host is unambiguous, so
+//      a matching by_domain proxy always wins regardless of config order.
+//   2. by_path routes are considered only when the request does NOT match one of
+//      hula's own service routes (admin API, REST gateway), so a path proxy can
+//      never shadow them.
+func proxyDispatch(
+	routes []*proxyRoute,
+	hasRoute func(*http.Request) bool,
+	w http.ResponseWriter,
+	r *http.Request,
+) bool {
+	for _, rt := range routes {
+		if rt.byDomain != "" && rt.matchesHost(r) && rt.matchesPath(r) {
+			rt.handler.ServeHTTP(w, r)
+			return true
+		}
+	}
+	if hasRoute != nil && hasRoute(r) {
+		return false
+	}
+	for _, rt := range routes {
+		if rt.byDomain == "" && rt.matchesPath(r) {
+			rt.handler.ServeHTTP(w, r)
+			return true
+		}
+	}
+	return false
 }

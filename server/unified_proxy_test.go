@@ -66,6 +66,56 @@ func TestPlainProxyForwardsOriginalHostAndProto(t *testing.T) {
 	}
 }
 
+func TestProxyDispatchPrecedence(t *testing.T) {
+	marker := func(name string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, name)
+		})
+	}
+	domainRoute := &proxyRoute{byDomain: "relay.example.com", handler: marker("domain")}
+	pathRoute := &proxyRoute{byPath: "/relay", handler: marker("path")}
+
+	t.Run("by_domain wins regardless of config order", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "https://relay.example.com/relay/x", nil)
+		req.Host = "relay.example.com"
+		rec := httptest.NewRecorder()
+		// path route listed FIRST and also matches — by_domain must still win.
+		handled := proxyDispatch([]*proxyRoute{pathRoute, domainRoute}, func(*http.Request) bool { return false }, rec, req)
+		if !handled || rec.Body.String() != "domain" {
+			t.Fatalf("handled=%v body=%q, want domain", handled, rec.Body.String())
+		}
+	})
+
+	t.Run("by_path defers to a hula service route", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "https://other.test/relay/x", nil)
+		req.Host = "other.test"
+		rec := httptest.NewRecorder()
+		handled := proxyDispatch([]*proxyRoute{pathRoute}, func(*http.Request) bool { return true }, rec, req)
+		if handled {
+			t.Fatal("by_path must not handle when hula has a route (hasRoute=true)")
+		}
+	})
+
+	t.Run("by_path handles when no hula route matches", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "https://other.test/relay/x", nil)
+		req.Host = "other.test"
+		rec := httptest.NewRecorder()
+		handled := proxyDispatch([]*proxyRoute{pathRoute}, func(*http.Request) bool { return false }, rec, req)
+		if !handled || rec.Body.String() != "path" {
+			t.Fatalf("handled=%v body=%q, want path", handled, rec.Body.String())
+		}
+	})
+
+	t.Run("no match falls through", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "https://nope.test/other", nil)
+		req.Host = "nope.test"
+		rec := httptest.NewRecorder()
+		if proxyDispatch([]*proxyRoute{domainRoute, pathRoute}, func(*http.Request) bool { return false }, rec, req) {
+			t.Fatal("expected no route to match")
+		}
+	})
+}
+
 func TestProxyRouteMatchesHost(t *testing.T) {
 	rt := &proxyRoute{byDomain: "relay.example.com"}
 	cases := map[string]bool{
