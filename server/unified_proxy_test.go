@@ -5,7 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/tlalocweb/hulation/config"
 )
 
 // The relay signs over method+path, so the proxy MUST forward the path (and
@@ -63,6 +66,47 @@ func TestPlainProxyForwardsOriginalHostAndProto(t *testing.T) {
 	}
 	if xfProto != "https" {
 		t.Errorf("X-Forwarded-Proto = %q, want https", xfProto)
+	}
+}
+
+func TestCompileProxyRoutes(t *testing.T) {
+	cases := []struct {
+		name              string
+		in                *config.Proxy
+		wantN             int
+		wantDom, wantPath string // checked when wantN == 1
+	}{
+		{"valid by_domain", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "relay.example.com"}, 1, "relay.example.com", ""},
+		{"by_domain normalises case+port", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "Relay.Example.com:443"}, 1, "relay.example.com", ""},
+		{"valid by_path", &config.Proxy{Target: "http://127.0.0.1:8088", ByPath: "/relay"}, 1, "", "/relay"},
+		{"by_domain as URL rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "https://relay.example.com"}, 0, "", ""},
+		{"by_domain with path rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "relay.example.com/x"}, 0, "", ""},
+		{"target with path rejected", &config.Proxy{Target: "http://127.0.0.1:8088/foo", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"target with query rejected", &config.Proxy{Target: "http://127.0.0.1:8088?x=1", ByDomain: "relay.example.com"}, 0, "", ""},
+		{"by_path without slash rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByPath: "relay"}, 0, "", ""},
+		{"empty target skipped", &config.Proxy{ByDomain: "relay.example.com"}, 0, "", ""},
+		{"neither domain nor path skipped", &config.Proxy{Target: "http://127.0.0.1:8088"}, 0, "", ""},
+		{"invalid target rejected", &config.Proxy{Target: "127.0.0.1:8088", ByDomain: "relay.example.com"}, 0, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			routes := compileProxyRoutes([]*config.Proxy{tc.in})
+			if len(routes) != tc.wantN {
+				t.Fatalf("got %d routes, want %d", len(routes), tc.wantN)
+			}
+			if tc.wantN == 1 {
+				if routes[0].byDomain != tc.wantDom {
+					t.Errorf("byDomain = %q, want %q", routes[0].byDomain, tc.wantDom)
+				}
+				if routes[0].byPath != tc.wantPath {
+					t.Errorf("byPath = %q, want %q", routes[0].byPath, tc.wantPath)
+				}
+			}
+		})
+	}
+	// A nil entry is skipped without panicking.
+	if n := len(compileProxyRoutes([]*config.Proxy{nil})); n != 0 {
+		t.Errorf("nil entry: got %d routes, want 0", n)
 	}
 }
 
@@ -167,13 +211,13 @@ func TestMatchesHostPortAndIPv6(t *testing.T) {
 	}
 }
 
-func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
-	var xfHost, xfProto, xff, xRealIP, forwarded string
+// hulation owns the host/proto headers and strips the RFC 7239 Forwarded
+// header, so a client can't influence them regardless of what it sends.
+func TestPlainProxyHostProtoNotClientControlled(t *testing.T) {
+	var xfHost, xfProto, forwarded string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		xfHost = r.Header.Get("X-Forwarded-Host")
 		xfProto = r.Header.Get("X-Forwarded-Proto")
-		xff = r.Header.Get("X-Forwarded-For")
-		xRealIP = r.Header.Get("X-Real-IP")
 		forwarded = r.Header.Get("Forwarded")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -182,33 +226,65 @@ func TestPlainProxyOverwritesSpoofedForwardedHeaders(t *testing.T) {
 	target, _ := url.Parse(backend.URL)
 	req := httptest.NewRequest(http.MethodGet, "https://relay.example.com/healthz", nil)
 	req.Host = "relay.example.com"
-	req.RemoteAddr = "192.0.2.7:5555"
-	// A client tries to spoof every forwarding header.
+	// Client tries to spoof host/proto via both header families.
 	req.Header.Set("X-Forwarded-Host", "evil.example.com")
 	req.Header.Set("X-Forwarded-Proto", "http")
-	req.Header.Set("X-Forwarded-For", "1.2.3.4")
-	req.Header.Set("X-Real-IP", "1.2.3.4")
 	req.Header.Set("Forwarded", "for=1.2.3.4;host=evil.example.com;proto=http")
 	rec := httptest.NewRecorder()
 	newPlainProxy(target).ServeHTTP(rec, req)
 
 	if xfHost != "relay.example.com" {
-		t.Errorf("X-Forwarded-Host = %q, want relay.example.com (spoof must be overwritten)", xfHost)
+		t.Errorf("X-Forwarded-Host = %q, want relay.example.com (must reflect the real edge host)", xfHost)
 	}
 	if xfProto != "https" {
-		t.Errorf("X-Forwarded-Proto = %q, want https (spoof must be overwritten)", xfProto)
+		t.Errorf("X-Forwarded-Proto = %q, want https (must reflect the real scheme)", xfProto)
 	}
-	// X-Forwarded-For must be rebuilt from RemoteAddr, not the spoofed value.
-	if xff != "192.0.2.7" {
-		t.Errorf("X-Forwarded-For = %q, want 192.0.2.7 (rebuilt from RemoteAddr, spoof dropped)", xff)
-	}
-	// A spoofed X-Real-IP must not reach the upstream at all.
-	if xRealIP != "" {
-		t.Errorf("X-Real-IP = %q, want empty (spoof must be dropped)", xRealIP)
-	}
-	// Nor a spoofed RFC 7239 Forwarded header.
 	if forwarded != "" {
-		t.Errorf("Forwarded = %q, want empty (spoof must be dropped)", forwarded)
+		t.Errorf("Forwarded = %q, want empty (RFC 7239 header must be stripped)", forwarded)
+	}
+}
+
+// Client-IP forwarding mirrors the backend proxy: X-Forwarded-For / X-Real-IP
+// collapse to a single derived peer IP — RemoteAddr for a direct client, or the
+// first upstream X-Forwarded-For hop when hulation is behind a trusted CDN, so
+// the real client IP survives.
+func TestPlainProxyClientIPForwarding(t *testing.T) {
+	var xff, xRealIP string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		xff = r.Header.Get("X-Forwarded-For")
+		xRealIP = r.Header.Get("X-Real-IP")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	target, _ := url.Parse(backend.URL)
+
+	// X-Real-IP is the clean single derived value; X-Forwarded-For has the real
+	// client as its first hop (ReverseProxy appends the immediate RemoteAddr,
+	// same as backend/proxy.go).
+
+	// (a) direct client, no upstream XFF → RemoteAddr is the client.
+	req := httptest.NewRequest(http.MethodGet, "https://relay.example.com/healthz", nil)
+	req.Host = "relay.example.com"
+	req.RemoteAddr = "192.0.2.7:5555"
+	newPlainProxy(target).ServeHTTP(httptest.NewRecorder(), req)
+	if xRealIP != "192.0.2.7" {
+		t.Errorf("direct: X-Real-IP=%q, want 192.0.2.7 (from RemoteAddr)", xRealIP)
+	}
+	if !strings.HasPrefix(xff, "192.0.2.7") {
+		t.Errorf("direct: X-Forwarded-For=%q, want it to start with 192.0.2.7", xff)
+	}
+
+	// (b) behind a front proxy/CDN: the first upstream XFF hop is the real client.
+	req2 := httptest.NewRequest(http.MethodGet, "https://relay.example.com/healthz", nil)
+	req2.Host = "relay.example.com"
+	req2.RemoteAddr = "203.0.113.9:443" // the CDN
+	req2.Header.Set("X-Forwarded-For", "198.51.100.5, 203.0.113.9")
+	newPlainProxy(target).ServeHTTP(httptest.NewRecorder(), req2)
+	if xRealIP != "198.51.100.5" {
+		t.Errorf("behind CDN: X-Real-IP=%q, want 198.51.100.5 (real client preserved)", xRealIP)
+	}
+	if !strings.HasPrefix(xff, "198.51.100.5") {
+		t.Errorf("behind CDN: X-Forwarded-For=%q, want it to start with 198.51.100.5", xff)
 	}
 }
 

@@ -59,21 +59,24 @@ func newPlainProxy(target *url.URL) http.Handler {
 			if req.TLS != nil {
 				scheme = "https"
 			}
+			// Derive the client IP BEFORE rewriting the forwarding headers,
+			// honouring an upstream X-Forwarded-For / CF-Connecting-IP so the
+			// real client survives when hulation sits behind a front proxy/CDN.
+			peerIP := extractPeerIP(req)
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
-			// Path left intact.
-			// hulation is the TLS edge, so it is authoritative for the
-			// forwarding headers: overwrite any client-supplied X-Forwarded-Host/
-			// Proto (a public request could otherwise spoof them) ...
+			// Path left intact. Overwrite the forwarding headers the same way as
+			// the backend proxy (backend/proxy.go) so both behave identically and
+			// a public client can't spoof host/proto: X-Forwarded-Host/Proto come
+			// from the observed request, and X-Forwarded-For/X-Real-IP collapse to
+			// the single derived client IP rather than an attacker-appended chain.
 			req.Header.Set("X-Forwarded-Host", origHost)
 			req.Header.Set("X-Forwarded-Proto", scheme)
-			// ... and DROP every client-supplied forwarding header so a spoofed
-			// value can't survive: ReverseProxy then rebuilds X-Forwarded-For
-			// from RemoteAddr, a forged X-Real-IP never reaches the upstream, and
-			// the RFC 7239 `Forwarded` header (which some upstreams prefer over
-			// the X-Forwarded-* set) can't smuggle host/proto/for past us either.
-			req.Header.Del("X-Forwarded-For")
-			req.Header.Del("X-Real-IP")
+			req.Header.Set("X-Forwarded-For", peerIP)
+			req.Header.Set("X-Real-IP", peerIP)
+			// We express forwarding via X-Forwarded-*; strip the RFC 7239
+			// `Forwarded` header so a client can't smuggle a conflicting
+			// for/host/proto through an upstream that prefers it.
 			req.Header.Del("Forwarded")
 			// The relay routes by path and ignores Host; send the upstream's
 			// own host so a vhosted target resolves correctly.
@@ -96,19 +99,48 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 	if srv == nil || cfg == nil || len(cfg.Proxies) == 0 {
 		return
 	}
+	routes := compileProxyRoutes(cfg.Proxies)
+	if len(routes) == 0 {
+		return
+	}
+
+	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if proxyDispatch(routes, srv.HasRoute, w, r) {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	log.Infof("Registered %d reverse-proxy route(s) on unified server", len(routes))
+}
+
+// compileProxyRoutes validates and compiles `proxies:` config entries into
+// matchers, logging and skipping any that are malformed. Split out from
+// registerProxies so the validation is unit-testable without a live server.
+func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 	var routes []*proxyRoute
-	for _, p := range cfg.Proxies {
+	for _, p := range proxies {
 		if p == nil {
 			continue
 		}
 		targetRaw := strings.TrimSpace(p.Target)
-		// Normalise the same way as the request Host so a config value with a
-		// stray ":port" (or IPv6 brackets) still matches.
-		domain := hostOnly(strings.TrimSpace(p.ByDomain))
-		path := strings.TrimSpace(p.ByPath)
 		if targetRaw == "" {
 			continue
 		}
+		rawDomain := strings.TrimSpace(p.ByDomain)
+		path := strings.TrimSpace(p.ByPath)
+		// by_domain must be a bare host[:port], not a URL: hostOnly would
+		// silently truncate "https://relay.example.com" to "https" (the text
+		// before the first ':'), producing a route that never matches and is
+		// confusing to debug. Reject anything with a scheme/path/space up front.
+		if strings.ContainsAny(rawDomain, "/ ") {
+			log.Errorf("proxy: by_domain %q must be a bare host[:port], not a URL or path; skipping target %q", rawDomain, targetRaw)
+			continue
+		}
+		// Normalise the same way as the request Host so a config value with a
+		// stray ":port" (or IPv6 brackets) still matches.
+		domain := hostOnly(rawDomain)
 		if domain == "" && path == "" {
 			log.Warnf("proxy: target %q has neither by_domain nor by_path; skipping", targetRaw)
 			continue
@@ -135,19 +167,7 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 		})
 		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, targetRaw)
 	}
-	if len(routes) == 0 {
-		return
-	}
-
-	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if proxyDispatch(routes, srv.HasRoute, w, r) {
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	})
-	log.Infof("Registered %d reverse-proxy route(s) on unified server", len(routes))
+	return routes
 }
 
 // proxyDispatch routes r to a matching proxy and reports whether it handled the
