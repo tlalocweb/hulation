@@ -53,13 +53,20 @@ describe('analytics fetch wrapper', () => {
 
   it('throws ApiError on non-2xx', async () => {
     clearToken();
+    // A real Response exposes .text(); the error path reads the body once via
+    // text() then best-effort JSON.parse, so the mock must provide text().
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: false,
       status: 401,
-      json: async () => ({ code: 16, message: 'no claims' }),
+      text: async () => JSON.stringify({ code: 16, message: 'no claims' }),
     }));
-    await expect(
-      analytics.summary({ serverId: 's', filters: { from: 'x', to: 'y' } })
-    ).rejects.toBeInstanceOf(ApiError);
+    const err = await analytics
+      .summary({ serverId: 's', filters: { from: 'x', to: 'y' } })
+      .catch((e) => e);
+    // Assert the error path decodes the JSON body (read once via text()), not
+    // just that *some* error was thrown.
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).body).toEqual({ code: 16, message: 'no claims' });
   });
 });

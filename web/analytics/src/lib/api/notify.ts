@@ -1,7 +1,7 @@
 // Typed fetch wrappers for NotifyService. REST gateway uses
 // UseProtoNames=true so the JSON shape is snake_case.
 
-import { ApiError } from './analytics';
+import { authHeaders, handle } from './http';
 
 export interface NotificationPrefs {
   user_id: string;
@@ -28,29 +28,6 @@ export interface Device {
   registered_at?: string;
   last_seen_at?: string;
   active?: boolean;
-}
-
-const TOKEN_KEY = 'hula:token';
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) h.Authorization = `Bearer ${t}`;
-  }
-  return h;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const notify = {

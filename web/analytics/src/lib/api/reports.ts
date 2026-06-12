@@ -1,7 +1,7 @@
 // Typed wrappers for ReportsService — CRUD + Preview + SendNow +
 // ListRuns.
 
-import { ApiError } from './analytics';
+import { authHeaders, handle } from './http';
 import type { Filters } from './types';
 
 export type TemplateVariant =
@@ -50,28 +50,6 @@ export interface ReportRun {
 
 export interface ListRunsResponse {
   runs?: ReportRun[];
-}
-
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (typeof localStorage !== 'undefined') {
-    const t = localStorage.getItem('hula:token');
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-  return headers;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
-    }
-    throw new ApiError(res.status, body);
-  }
-  return (await res.json()) as T;
 }
 
 export const reports = {
