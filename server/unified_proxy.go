@@ -143,6 +143,13 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 		// Normalise the same way as the request Host so a config value with a
 		// stray ":port" (or IPv6 brackets) still matches.
 		domain := hostOnly(rawDomain)
+		// A non-empty by_domain that normalises to nothing (":443", "[]", …) must
+		// not silently degrade into a host-agnostic (match-any) route — that's a
+		// surprising fail-open. Reject it.
+		if rawDomain != "" && domain == "" {
+			log.Errorf("proxy: by_domain %q has no usable host after normalisation; skipping target %q", rawDomain, targetRaw)
+			continue
+		}
 		if domain == "" && path == "" {
 			log.Warnf("proxy: target %q has neither by_domain nor by_path; skipping", targetRaw)
 			continue

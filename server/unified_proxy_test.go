@@ -81,6 +81,8 @@ func TestCompileProxyRoutes(t *testing.T) {
 		{"valid by_path", &config.Proxy{Target: "http://127.0.0.1:8088", ByPath: "/relay"}, 1, "", "/relay"},
 		{"by_domain as URL rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "https://relay.example.com"}, 0, "", ""},
 		{"by_domain with path rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "relay.example.com/x"}, 0, "", ""},
+		{"by_domain port-only rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: ":443"}, 0, "", ""},
+		{"by_domain empty-brackets rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "[]"}, 0, "", ""},
 		{"target with path rejected", &config.Proxy{Target: "http://127.0.0.1:8088/foo", ByDomain: "relay.example.com"}, 0, "", ""},
 		{"target with query rejected", &config.Proxy{Target: "http://127.0.0.1:8088?x=1", ByDomain: "relay.example.com"}, 0, "", ""},
 		{"by_path without slash rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByPath: "relay"}, 0, "", ""},
