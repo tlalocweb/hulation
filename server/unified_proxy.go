@@ -237,7 +237,8 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			byPath:   path,
 			handler:  newPlainProxy(target),
 		})
-		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, targetRaw)
+		// Redacted() masks any userinfo password so credentials never hit the log.
+		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, target.Redacted())
 	}
 	return routes
 }
