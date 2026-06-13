@@ -86,6 +86,7 @@ func TestCompileProxyRoutes(t *testing.T) {
 		{"by_domain scheme-no-slashes rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "https:relay.example.com"}, 0, "", ""},
 		{"by_domain non-numeric port rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "relay.example.com:abc"}, 0, "", ""},
 		{"by_domain unbracketed IPv6 rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "::1"}, 0, "", ""},
+		{"by_domain internal tab rejected", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "relay\t.example.com"}, 0, "", ""},
 		{"by_domain bracketed IPv6 accepted", &config.Proxy{Target: "http://127.0.0.1:8088", ByDomain: "[2001:db8::1]:8443"}, 1, "2001:db8::1", ""},
 		{"target with path rejected", &config.Proxy{Target: "http://127.0.0.1:8088/foo", ByDomain: "relay.example.com"}, 0, "", ""},
 		{"target with query rejected", &config.Proxy{Target: "http://127.0.0.1:8088?x=1", ByDomain: "relay.example.com"}, 0, "", ""},

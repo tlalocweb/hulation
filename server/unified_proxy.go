@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/log"
@@ -57,8 +58,8 @@ func normaliseByDomain(raw string) (string, bool) {
 	if raw == "" {
 		return "", true
 	}
-	if strings.ContainsAny(raw, "/ ") { // URL, path, or whitespace
-		return "", false
+	if strings.ContainsRune(raw, '/') || strings.IndexFunc(raw, unicode.IsSpace) >= 0 {
+		return "", false // URL/path separator or any whitespace (space, tab, newline…)
 	}
 	h := strings.ToLower(raw)
 	// Bracketed IPv6: "[::1]" or "[::1]:8443".
@@ -123,13 +124,15 @@ func newPlainProxy(target *url.URL) http.Handler {
 			peerIP := extractPeerIP(req)
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
-			// Path left intact. Overwrite the forwarding headers the same way as
-			// the backend proxy (backend/proxy.go) so both behave identically and
-			// a public client can't spoof host/proto: X-Forwarded-Host/Proto come
-			// from the observed request. X-Real-IP is the single derived client IP;
-			// X-Forwarded-For is seeded with it and httputil.ReverseProxy then
-			// appends the immediate hop (RemoteAddr) after this Director runs, so
-			// the upstream sees "client[, hop]" with the real client always first.
+			// Path left intact. Set the forwarding headers authoritatively, following
+			// the backend proxy's convention (backend/proxy.go) so a public client
+			// can't spoof host/proto: X-Forwarded-Host/Proto come from the observed
+			// request. X-Real-IP is the derived client IP; X-Forwarded-For is seeded
+			// with it and httputil.ReverseProxy appends the immediate hop (RemoteAddr)
+			// after this Director runs, so the upstream sees "client[, hop]" (real
+			// client first). This proxy additionally honours CF-Connecting-IP (via
+			// extractPeerIP) and strips the RFC 7239 Forwarded header, neither of which
+			// the backend proxy does — so the two are similar, not identical.
 			req.Header.Set("X-Forwarded-Host", origHost)
 			req.Header.Set("X-Forwarded-Proto", scheme)
 			req.Header.Set("X-Forwarded-For", peerIP)
