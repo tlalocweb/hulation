@@ -189,6 +189,30 @@ func TestProxyDispatchLongestPrefix(t *testing.T) {
 	}
 }
 
+func TestProxyDispatchReservesServicePaths(t *testing.T) {
+	marker := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "proxy")
+	})
+	// A catch-all by_path proxy must still defer hula's reserved service paths
+	// (via staticPassthrough) even when HasRoute doesn't claim them, so it can't
+	// shadow present/future REST/admin endpoints.
+	catchAll := []*proxyRoute{{byPath: "/", handler: marker}}
+	never := func(*http.Request) bool { return false }
+	for _, reserved := range []string{"/api/health", "/scripts/x.js", "/analytics", "/v/foo"} {
+		req := httptest.NewRequest("GET", "https://hula.example.com"+reserved, nil)
+		rec := httptest.NewRecorder()
+		if proxyDispatch(catchAll, never, rec, req) {
+			t.Errorf("%s: by_path proxy must defer to hula's reserved service path", reserved)
+		}
+	}
+	// A non-reserved path is still proxied.
+	req := httptest.NewRequest("GET", "https://hula.example.com/custom/thing", nil)
+	rec := httptest.NewRecorder()
+	if !proxyDispatch(catchAll, never, rec, req) || rec.Body.String() != "proxy" {
+		t.Errorf("non-reserved path should be proxied, got body=%q", rec.Body.String())
+	}
+}
+
 func TestMatchesHostPortAndIPv6(t *testing.T) {
 	// Config carrying a stray :port still matches (normalised via hostOnly).
 	rt := &proxyRoute{byDomain: hostOnly("Relay.Example.com:443")}

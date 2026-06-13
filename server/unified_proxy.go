@@ -68,8 +68,10 @@ func newPlainProxy(target *url.URL) http.Handler {
 			// Path left intact. Overwrite the forwarding headers the same way as
 			// the backend proxy (backend/proxy.go) so both behave identically and
 			// a public client can't spoof host/proto: X-Forwarded-Host/Proto come
-			// from the observed request, and X-Forwarded-For/X-Real-IP collapse to
-			// the single derived client IP rather than an attacker-appended chain.
+			// from the observed request. X-Real-IP is the single derived client IP;
+			// X-Forwarded-For is seeded with it and httputil.ReverseProxy then
+			// appends the immediate hop (RemoteAddr) after this Director runs, so
+			// the upstream sees "client[, hop]" with the real client always first.
 			req.Header.Set("X-Forwarded-Host", origHost)
 			req.Header.Set("X-Forwarded-Proto", scheme)
 			req.Header.Set("X-Forwarded-For", peerIP)
@@ -182,10 +184,13 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 // proxyDispatch routes r to a matching proxy and reports whether it handled the
 // request. Order-independent precedence:
 //   1. by_domain routes are checked first — a dedicated host is unambiguous, so
-//      a matching by_domain proxy always wins regardless of config order.
-//   2. by_path routes are considered only when the request does NOT match one of
-//      hula's own service routes (admin API, REST gateway), so a path proxy can
-//      never shadow them.
+//      a matching by_domain proxy always wins regardless of config order. A
+//      dedicated host fully owns itself, so service-path reservations don't apply.
+//   2. A by_path route shares hula's host, so it must never shadow hula's own
+//      routes: it defers both to a route the core dispatcher claims (hasRoute)
+//      and to the reserved service prefixes (/api/*, /v/*, /scripts/*, /analytics,
+//      /hulastatus, …) via staticPassthrough — covering present and future REST
+//      endpoints the same way the static layer does.
 func proxyDispatch(
 	routes []*proxyRoute,
 	hasRoute func(*http.Request) bool,
@@ -197,8 +202,10 @@ func proxyDispatch(
 		rt.handler.ServeHTTP(w, r)
 		return true
 	}
-	// 2. Never shadow hula's own service routes (admin API, REST gateway).
-	if hasRoute != nil && hasRoute(r) {
+	// 2. A path-only proxy must defer to hula's own routes — those the core
+	//    dispatcher claims and the reserved service prefixes — so it can't shadow
+	//    a (present or future) REST/admin endpoint.
+	if (hasRoute != nil && hasRoute(r)) || staticPassthrough(r.URL.Path) {
 		return false
 	}
 	// 3. Path-only (by_path) routes.
