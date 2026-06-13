@@ -255,6 +255,13 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			log.Errorf("proxy: target %q is missing a host (need scheme://host[:port]); skipping", targetRaw)
 			continue
 		}
+		// httputil.ReverseProxy never turns target userinfo into an Authorization
+		// header — credentials would be silently dropped, so a config with them
+		// looks like it should work but won't. Reject rather than mislead.
+		if target.User != nil {
+			log.Errorf("proxy: target %q must not contain credentials (userinfo is silently ignored by the proxy); skipping", targetRaw)
+			continue
+		}
 		// The request path is always preserved, so a path/query/fragment on the
 		// target would be silently ignored — reject it rather than mislead.
 		if (target.Path != "" && target.Path != "/") || target.RawQuery != "" || target.Fragment != "" {
@@ -266,7 +273,8 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			byPath:   path,
 			handler:  newPlainProxy(target),
 		})
-		// Redacted() masks any userinfo password so credentials never hit the log.
+		// Redacted() is defensive (userinfo is rejected above) — keeps any future
+		// credential-bearing string from reaching the log.
 		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, target.Redacted())
 	}
 	return routes
