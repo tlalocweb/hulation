@@ -50,10 +50,11 @@ func (r *proxyRoute) matchesPath(req *http.Request) bool {
 // normaliseByDomain validates a configured by_domain and returns the bare host
 // to match against (lowercased, with any port + IPv6 brackets stripped, exactly
 // as hostOnly derives it from the request Host). ok is false for anything that
-// isn't a clean host: a URL/path/space, an empty host, a scheme like
-// "https:host", a host:port whose port is empty or non-numeric, or an
-// unbracketed IPv6 literal (which must be written "[::1]"). An empty input is
-// valid and yields ("", true) — the caller treats that as a path-only route.
+// isn't a clean host: a URL/path/whitespace, a URL delimiter or userinfo
+// ('?', '#', '@', …), an empty host, a scheme like "https:host", a host:port
+// whose port is empty or non-numeric, or an unbracketed IPv6 literal (which must
+// be written "[::1]"). An empty input is valid and yields ("", true) — the caller
+// treats that as a path-only route.
 func normaliseByDomain(raw string) (string, bool) {
 	if raw == "" {
 		return "", true
@@ -70,27 +71,55 @@ func normaliseByDomain(raw string) (string, bool) {
 		}
 		host := h[1:end]
 		rest := h[end+1:]
-		if host == "" {
-			return "", false
-		}
 		if rest != "" && !(rest[0] == ':' && isNumericPort(rest[1:])) {
 			return "", false // trailing junk or non-numeric port
 		}
-		return host, true
-	}
-	switch strings.Count(h, ":") {
-	case 0: // bare host / IPv4
-		return h, true
-	case 1: // host:port
-		i := strings.IndexByte(h, ':')
-		host, port := h[:i], h[i+1:]
-		if host == "" || !isNumericPort(port) {
+		if !validHostChars(host, true) {
 			return "", false
 		}
 		return host, true
+	}
+	host := h
+	switch strings.Count(h, ":") {
+	case 0: // bare host / IPv4
+	case 1: // host:port
+		i := strings.IndexByte(h, ':')
+		var port string
+		host, port = h[:i], h[i+1:]
+		if !isNumericPort(port) {
+			return "", false
+		}
 	default: // unbracketed IPv6 literal — require "[...]"
 		return "", false
 	}
+	if !validHostChars(host, false) {
+		return "", false
+	}
+	return host, true
+}
+
+// validHostChars reports whether h is non-empty and contains only characters
+// valid in a host: letters/digits/'-'/'.' for a DNS name or IPv4, or hex digits/
+// ':'/'.' for the inside of a bracketed IPv6 literal. This rejects URL
+// delimiters and the userinfo separator ('?', '#', '@', etc.) that would compile
+// into a route that never matches a real Host header.
+func validHostChars(h string, ipv6 bool) bool {
+	if h == "" {
+		return false
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		ok := (c >= '0' && c <= '9') || c == '.'
+		if ipv6 {
+			ok = ok || (c >= 'a' && c <= 'f') || c == ':'
+		} else {
+			ok = ok || (c >= 'a' && c <= 'z') || c == '-'
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func isNumericPort(p string) bool {
