@@ -1054,10 +1054,13 @@ type Proxy struct {
 	// bracketed IPv6 — not a URL. Combine with by_path to scope the host proxy to
 	// a path prefix; leave by_path empty to proxy the whole host.
 	ByDomain string `yaml:"by_domain,omitempty"`
-	// by_path proxies requests under a path prefix. On its own it applies to any
-	// host; together with by_domain it applies only on that host. hula's own
-	// service routes (admin API, REST gateway, /api/*, static service paths) take
-	// precedence so a path proxy can't shadow them. The prefix is NOT stripped.
+	// by_path proxies requests under a path prefix. On its own (by_domain empty)
+	// it applies to any host, and hula's own service routes (admin API, REST
+	// gateway, /api/*, static service paths) take precedence so a path-only proxy
+	// can't shadow them. Combined with by_domain it applies only on that host,
+	// which is then fully delegated to the target — so on a host hula also serves,
+	// a by_domain+by_path proxy CAN shadow those routes; point by_domain at a
+	// dedicated host to avoid that. The prefix is NOT stripped.
 	ByPath string `yaml:"by_path,omitempty"`
 }
 
