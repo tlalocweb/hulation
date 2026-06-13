@@ -46,6 +46,64 @@ func (r *proxyRoute) matchesPath(req *http.Request) bool {
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
+// normaliseByDomain validates a configured by_domain and returns the bare host
+// to match against (lowercased, with any port + IPv6 brackets stripped, exactly
+// as hostOnly derives it from the request Host). ok is false for anything that
+// isn't a clean host: a URL/path/space, an empty host, a scheme like
+// "https:host", a host:port whose port is empty or non-numeric, or an
+// unbracketed IPv6 literal (which must be written "[::1]"). An empty input is
+// valid and yields ("", true) — the caller treats that as a path-only route.
+func normaliseByDomain(raw string) (string, bool) {
+	if raw == "" {
+		return "", true
+	}
+	if strings.ContainsAny(raw, "/ ") { // URL, path, or whitespace
+		return "", false
+	}
+	h := strings.ToLower(raw)
+	// Bracketed IPv6: "[::1]" or "[::1]:8443".
+	if strings.HasPrefix(h, "[") {
+		end := strings.IndexByte(h, ']')
+		if end < 0 {
+			return "", false // unterminated bracket
+		}
+		host := h[1:end]
+		rest := h[end+1:]
+		if host == "" {
+			return "", false
+		}
+		if rest != "" && !(rest[0] == ':' && isNumericPort(rest[1:])) {
+			return "", false // trailing junk or non-numeric port
+		}
+		return host, true
+	}
+	switch strings.Count(h, ":") {
+	case 0: // bare host / IPv4
+		return h, true
+	case 1: // host:port
+		i := strings.IndexByte(h, ':')
+		host, port := h[:i], h[i+1:]
+		if host == "" || !isNumericPort(port) {
+			return "", false
+		}
+		return host, true
+	default: // unbracketed IPv6 literal — require "[...]"
+		return "", false
+	}
+}
+
+func isNumericPort(p string) bool {
+	if p == "" {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < '0' || p[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // newPlainProxy builds a path-PRESERVING reverse proxy to target. Unlike the
 // backend-container proxy it does NOT strip/rewrite the path, so a signed
 // downstream (the hula-push-relay signs over method+path) verifies correctly.
@@ -132,22 +190,15 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 		}
 		rawDomain := strings.TrimSpace(p.ByDomain)
 		path := strings.TrimSpace(p.ByPath)
-		// by_domain must be a bare host[:port], not a URL: hostOnly would
-		// silently truncate "https://relay.example.com" to "https" (the text
-		// before the first ':'), producing a route that never matches and is
-		// confusing to debug. Reject anything with a scheme/path/space up front.
-		if strings.ContainsAny(rawDomain, "/ ") {
-			log.Errorf("proxy: by_domain %q must be a bare host[:port], not a URL or path; skipping target %q", rawDomain, targetRaw)
-			continue
-		}
-		// Normalise the same way as the request Host so a config value with a
-		// stray ":port" (or IPv6 brackets) still matches.
-		domain := hostOnly(rawDomain)
-		// A non-empty by_domain that normalises to nothing (":443", "[]", …) must
-		// not silently degrade into a host-agnostic (match-any) route — that's a
-		// surprising fail-open. Reject it.
-		if rawDomain != "" && domain == "" {
-			log.Errorf("proxy: by_domain %q has no usable host after normalisation; skipping target %q", rawDomain, targetRaw)
+		// Validate + normalise by_domain to a bare host (lowercased, port and
+		// IPv6 brackets stripped) the same way matchesHost sees the request Host.
+		// Rejects URLs/paths, a scheme like "https:host", an empty or non-numeric
+		// port, and unbracketed IPv6 — each of which would otherwise truncate into
+		// a bogus host that silently never matches (or, when it empties out, fails
+		// open into a match-any route).
+		domain, ok := normaliseByDomain(rawDomain)
+		if !ok {
+			log.Errorf("proxy: by_domain %q is not a valid host (use a bare host, host:port, or bracketed IPv6 like [::1]:8443); skipping target %q", rawDomain, targetRaw)
 			continue
 		}
 		if domain == "" && path == "" {
