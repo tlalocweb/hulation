@@ -427,6 +427,15 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// over static files when both are configured on the same host.
 	registerStaticSites(srv, cfg)
 
+	// Top-level `proxies:` — path-preserving reverse proxy to an arbitrary
+	// target URL (e.g. a hula-push-relay sidecar on localhost). Distinct from
+	// `backends:`, which manage containers + rewrite the path. Attached AFTER
+	// backend/static registration (most-recently-attached runs first) so a
+	// by_domain proxy intercepts before static serving / backends and owns its
+	// host. CORS + HSTS are attached later still, so they remain outermost and
+	// proxied responses keep those headers.
+	registerProxies(srv, cfg)
+
 	// Phase-2 analytics dashboard — serves the SvelteKit build tree
 	// at /analytics/* and a tiny config shim at /analytics/config.json
 	// that the UI reads on boot. No-op when the bundle isn't present.

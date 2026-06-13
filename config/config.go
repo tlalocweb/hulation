@@ -1039,12 +1039,29 @@ func (cfg *Config) GetHulaACMEHTTPPort() int {
 	return cfg.hulaACMEHTTPPort
 }
 
+// Proxy is a top-level reverse-proxy route (the `proxies:` config). Unlike
+// per-server `backends:` — which manage Docker containers and rewrite the
+// request path — a proxy forwards to an arbitrary Target URL and PRESERVES the
+// path. That makes it safe to front a sidecar HTTP service whose request
+// signatures cover the path, e.g. running the hula-push-relay on localhost
+// behind hulation's TLS via `by_domain: relay.example.com` → `http://127.0.0.1:8088`
+// (add the domain to ssl.acme.domains so hulation provisions its cert).
 type Proxy struct {
-	// The taret URL to proxy to - such http://127.0.0.1:8080 for a local server
+	// Target URL to forward to, e.g. http://127.0.0.1:8088 (scheme + host[:port]).
 	Target string `yaml:"target,omitempty" test:"~.+"`
-	// use by_domain if you want to proxy an entire host
+	// by_domain proxies a host (recommended; the matched host is fully delegated
+	// to the target, so use a dedicated subdomain). Must be a bare host[:port] or
+	// bracketed IPv6 — not a URL. Combine with by_path to scope the host proxy to
+	// a path prefix; leave by_path empty to proxy the whole host.
 	ByDomain string `yaml:"by_domain,omitempty"`
-	ByPath   string `yaml:"by_path,omitempty"`
+	// by_path proxies requests under a path prefix. On its own (by_domain empty)
+	// it applies to any host, and hula's own service routes (admin API, REST
+	// gateway, /api/*, static service paths) take precedence so a path-only proxy
+	// can't shadow them. Combined with by_domain it applies only on that host,
+	// which is then fully delegated to the target — so on a host hula also serves,
+	// a by_domain+by_path proxy CAN shadow those routes; point by_domain at a
+	// dedicated host to avoid that. The prefix is NOT stripped.
+	ByPath string `yaml:"by_path,omitempty"`
 }
 
 const (
