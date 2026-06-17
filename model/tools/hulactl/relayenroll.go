@@ -60,25 +60,14 @@ func runRelayEnroll(cfg *HulactlConfig, argz []string) {
 		base = "https://" + base
 	}
 
-	// Code: take it as the positional argument after the URL
-	// (`relay-enroll <url> <code>`), or from the --code flag — which, per
-	// hulactl's Go-flag convention, must be placed BEFORE the command.
-	code := strings.TrimSpace(cfg.RelayCode)
-	if code == "" && len(argz) >= 3 {
-		code = strings.TrimSpace(argz[2])
-	}
-	if code == "" {
-		fmt.Println("relay-enroll: missing enrollment code")
-		fmt.Println(getCommandUsage(CMD_RELAYENROLL))
-		os.Exit(1)
-	}
-	if strings.HasPrefix(code, "-") {
-		// Almost always a flag placed after the command, which Go's flag
-		// package leaves unparsed (it stops at the first non-flag token).
-		fmt.Printf("relay-enroll: %q looks like a flag, not an enrollment code.\n", code)
-		fmt.Println("In hulactl, flags go BEFORE the command. Use either:")
+	// Code from the --code flag (which, per hulactl convention, must precede
+	// the command) or the positional argument after the URL.
+	code, err := resolveEnrollCode(cfg.RelayCode, argz)
+	if err != nil {
+		fmt.Printf("relay-enroll: %s\n", err.Error())
+		fmt.Println("Use either:")
 		fmt.Println("  hulactl relay-enroll <relay-base-url> <enrollment-code>")
-		fmt.Println("  hulactl --code <enrollment-code> relay-enroll <relay-base-url>")
+		fmt.Println("  hulactl --code <enrollment-code> relay-enroll <relay-base-url>   (flags before the command)")
 		os.Exit(1)
 	}
 
@@ -111,9 +100,11 @@ func runRelayEnroll(cfg *HulactlConfig, argz []string) {
 	url := base + "/v1/installations/enroll"
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	if cfg.RelayInsecure {
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // operator opt-in via --insecure for dev relays
-		}
+		// Clone the default transport so we keep ProxyFromEnvironment,
+		// connection pooling, and HTTP/2 — only relax cert verification.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // operator opt-in via --insecure for dev relays
+		httpClient.Transport = tr
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -150,15 +141,10 @@ func runRelayEnroll(cfg *HulactlConfig, argz []string) {
 			fmt.Println("relay-enroll: --write needs -hulaconf <path> to the hula config file")
 			os.Exit(1)
 		}
-		writeKey := func(keys []string, val string) {
-			if e := utils.ModifyYamlFile(path, keys, &yaml.Node{Kind: yaml.ScalarNode, Value: val}); e != nil {
-				fmt.Printf("relay-enroll: write %s: %s\n", strings.Join(keys, "."), e.Error())
-				os.Exit(1)
-			}
+		if err := writePushRelayBlock(path, base, er.InstallationID, seedB64); err != nil {
+			fmt.Printf("relay-enroll: %s\n", err.Error())
+			os.Exit(1)
 		}
-		writeKey([]string{"push_relay", "base_url"}, base)
-		writeKey([]string{"push_relay", "installation_id"}, er.InstallationID)
-		writeKey([]string{"push_relay", "signing_key_b64"}, seedB64)
 		fmt.Fprintf(os.Stderr, "relay-enroll: wrote push_relay block to %s (installation_id=%s, status=%s)\n",
 			path, er.InstallationID, er.Status)
 		return
@@ -173,4 +159,53 @@ func runRelayEnroll(cfg *HulactlConfig, argz []string) {
 	fmt.Printf("    base_url: %q\n", base)
 	fmt.Printf("    installation_id: %q\n", er.InstallationID)
 	fmt.Printf("    signing_key_b64: %q\n", seedB64)
+}
+
+// resolveEnrollCode picks the enrollment code from the --code flag (which, per
+// hulactl convention, must precede the command) or the positional argument
+// after the URL (argz[2]). A value starting with "-" is almost always a flag
+// mistakenly placed after the command — which Go's flag package leaves
+// unparsed — so reject it rather than send "--code" as the code.
+func resolveEnrollCode(flagCode string, argz []string) (string, error) {
+	code := strings.TrimSpace(flagCode)
+	if code == "" && len(argz) >= 3 {
+		code = strings.TrimSpace(argz[2])
+	}
+	if code == "" {
+		return "", fmt.Errorf("missing enrollment code")
+	}
+	if strings.HasPrefix(code, "-") {
+		return "", fmt.Errorf("%q looks like a flag, not an enrollment code (flags go before the command)", code)
+	}
+	return code, nil
+}
+
+// writePushRelayBlock writes push_relay.{base_url,installation_id,signing_key_b64}
+// into the hula config at path, preserving the file's original permission bits.
+// ModifyYamlFile rewrites the file at mode 0644; since the file now holds the
+// ed25519 signing seed (and likely other secrets), restore the original mode —
+// defaulting to 0600 when it can't be determined — so the write never widens
+// access.
+func writePushRelayBlock(path, base, installationID, seedB64 string) error {
+	mode := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	writes := []struct {
+		keys []string
+		val  string
+	}{
+		{[]string{"push_relay", "base_url"}, base},
+		{[]string{"push_relay", "installation_id"}, installationID},
+		{[]string{"push_relay", "signing_key_b64"}, seedB64},
+	}
+	for _, w := range writes {
+		if err := utils.ModifyYamlFile(path, w.keys, &yaml.Node{Kind: yaml.ScalarNode, Value: w.val}); err != nil {
+			return fmt.Errorf("write %s: %w", strings.Join(w.keys, "."), err)
+		}
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return fmt.Errorf("restore mode on %s: %w", path, err)
+	}
+	return nil
 }
