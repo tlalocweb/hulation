@@ -202,6 +202,11 @@ type HulactlConfig struct {
 	TeamPKIDir        string `flag:"pki-dir" usage:"directory holding ca.pem, cert.pem, key.pem for mTLS"`
 	TeamNodeID        string `flag:"node-id" usage:"node id for team-join (default: hostname)"`
 	TeamNodeHostname  string `flag:"node-hostname" usage:"operator-provisioned hostname for chat WS pinning"`
+	// relay-enroll — bind this hula install to a hula-push-relay.
+	RelayCode     string `flag:"code" usage:"one-time relay enrollment code (relay-enroll)"`
+	RelayLabel    string `flag:"label" usage:"optional display name shown in the relay admin console (relay-enroll)"`
+	RelayInsecure bool   `flag:"insecure" usage:"skip TLS verification when calling the relay (relay-enroll; dev only)"`
+	RelayWrite    bool   `flag:"write" usage:"relay-enroll: write the push_relay block into -hulaconf instead of printing it"`
 	// Multi-server config
 	Servers map[string]*ServerEntry `yaml:"servers,omitempty"`
 	// Runtime: which server to use for this invocation (not persisted)
@@ -1877,6 +1882,9 @@ func main() {
 
 	case CMD_CREATE_AGENT:
 		runCreateAgent(hulactlconfig, argz)
+
+	case CMD_RELAYENROLL:
+		runRelayEnroll(hulactlconfig, argz)
 
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
