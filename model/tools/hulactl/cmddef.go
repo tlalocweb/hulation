@@ -139,6 +139,9 @@ const (
 	CMD_CREATE_AGENT          = "create-agent"
 	CMD_CREATE_AGENT_HELP     = "Generate an mTLS-secured agent config yaml for hulaagent"
 	CMD_CREATE_AGENT_USAGE    = "create-agent [-c template.yaml] [--allow-<verb>=<site>[,opts]]... [--expires-in=DUR] [--hula-host=HOST] [--offline] > agent.yaml\n\nProduces an agent yaml on stdout. Two ways to declare permissions:\n  1. Flag form: --allow-<verb>=<site>[,<opts>] (repeatable).\n  2. Template form: -c <yaml> with config.expires-in + sites.<id>.allow.\nThe two compose: flags override template entries.\n\nVerbs: build, staging-build, pull, push, sync, commit, push-file, get-file.\n--expires-in accepts Go durations (8760h), days (30d), or years (1yr).\n\nDefault is server mode: hits POST /api/agent/create on the configured\nhula host with the admin JWT and registers the agent in hula's registry\nso it can be revoked or listed later. Pass --offline to generate a\none-off agent against a freshly-minted Agent CA without contacting a\nserver — useful for dev loops, but the resulting cert can't be revoked\ncentrally."
+	CMD_RELAYENROLL       = "relay-enroll"
+	CMD_RELAYENROLL_HELP  = "Enroll this hula install with a hula-push-relay (APNs/FCM fan-out)"
+	CMD_RELAYENROLL_USAGE = "relay-enroll <relay-base-url> <enrollment-code>\n\nGenerates a fresh ed25519 keypair, redeems the one-time enrollment code\nat <relay-base-url>/v1/installations/enroll (the relay only ever sees the\npublic half), and prints the push_relay: block to paste into hula's config\n— base_url, installation_id, and the 32-byte signing seed (signing_key_b64),\nshown exactly once.\n\nOptional flags — per hulactl convention these go BEFORE the command\n(e.g. `hulactl --insecure relay-enroll <url> <code>`):\n  --code <code>   alternative to the positional <enrollment-code>\n  --label <name>  display name shown in the relay admin console\n  --insecure      skip TLS verification (dev relays with self-signed certs)\n  --write         write the push_relay block into -hulaconf instead of printing"
 )
 
 var commands []Command
@@ -191,6 +194,7 @@ func init() {
 		Command{CMD_PULL, CMD_PULL_HELP, CMD_PULL_USAGE},
 		Command{CMD_SYNC, CMD_SYNC_HELP, CMD_SYNC_USAGE},
 		Command{CMD_CREATE_AGENT, CMD_CREATE_AGENT_HELP, CMD_CREATE_AGENT_USAGE},
+		Command{CMD_RELAYENROLL, CMD_RELAYENROLL_HELP, CMD_RELAYENROLL_USAGE},
 	)
 	// generate map version:
 	// map of Command.Name to Command:
