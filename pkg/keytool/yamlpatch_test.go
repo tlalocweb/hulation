@@ -131,6 +131,29 @@ func TestSetScalars_PreservesFileMode(t *testing.T) {
 	}
 }
 
+// The edited line must keep its original quote style (single / double / none)
+// and any trailing whitespace — only the value's bytes change.
+func TestSetScalars_PreservesQuoteStyleAndTrailingWS(t *testing.T) {
+	src := "a: 'CHANGE_ME'   # single\n" +
+		"b: CHANGE_ME\n" +
+		"c: \"CHANGE_ME\"\n" +
+		"d: CHANGE_ME  \n" // trailing whitespace, no comment
+	p := writeTemp(t, src)
+	for _, k := range []string{"a", "b", "c", "d"} {
+		if _, err := SetScalarsInPlace(p, []ScalarEdit{{KeyPath: []string{k}, Value: "NEW_" + k}}, true, 1); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
+	}
+	got, _ := os.ReadFile(p)
+	want := "a: 'NEW_a'   # single\n" +
+		"b: NEW_b\n" +
+		"c: \"NEW_c\"\n" +
+		"d: NEW_d  \n"
+	if string(got) != want {
+		t.Fatalf("quote style / trailing whitespace not preserved.\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestPlaceholderDetection(t *testing.T) {
 	for _, v := range []string{"", "   ", "CHANGE_ME_x", "replace_me", "REPLACE_WITH_y"} {
 		if !looksLikePlaceholder(v) {
