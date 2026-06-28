@@ -332,7 +332,7 @@ record validates against the same OPRF seed. So:
 
 ### 5.1 OPRF seed lifecycle
 
-- Generated once via `hulactl opaque-seed` (new command — outputs
+- Generated once via `hula opaque-seed-update` (new command — outputs
   a base64 32-byte value).
 - Stored in `config.OPAQUE.OPRFSeed` (yaml) **or**
   `HULA_OPAQUE_OPRF_SEED` (env). Env wins. Same operator workflow
@@ -543,7 +543,7 @@ Two new commands; one updated:
 |------------------------------------------------|----------|
 | `hulactl set-password [--username admin]`     | OPAQUE registration round-trip. Replaces the workflow that ended with `hulactl generatehash` + manual config edit. Persists the record on the server side. |
 | `hulactl auth <host>`                          | Tries OPAQUE login first; falls back to legacy `LoginAdmin` / `LoginWithSecret` only when the server reports `legacy_available`. |
-| `hulactl opaque-seed`                          | Generate a base64 32-byte OPRF seed. Operator pastes into `config.OPAQUE.OPRFSeed` or sets `HULA_OPAQUE_OPRF_SEED`. |
+| `hula opaque-seed-update`                          | Generate a base64 32-byte OPRF seed. Operator pastes into `config.OPAQUE.OPRFSeed` or sets `HULA_OPAQUE_OPRF_SEED`. |
 
 Same `bytemare/opaque` import as the server uses. No new deps.
 
@@ -637,7 +637,7 @@ test) in stage 2.
   cache (60s TTL).
 - `pkg/auth/opaque/opaque_test.go`: round-trip against a Go client.
 - `config.OPAQUE.OPRFSeed` + env binding.
-- `hulactl opaque-seed` command.
+- `hula opaque-seed-update` command.
 
 **Acceptance**: `go test ./pkg/auth/opaque/...` green; boot logs
 report seed source (config / env / generated).
@@ -852,7 +852,7 @@ Before stage 1 starts:
       `staging.tlaloc.us/analytics/login`, and `hulactl auth
       www.tlaloc.us` all succeed via OPAQUE.
 - [ ] `DEPLOYMENT.md` documents `HULA_OPAQUE_OPRF_SEED`,
-      `hulactl opaque-seed`, `hulactl set-password`, and the
+      `hula opaque-seed-update`, `hulactl set-password`, and the
       legacy-rollback runbook.
 - [ ] `OPAQUE_STATUS.md` written.
 

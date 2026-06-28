@@ -38,8 +38,8 @@ dbconfig:
   pass: hula
   dbname: hula
 # Mobile app + encrypted push (all optional — see README "Mobile app, QR pairing
-# & encrypted push"). Generate the keys with `hulactl noise-static-key` and
-# `hulactl visitor-chat-key`; store the private halves in a secrets manager.
+# & encrypted push"). Generate the keys with `hula noise-static-key-update` and
+# `hula visitor-chat-key-update`; store the private halves in a secrets manager.
 # noise_static_key: "BASE64URL"   # gRPC chat-stream Noise_IK responder static key
 # visitor_chat_key: "BASE64URL"   # browser widget sealed-box key
 # push_relay:                     # server-blind APNs/FCM fan-out via hula-push-relay

@@ -235,9 +235,7 @@ Authentication & accounts
   set-password            Set / rotate a password via OPAQUE PAKE registration
   generatehash            Generate an argon2 hash (legacy admin.hash flow)
   updateadminhash         Generate a hash and write it into the hula config file
-  totp-key                Generate a TOTP encryption key for the config
   totp-setup              Set up TOTP for the admin user (interactive)
-  opaque-seed             Generate base64url OPAQUE OPRF seed + AKE secret
   forget-opaque-record    EMERGENCY offline removal of an OPAQUE record from Bolt
 
 Users & access
@@ -258,12 +256,6 @@ Staging
   staging-mount  <server-id> <folder> [--autobuild] [--dangerous]
                                               Live-sync a local folder to the staging site
 
-Mobile & push (encryption keys)
-  noise-static-key           Generate the Noise_IK chat-stream static keypair
-                             (config: noise_static_key)
-  visitor-chat-key           Generate the visitor-widget sealed-box keypair
-                             (config: visitor_chat_key)
-
 Operations
   badactors                  List scored IPs with block status
   initdb / deletedb          Initialize / drop the analytics schema
@@ -272,6 +264,25 @@ Operations
 ```
 
 Run `hulactl` with no arguments for the full inline help.
+
+### `hula` key/secret commands
+
+Secret generation/rotation lives on the `hula` binary (not hulactl). With no
+`-c` each prints the new value to stdout; with `-c <config.yaml>` it updates only
+that field in place — preserving every comment, blank line, and indentation — and
+refuses to overwrite an existing value unless `--force` (a timestamped `.bak` is
+always written first).
+
+```text
+  jwt-key-update              Generate / rotate jwt_key
+  totp-key-update             Generate / rotate totp_encryption_key
+  noise-static-key-update     Generate / rotate noise_static_key (prints public too)
+  visitor-chat-key-update     Generate / rotate visitor_chat_key (prints public too)
+  opaque-seed-update          Generate / rotate opaque.oprf_seed + opaque.ake_secret
+  genteamcerts --nodes …      Offline Team CA + per-node mTLS bundles + bootstrap token
+```
+
+Example: `hula totp-key-update -c /etc/hula/config.yaml` (then restart hula).
 
 ## Mobile app, QR pairing & encrypted push
 
@@ -283,8 +294,8 @@ still runs; the affected feature just degrades gracefully (plaintext / no push).
 manager):
 
 ```bash
-./hulactl noise-static-key     # → noise_static_key  (gRPC chat-stream Noise_IK)
-./hulactl visitor-chat-key     # → visitor_chat_key  (browser widget sealed-box)
+./hula noise-static-key-update     # → noise_static_key  (gRPC chat-stream Noise_IK)
+./hula visitor-chat-key-update     # → visitor_chat_key  (browser widget sealed-box)
 ```
 
 Each prints a base64url private key for `config.yaml` plus the matching **public**

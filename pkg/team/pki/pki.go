@@ -2,7 +2,7 @@
 // material that Stage 3 of the HA work requires. See HA_PLAN3.md §3
 // for the design and threat model. The CA private key is operator-
 // secured and MUST NOT deploy to any node — the operator runs
-// `hulactl genteamcerts` once, distributes the per-node bundles
+// `hula genteamcerts` once, distributes the per-node bundles
 // out-of-band, and keeps ca.key in their secrets vault.
 package pki
 

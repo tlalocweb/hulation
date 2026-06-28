@@ -54,14 +54,21 @@ trap cleanup EXIT
 
 mkdir -p "$WORKDIR"
 
-# ---- hulactl: two builds ----
-# host glibc build for genteamcerts (run on host).
-# musl build extracted from hula:local for the team-runner.
+# ---- host binaries ----
+# host glibc hulactl for generatehash; host glibc hula for genteamcerts
+# (genteamcerts moved off hulactl onto the hula binary). musl hulactl for the
+# team-runner is extracted from hula:local below.
 log "Building host hulactl..."
 (
     cd "$REPO_ROOT"
     PATH="$REPO_ROOT/.bin/go/bin:$PATH" go build -o "$WORKDIR/hulactl-host" ./model/tools/hulactl/
 ) || { err "host hulactl build failed"; exit 1; }
+
+log "Building host hula (for genteamcerts)..."
+(
+    cd "$REPO_ROOT"
+    PATH="$REPO_ROOT/.bin/go/bin:$PATH" go build -o "$WORKDIR/hula-host" .
+) || { err "host hula build failed"; exit 1; }
 
 log "Extracting hulactl from hula:local..."
 if ! docker image inspect hula:local >/dev/null 2>&1; then
@@ -81,12 +88,11 @@ fi
 TEAM_ID="${TEST_TEAM_ID:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)}"
 log "Team ID: $TEAM_ID"
 rm -rf "$WORKDIR/team-bundles"
-"$WORKDIR/hulactl-host" \
+"$WORKDIR/hula-host" genteamcerts \
     --team-id "$TEAM_ID" \
     --nodes hula-east,hula-west,hula-emea \
     --validity 24h \
-    --out "$WORKDIR/team-bundles" \
-    genteamcerts >/dev/null 2>&1 || { err "genteamcerts failed"; exit 1; }
+    --out "$WORKDIR/team-bundles" >/dev/null 2>&1 || { err "genteamcerts failed"; exit 1; }
 TEAM_TOKEN="$(cat "$WORKDIR/team-bundles/bootstrap-token")"
 
 # ---- Render per-node configs ----

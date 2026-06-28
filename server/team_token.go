@@ -29,7 +29,7 @@ func seedBootstrapToken(cfg *config.Config) {
 	}
 	tok := strings.TrimSpace(cfg.Team.BootstrapToken)
 	// Operators typically distribute the token base64-encoded (from
-	// `hulactl genteamcerts`); decode if it parses as base64,
+	// `hula genteamcerts`); decode if it parses as base64,
 	// otherwise treat as raw bytes. Either form is fine — both
 	// sides do the same decode/raw mapping.
 	if dec, err := base64.StdEncoding.DecodeString(tok); err == nil {

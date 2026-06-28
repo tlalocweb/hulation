@@ -5,7 +5,6 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,7 +24,6 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/rivo/tview"
 	bolt "go.etcd.io/bbolt"
-	"golang.org/x/crypto/curve25519"
 	"gopkg.in/yaml.v3"
 
 	"github.com/tlalocweb/hulation/client"
@@ -33,7 +31,6 @@ import (
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/model"
 	"github.com/tlalocweb/hulation/utils"
-	hulaopaque "github.com/tlalocweb/hulation/pkg/auth/opaque"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
 
@@ -193,10 +190,7 @@ type HulactlConfig struct {
 	// forget-opaque-record — explicit Bolt file path. No autodiscovery.
 	BoltPath           string                  `flag:"bolt" usage:"path to a hula Bolt file (forget-opaque-record only)"`
 	// genteamcerts — offline cert ceremony for HA Stage 3.
-	TeamCertsTeamID   string `flag:"team-id" usage:"team UUID for genteamcerts / team-status (auto-generated for genteamcerts if absent)"`
-	TeamCertsNodes    string `flag:"nodes" usage:"comma-separated node ids for genteamcerts"`
-	TeamCertsValidity string `flag:"validity" usage:"per-cert validity (Go duration, default 8760h)" default:"8760h"`
-	TeamCertsOut      string `flag:"out" usage:"output directory for genteamcerts bundle" default:"./team-bundles"`
+	TeamCertsTeamID   string `flag:"team-id" usage:"team UUID for team-status (genteamcerts moved to: hula genteamcerts)"`
 	// team-* — runtime cluster operations for HA Stage 3.
 	TeamToken         string `flag:"token" usage:"bootstrap_token (base64) for team-join"`
 	TeamPKIDir        string `flag:"pki-dir" usage:"directory holding ca.pem, cert.pem, key.pem for mTLS"`
@@ -1164,60 +1158,6 @@ func main() {
 		}
 		fmt.Printf("Sent SIGHUP to hula (pid %d) — config reload triggered\n", pid)
 
-	case CMD_TOTPKEY:
-		key, err := utils.GenerateTOTPEncryptionKey()
-		if err != nil {
-			fmt.Printf("Error generating key: %s\n", err.Error())
-			os.Exit(1)
-		}
-		fmt.Printf("TOTP encryption key: %s\n", key)
-		fmt.Printf("\nAdd to your hulation config:\n  totp_encryption_key: \"%s\"\n", key)
-
-	case CMD_NOISESTATICKEY:
-		privB64, pubB64, err := generateNoiseStaticKeyPair()
-		if err != nil {
-			fmt.Printf("Error generating key: %s\n", err.Error())
-			os.Exit(1)
-		}
-		fmt.Printf("Noise static private:  %s\n", privB64)
-		fmt.Printf("Noise static public:   %s\n", pubB64)
-		fmt.Printf("\nAdd to your hulation config:\n  noise_static_key: \"%s\"\n", privB64)
-		fmt.Printf("\nThe public key above is what `GET /api/v1/installation/identity`\nreturns — mobile clients pin it at pair time.\n")
-
-	case CMD_VISITORCHATKEY:
-		// Same 32-byte X25519 base64url shape as the Noise static key; the
-		// generator + derivation are identical, only the config field and
-		// purpose differ. Reuse the shared helper.
-		privB64, pubB64, err := generateNoiseStaticKeyPair()
-		if err != nil {
-			fmt.Printf("Error generating key: %s\n", err.Error())
-			os.Exit(1)
-		}
-		fmt.Printf("Visitor-chat private:  %s\n", privB64)
-		fmt.Printf("Visitor-chat public:   %s\n", pubB64)
-		fmt.Printf("\nAdd to your hulation config:\n  visitor_chat_key: \"%s\"\n", privB64)
-		fmt.Printf("\nThe public key above is published at\n`GET /api/v1/installation/identity` as visitor_chat_public_key_b64 —\nthe browser widget seals visitor messages to it.\n")
-
-	case CMD_OPAQUESEED:
-		// Generate fresh OPAQUE OPRF seed + AKE secret, both
-		// base64url-encoded. Operator pastes into config or env.
-		seed := hulaopaque.GenerateSeedB64()
-		akeSecret, err := hulaopaque.GenerateAKESecretB64()
-		if err != nil {
-			fmt.Printf("Error generating AKE secret: %s\n", err.Error())
-			os.Exit(1)
-		}
-		fmt.Printf("OPAQUE OPRF seed:  %s\n", seed)
-		fmt.Printf("OPAQUE AKE secret: %s\n", akeSecret)
-		fmt.Printf("\nAdd to your hulation config (or set env):\n")
-		fmt.Printf("  opaque:\n")
-		fmt.Printf("    oprf_seed: \"%s\"\n", seed)
-		fmt.Printf("    ake_secret: \"%s\"\n", akeSecret)
-		fmt.Printf("\nOR via env vars:\n")
-		fmt.Printf("  HULA_OPAQUE_OPRF_SEED=\"%s\"\n", seed)
-		fmt.Printf("  HULA_OPAQUE_AKE_SECRET=\"%s\"\n", akeSecret)
-		fmt.Printf("\nIMPORTANT: changing these invalidates every existing OPAQUE record.\n")
-
 	case CMD_FORGETOPAQUE:
 		// EMERGENCY recovery: delete an OPAQUE record directly from
 		// a Bolt file. hula MUST be stopped first (Bolt allows one
@@ -1309,9 +1249,6 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Rotated cookieless_salts[%s] (32 random bytes)\n", serverID)
-
-	case CMD_GENTEAMCERTS:
-		runGenTeamCerts(hulactlconfig)
 
 	case CMD_TEAM_INIT:
 		runTeamInit()
@@ -1892,30 +1829,4 @@ func main() {
 		printHelp()
 	}
 
-}
-
-// generateNoiseStaticKeyPair mints a fresh 32-byte X25519 private key (matching
-// the `noise_static_key` config field's wire format) and derives the matching
-// public via curve25519 scalar mult — the same derivation
-// server/installation_identity.go runs at request time. Returns both halves
-// base64url-no-pad encoded.
-//
-// Extracted from the CMD_NOISESTATICKEY case so the round-trip is unit-testable
-// without forking the binary.
-func generateNoiseStaticKeyPair() (privB64, pubB64 string, err error) {
-	privB64, err = utils.GenerateNoiseStaticKey()
-	if err != nil {
-		return "", "", err
-	}
-	privBytes, err := utils.DecodeNoiseStaticKey(privB64)
-	if err != nil {
-		// Should be impossible — Generate emits exactly what Decode accepts.
-		return "", "", fmt.Errorf("generated key does not round-trip: %w", err)
-	}
-	pubBytes, err := curve25519.X25519(privBytes, curve25519.Basepoint)
-	if err != nil {
-		return "", "", fmt.Errorf("derive public key: %w", err)
-	}
-	pubB64 = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(pubBytes)
-	return privB64, pubB64, nil
 }

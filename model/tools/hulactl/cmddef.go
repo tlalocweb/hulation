@@ -61,30 +61,17 @@ const (
 	CMD_UPDATEADMINHASH_USAGE = "updateadminhash\nRequires -hulaconf flag pointing to hulation config file"
 	CMD_RELOAD                = "reload"
 	CMD_RELOAD_HELP           = "Send SIGHUP to the running hula process to reload config"
-	CMD_TOTPKEY               = "totp-key"
-	CMD_TOTPKEY_HELP          = "Generate a TOTP encryption key for the config file"
-	CMD_NOISESTATICKEY        = "noise-static-key"
-	CMD_NOISESTATICKEY_HELP   = "Generate a Noise_IK static keypair for the chat-stream encryption (config: noise_static_key)"
-	CMD_NOISESTATICKEY_USAGE  = "noise-static-key\n\nGenerates a fresh 32-byte X25519 private key, base64url-encoded\n(no padding), suitable for the `noise_static_key:` field in\nhulation's config (or HULA_NOISE_STATIC_KEY env). Also prints the\nmatching public key so operators can pin it out-of-band on mobile\nclients (`HulaClient::setNoiseServerPublicKey`).\n\nThe printed values are stable secrets — store the private half in\nyour secrets manager and rotate by issuing a new pair and switching\nthe config. Existing mobile clients that pinned the old public will\nrefuse to open a Noise stream against the new key until they fetch\nthe new identity via GET /api/v1/installation/identity."
-	CMD_VISITORCHATKEY        = "visitor-chat-key"
-	CMD_VISITORCHATKEY_HELP   = "Generate a visitor-chat widget sealed-box keypair (config: visitor_chat_key)"
-	CMD_VISITORCHATKEY_USAGE  = "visitor-chat-key\n\nGenerates a fresh 32-byte X25519 private key, base64url-encoded\n(no padding), for the `visitor_chat_key:` field in hulation's config\n(or HULA_VISITOR_CHAT_KEY env). The browser chat widget seals visitor\nmessage content to the matching public key before the bytes hit HTTPS,\nso a TLS-inspecting middlebox sees only ciphertext. The public is\npublished at GET /api/v1/installation/identity as\nvisitor_chat_public_key_b64.\n\nDistinct from noise-static-key — separate keys keep the gRPC Noise_IK\nprotocol and the widget sealed-box protocol cryptographically\ndomain-separated. When unset, the widget falls back to plaintext\nchat (still functional, just not middlebox-opaque)."
 	CMD_TOTPSETUP             = "totp-setup"
 	CMD_TOTPSETUP_HELP        = "Set up TOTP for the admin user (interactive)"
 	CMD_SETPASSWORD           = "set-password"
 	CMD_SETPASSWORD_HELP      = "Set / rotate a password via OPAQUE PAKE registration. Defaults to admin."
 	CMD_SETPASSWORD_USAGE     = "set-password [--username admin] [--provider admin]\nPrompts for the new password (or reads HULACTL_NEW_PASSWORD).\nServer-side stores an OPAQUE registration record; the password\nitself is never sent over the wire."
-	CMD_OPAQUESEED            = "opaque-seed"
-	CMD_OPAQUESEED_HELP       = "Generate base64url OPAQUE OPRF seed + AKE secret for hula config"
 	CMD_FORGETOPAQUE          = "forget-opaque-record"
 	CMD_FORGETOPAQUE_HELP     = "EMERGENCY: delete an OPAQUE record from a Bolt file (offline recovery)"
 	CMD_FORGETOPAQUE_USAGE    = "hulactl --bolt <path> forget-opaque-record <provider> <username>\nUse only when the live admin password is lost. hula MUST be stopped first\n(Bolt allows only one process to hold the file open). Caller is responsible\nfor copy-out / edit / copy-back; this binary does the edit step.\nNote: flags MUST come BEFORE the command name (Go flag-package convention)."
 	CMD_ROTATECOOKIELESS       = "rotate-cookieless-salt"
 	CMD_ROTATECOOKIELESS_HELP  = "Replace the cookieless visitor-id salt for a server (Phase 4c.3)"
 	CMD_ROTATECOOKIELESS_USAGE = "hulactl --bolt <path> rotate-cookieless-salt <server_id>\nGenerates 32 fresh random bytes and stores them in the cookieless_salts\nbucket for <server_id>. Yesterday's visitors become unrecognisable today —\nthis is the correct behaviour for 'wipe everyone'. hula MUST be stopped\nfirst (Bolt single-writer)."
-	CMD_GENTEAMCERTS           = "genteamcerts"
-	CMD_GENTEAMCERTS_HELP      = "Generate a Team CA + per-node mTLS bundle + bootstrap token (HA Stage 3)"
-	CMD_GENTEAMCERTS_USAGE     = "hulactl genteamcerts --nodes <id1>,<id2>,... [--team-id <uuid>] [--validity 365d] [--out ./team-bundles]\nOffline ceremony — produces:\n  <out>/ca.pem            (deploy to every node)\n  <out>/ca.key            (operator-secured; do NOT deploy)\n  <out>/bootstrap-token   (32 random bytes, base64)\n  <out>/team-id\n  <out>/<node-id>/{cert.pem,key.pem,ca.pem}\nDistribute per-node bundles + bootstrap-token out-of-band (secrets manager)."
 	CMD_TEAM_INIT              = "team-init"
 	CMD_TEAM_INIT_HELP         = "Generate team_id + bootstrap_token bytes (offline ceremony)"
 	CMD_TEAM_INIT_USAGE        = "hulactl team-init\nOffline. Prints a fresh team_id (UUID) and bootstrap_token\n(base64). Operator stuffs both into the seed node's config\nbefore first boot. Doesn't talk to a running hula."
@@ -167,15 +154,10 @@ func init() {
 		Command{CMD_BADACTORS, CMD_BADACTORS_HELP, ""},
 		Command{CMD_UPDATEADMINHASH, CMD_UPDATEADMINHASH_HELP, CMD_UPDATEADMINHASH_USAGE},
 		Command{CMD_RELOAD, CMD_RELOAD_HELP, ""},
-		Command{CMD_TOTPKEY, CMD_TOTPKEY_HELP, ""},
-		Command{CMD_NOISESTATICKEY, CMD_NOISESTATICKEY_HELP, CMD_NOISESTATICKEY_USAGE},
-		Command{CMD_VISITORCHATKEY, CMD_VISITORCHATKEY_HELP, CMD_VISITORCHATKEY_USAGE},
 		Command{CMD_TOTPSETUP, CMD_TOTPSETUP_HELP, ""},
 		Command{CMD_SETPASSWORD, CMD_SETPASSWORD_HELP, CMD_SETPASSWORD_USAGE},
-		Command{CMD_OPAQUESEED, CMD_OPAQUESEED_HELP, ""},
 		Command{CMD_FORGETOPAQUE, CMD_FORGETOPAQUE_HELP, CMD_FORGETOPAQUE_USAGE},
 		Command{CMD_ROTATECOOKIELESS, CMD_ROTATECOOKIELESS_HELP, CMD_ROTATECOOKIELESS_USAGE},
-		Command{CMD_GENTEAMCERTS, CMD_GENTEAMCERTS_HELP, CMD_GENTEAMCERTS_USAGE},
 		Command{CMD_TEAM_INIT, CMD_TEAM_INIT_HELP, CMD_TEAM_INIT_USAGE},
 		Command{CMD_TEAM_JOIN, CMD_TEAM_JOIN_HELP, CMD_TEAM_JOIN_USAGE},
 		Command{CMD_TEAM_LEAVE, CMD_TEAM_LEAVE_HELP, CMD_TEAM_LEAVE_USAGE},
