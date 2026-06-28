@@ -10,6 +10,7 @@ package keytool
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -52,48 +53,57 @@ func indentOf(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " \t"))
 }
 
-// splitValueComment separates the value token from an optional trailing inline
-// comment. Quoted values end at the closing quote (everything after is comment,
-// preserved verbatim); unquoted values end at the first " #" sequence.
-func splitValueComment(rest string) (value, comment string) {
+// splitValue parses the text after "key:<gap>" into the value token's quote
+// style, the bare (unquoted) value, and the verbatim suffix — the inline comment
+// plus any trailing whitespace / "\r". Re-emitting prefix + requote(new, q) +
+// suffix therefore changes only the value's bytes, preserving the original
+// quoting, trailing spacing, and line ending.
+func splitValue(rest string) (q byte, value, suffix string) {
 	if rest == "" {
-		return "", ""
+		return 0, "", ""
 	}
 	switch rest[0] {
 	case '"', '\'':
-		q := rest[0]
-		if i := strings.IndexByte(rest[1:], q); i >= 0 {
+		if i := strings.IndexByte(rest[1:], rest[0]); i >= 0 {
 			end := 1 + i + 1 // past the closing quote
-			return rest[:end], rest[end:]
+			return rest[0], rest[1 : end-1], rest[end:]
 		}
-		// Unterminated quote — treat the whole remainder as the value.
-		return rest, ""
+		// Unterminated quote — treat as a bare value, no recognized quoting.
+		return 0, rest, ""
 	default:
+		// Unquoted: value runs to an inline comment (" #") if present;
+		// whitespace/"\r" before the comment or EOL goes into the suffix.
+		body, comment := rest, ""
 		if i := strings.Index(rest, " #"); i >= 0 {
-			return rest[:i], rest[i:]
+			body, comment = rest[:i], rest[i:]
 		}
-		return rest, ""
+		trimmed := strings.TrimRight(body, " \t\r")
+		return 0, trimmed, body[len(trimmed):] + comment
 	}
 }
 
-func unquote(v string) string {
-	v = strings.TrimSpace(v)
-	if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
-		return v[1 : len(v)-1]
+// requote re-emits val using the original token's quote style. The values these
+// commands write (base64 / base64url) contain only [A-Za-z0-9+/=_-], so the
+// single-quote escaping below never actually fires for them — it's there so the
+// helper stays correct for any caller.
+func requote(val string, q byte) string {
+	switch q {
+	case '"':
+		return `"` + val + `"`
+	case '\'':
+		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
+	default:
+		return val // unquoted in the original → leave unquoted
 	}
-	return v
 }
-
-// quote wraps v in double quotes. The values these commands write (base64 /
-// base64url) contain only [A-Za-z0-9+/=_-], none of which need escaping.
-func quote(v string) string { return `"` + v + `"` }
 
 // scalarLoc is a resolved target line ready to rewrite.
 type scalarLoc struct {
 	idx      int    // line index
 	curValue string // current (unquoted) value, for the force guard
 	prefix   string // everything up to and including the gap after the colon
-	comment  string // trailing inline comment (with leading spaces), preserved
+	quote    byte   // original value quoting: 0 (none), '\'', or '"'
+	suffix   string // verbatim tail: inline comment + trailing whitespace / "\r"
 }
 
 // findScalar locates keyPath within lines and returns where/how to rewrite it.
@@ -152,16 +162,17 @@ func findKeyInRange(lines []string, start, end int, key string, requireIndent bo
 		if !requireIndent && indent != "" {
 			continue
 		}
-		value, comment := splitValueComment(m[4])
-		if v := strings.TrimSpace(value); strings.HasPrefix(v, "|") || strings.HasPrefix(v, ">") ||
-			strings.HasPrefix(v, "[") || strings.HasPrefix(v, "{") {
+		q, value, suffix := splitValue(m[4])
+		if strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">") ||
+			strings.HasPrefix(value, "[") || strings.HasPrefix(value, "{") {
 			return scalarLoc{}, fmt.Errorf("%q has a block/flow value this tool won't rewrite", key)
 		}
 		return scalarLoc{
 			idx:      i,
-			curValue: unquote(value),
+			curValue: value,
 			prefix:   m[1] + m[2] + ":" + m[3],
-			comment:  comment,
+			quote:    q,
+			suffix:   suffix,
 		}, nil
 	}
 	return scalarLoc{}, fmt.Errorf("%q: %w", key, ErrKeyNotFound)
@@ -192,7 +203,7 @@ func SetScalarsInPlace(file string, edits []ScalarEdit, force bool, nowUnix int6
 	}
 
 	for i, e := range edits {
-		lines[locs[i].idx] = locs[i].prefix + quote(e.Value) + locs[i].comment
+		lines[locs[i].idx] = locs[i].prefix + requote(e.Value, locs[i].quote) + locs[i].suffix
 	}
 
 	mode := os.FileMode(0o600)
@@ -203,13 +214,31 @@ func SetScalarsInPlace(file string, edits []ScalarEdit, force bool, nowUnix int6
 	if werr := os.WriteFile(backupPath, data, mode); werr != nil {
 		return "", fmt.Errorf("write backup %s: %w", backupPath, werr)
 	}
-	tmp := file + ".tmp"
-	if werr := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")), mode); werr != nil {
+
+	// Write to a unique temp file in the same dir, then rename atomically.
+	// A fixed "<file>.tmp" path would be predictable — it could clobber an
+	// existing file or follow a symlink planted by another user (a real risk
+	// when this runs as root). CreateTemp makes an O_EXCL 0600 file with a
+	// random suffix; we chmod to the target mode and remove it on any failure.
+	dir := filepath.Dir(file)
+	tmpf, werr := os.CreateTemp(dir, "."+filepath.Base(file)+".tmp-*")
+	if werr != nil {
+		return "", fmt.Errorf("create temp: %w", werr)
+	}
+	tmpName := tmpf.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	if _, werr := tmpf.Write([]byte(strings.Join(lines, "\n"))); werr != nil {
+		tmpf.Close()
 		return "", fmt.Errorf("write temp: %w", werr)
 	}
-	if rerr := os.Rename(tmp, file); rerr != nil {
+	if werr := tmpf.Close(); werr != nil {
+		return "", fmt.Errorf("close temp: %w", werr)
+	}
+	if werr := os.Chmod(tmpName, mode); werr != nil {
+		return "", fmt.Errorf("chmod temp: %w", werr)
+	}
+	if rerr := os.Rename(tmpName, file); rerr != nil {
 		return "", fmt.Errorf("rename into place: %w", rerr)
 	}
-	_ = os.Chmod(file, mode)
 	return backupPath, nil
 }
