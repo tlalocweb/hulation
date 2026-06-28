@@ -863,7 +863,7 @@ reviewed and updated where necessary:
 | Suite | What changes |
 |-------|--------------|
 | `01-auth.sh` | `hulactl auth <url>` now calls the `LoginAdmin` gRPC method; the stored token format in `hulactl.yaml` is unchanged |
-| `02-admin.sh` | `generatehash`, `totp-key`, `reload` — same external interface; may invoke gRPC under the hood |
+| `02-admin.sh` | `generatehash`, `totp-key-update`, `reload` — same external interface; may invoke gRPC under the hood |
 | `03-users.sh` | `createuser`/`listusers`/`modifyuser`/`deleteuser` now go through `AuthService.CreateUser` etc. Response shapes change — assertions updated to match the new proto-generated JSON |
 | `04-forms.sh` | REST path changes: `/api/form/...` → `/api/v1/forms/...`. Direct curl assertions updated; hulactl-driven assertions untouched |
 | `05-landers.sh` | Same path shift |

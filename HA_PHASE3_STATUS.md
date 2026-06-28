@@ -45,7 +45,7 @@ handler/visitor.go writing through the gossip store, etc.).
 
 ## Summary of the Phase 3 rollout
 
-- **mTLS PKI from day one**. `hulactl genteamcerts` produces a
+- **mTLS PKI from day one**. `hula genteamcerts` produces a
   Team CA + per-node bundles + a base64 bootstrap_token. The CA
   private key never leaves the operator's secrets vault.
 - **All inter-node traffic on the unified HTTPS port (443)**. No
@@ -91,7 +91,7 @@ Commit: `8cac16c`
   `<team>/<node>.team.internal`.
 - `config.TeamConfig` gains `NodeHostname`, `BootstrapToken`,
   `PKI{CACert, NodeCert, NodeKey}`.
-- `hulactl genteamcerts`: offline ceremony — refuses to overwrite
+- `hula genteamcerts`: offline ceremony — refuses to overwrite
   a non-empty destination.
 
 ### Sub-stage 3.2 — Internal mTLS gRPC channel skeleton ✅
@@ -213,7 +213,7 @@ Commit: `d6fc3df`
 Commit: `<this commit>`
 
 - `test/e2e/team/run.sh`: top-level harness — generates the bundle
-  via `hulactl genteamcerts`, renders per-node configs, brings up
+  via `hula genteamcerts`, renders per-node configs, brings up
   the team compose project, polls for quorum, runs suites,
   tears down.
 - `test/e2e/team/docker-compose.team.yaml`: 3 hula nodes (east /
@@ -275,7 +275,7 @@ Verified in this session:
 - [x] `go test ./pkg/...` green across the new packages.
 - [x] `go vet ./...` clean.
 - [x] `make protobuf` regenerates cleanly (no uncommitted diff).
-- [x] `hulactl genteamcerts` round-trips through openssl-verify.
+- [x] `hula genteamcerts` round-trips through openssl-verify.
 - [x] `hulactl team-init` produces a fresh team_id + token.
 - [x] Solo deployments (no `team:` config) unaffected — every
       Phase 3 wire-up is gated on `cfg.Team.PKI` being non-nil.

@@ -17,6 +17,15 @@ import (
 )
 
 func main() {
+	// Key/secret subcommands (totp-key-update, jwt-key-update, …) run before
+	// the server boots and exit. Anything else (flags like -config) falls
+	// through to the normal server startup below.
+	if dispatchKeyCommand(os.Args[1:]) {
+		return
+	}
+
+	// Make the key/secret subcommands discoverable from `hula -h`.
+	installKeyCommandHelp()
 	app.ParseFlags()
 
 	fmt.Printf("Starting Hulation (%s) config: %s\n", config.Version, path.Clean(app.GetConfigPath()))

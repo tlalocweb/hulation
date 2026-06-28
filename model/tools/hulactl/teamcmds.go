@@ -43,7 +43,7 @@ func runTeamInit() {
 	fmt.Printf("  1. Set HULA_TEAM_BOOTSTRAP_TOKEN to the value above on every team node.\n")
 	fmt.Printf("  2. Configure team.team_id: %s in each node's hula config.\n", teamID)
 	fmt.Printf("  3. On the seed node only: team.bootstrap: first-of-team\n")
-	fmt.Printf("  4. Generate per-node certs with: hulactl genteamcerts --team-id %s --nodes <id1>,<id2>,...\n", teamID)
+	fmt.Printf("  4. Generate per-node certs with: hula genteamcerts --team-id %s --nodes <id1>,<id2>,...\n", teamID)
 }
 
 // runTeamJoin dials the leader's MembershipService.Join. Run on the
@@ -206,7 +206,7 @@ func runTeamRotateToken(cfg *HulactlConfig, argz []string) {
 
 // dialPeer opens an mTLS gRPC connection against a hula node's
 // unified listener. The PKI bundle dir must contain ca.pem,
-// cert.pem, and key.pem written by `hulactl genteamcerts`.
+// cert.pem, and key.pem written by `hula genteamcerts`.
 //
 // Uses pki.PeerDialTLSConfig so the SNI fires the listener's
 // internal-channel gate AND the chain verification works across

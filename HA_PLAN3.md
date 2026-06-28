@@ -64,7 +64,7 @@ Related docs: `HA_OUTLINE.md`, `HA_PLAN1.md`, `HA_PLAN2.md`,
      `team-rotate-bootstrap-token`.
 3. **Bootstrap-token authentication** for joins, layered on top
    of mTLS. Constant-time compare; rotatable.
-4. **`hulactl genteamcerts`** — generates a Team CA + per-node
+4. **`hula genteamcerts`** — generates a Team CA + per-node
    certs offline; operator distributes the bundles out-of-band.
 5. **Internal mTLS gRPC channel** (was Stage 4) — riding on the
    unified HTTPS listener (no separate port). Carries:
@@ -132,7 +132,7 @@ join via the CLI flow OR via a `peers:` list the operator
 pre-populated. After first run the operator changes
 `bootstrap: first-of-team` → `bootstrap: false` so a future
 restart doesn't re-bootstrap. The seed node is the source of the
-Team CA; its cert bundle was produced by `hulactl genteamcerts`.
+Team CA; its cert bundle was produced by `hula genteamcerts`.
 
 ### 2.3 Join (every other node)
 
@@ -201,17 +201,17 @@ clear error. The CLI exits non-zero on mismatch (Q24).
 
 ---
 
-## 3. PKI — `hulactl genteamcerts` and the join handshake
+## 3. PKI — `hula genteamcerts` and the join handshake
 
 mTLS is required from day one. The operator generates the Team
 CA and per-node certs offline using a new CLI command, then
 distributes them out-of-band (secrets manager, ansible-vault,
 1Password, etc.).
 
-### 3.1 `hulactl genteamcerts`
+### 3.1 `hula genteamcerts`
 
 ```
-hulactl genteamcerts \
+hula genteamcerts \
   --team-id 4f1a3c2d-... \
   --nodes node-east,node-west,node-emea \
   --validity 365d \
@@ -793,7 +793,7 @@ Response body on 503 lists which check failed:
 Same hulactl surface as the original plan, with one new command:
 
 ```
-hulactl genteamcerts                  - Offline. Generate Team CA + per-node bundles + bootstrap_token.
+hula genteamcerts                  - Offline. Generate Team CA + per-node bundles + bootstrap_token.
                                         Output dir contains everything operator needs to deploy.
                                         Operator distributes per-node bundles + token out-of-band.
 
@@ -835,7 +835,7 @@ full-time with ~30% calendar overhead.
 
 ### Sub-stage 3.1 — `genteamcerts` + PKI plumbing (2d)
 
-- `hulactl genteamcerts` command produces CA + per-node bundles.
+- `hula genteamcerts` command produces CA + per-node bundles.
 - `team.pki.{ca_cert,node_cert,node_key}` config wired through.
 - Unified listener accepts client certs + dispatches internal
   services behind a Team-CA-verified mTLS gate.
@@ -950,7 +950,7 @@ Total: ~22 working days = **~4.5 calendar weeks**.
 ### 14.2 E2e
 
 `41-team-formation.sh`:
-1. `hulactl genteamcerts` produces a 3-node bundle.
+1. `hula genteamcerts` produces a 3-node bundle.
 2. Bring up node-A as `bootstrap: first-of-team` (the CH-connected one).
 3. Bring up node-B and node-C as `bootstrap: false` with peers
    pointing at node-A.
@@ -1031,7 +1031,7 @@ Stages 1 + 2 contract tests pass against the multi-node-capable
 ### 15.5 Solo → Team upgrade path
 
 A running solo deployment becomes the seed of a Team:
-1. Operator runs `hulactl genteamcerts` for the planned node
+1. Operator runs `hula genteamcerts` for the planned node
    set (including the existing node's `node_id`).
 2. Drop the matching cert bundle on the existing node; flip
    config: `bootstrap: solo` → `bootstrap: first-of-team`,
@@ -1046,7 +1046,7 @@ A running solo deployment becomes the seed of a Team:
 
 ### 15.6 Cert rotation
 
-Year 1: certs expire 365d after `hulactl genteamcerts`. Operator
+Year 1: certs expire 365d after `hula genteamcerts`. Operator
 re-runs the command (with the same `--team-id`) to issue new
 bundles, distributes them, restarts each node sequentially. The
 Team CA itself can be rotated by issuing a new CA, cross-signing,
@@ -1058,7 +1058,7 @@ and rolling — runbook deferred to a follow-up doc.
 
 Stage 3 is done when:
 
-- [ ] `hulactl genteamcerts` produces a working bundle.
+- [ ] `hula genteamcerts` produces a working bundle.
 - [ ] `pkg/apispec/v1/membership/` proto + generated code in place.
 - [ ] `pkg/api/v1/membership/impl.go` implements Join/Leave/Status.
 - [ ] Internal gRPC channel mounted on the unified listener

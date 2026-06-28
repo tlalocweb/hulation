@@ -80,7 +80,7 @@ names from inside the runner container.
 `team-runner` generates the bundle once at suite-startup:
 
 ```
-hulactl genteamcerts \
+hula genteamcerts \
   --team-id $TEST_TEAM_ID \
   --nodes hula-east,hula-west,hula-emea \
   --validity 24h \

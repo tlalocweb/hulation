@@ -50,7 +50,7 @@ on a single suite while the stack is already up):
 
 2. **Run all suites** in order:
    - `01-auth` — hulactl auth flow (multi-server config)
-   - `02-admin` — generatehash, totp-key, reload
+   - `02-admin` — generatehash, totp-key-update, reload
    - `03-users` — user CRUD
    - `04-forms` — form CRUD + submit
    - `05-landers` — lander CRUD

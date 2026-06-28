@@ -166,7 +166,7 @@ func decodeAKEPrivate(raw []byte) (*ecc.Scalar, error) {
 }
 
 // GenerateSeedB64 returns a fresh OPAQUE OPRF seed encoded as
-// raw base64url — the format `hulactl opaque-seed` outputs and
+// raw base64url — the format `hula opaque-seed-update` outputs and
 // operators paste into config / env.
 func GenerateSeedB64() string {
 	cfg := opaque.DefaultConfiguration()

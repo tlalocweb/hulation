@@ -895,7 +895,7 @@ type Config struct {
 	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
 	JWTKey         string     `yaml:"jwt_key,omitempty"`
 	// Base64url-encoded 32-byte key for encrypting TOTP secrets at rest.
-	// Generate with: hulactl totp-key
+	// Generate with: hula totp-key-update
 	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
 	// Issuer name shown in authenticator apps (default: "Hulation")
 	TotpIssuer string `yaml:"totp_issuer,omitempty" default:"Hulation"`
@@ -903,14 +903,14 @@ type Config struct {
 	// Noise_IK responder static key for the gRPC chat stream. Mobile clients learn the
 	// matching public key during QR pairing or after OPAQUE login and will refuse to
 	// open a Noise session against any other server identity. Generate with:
-	// hulactl noise-static-key. When empty, plaintext gRPC streams still work but
+	// hula noise-static-key-update. When empty, plaintext gRPC streams still work but
 	// Noise-mode connections are rejected with a noise_unavailable error.
 	NoiseStaticKey string `yaml:"noise_static_key,omitempty" env:"HULA_NOISE_STATIC_KEY"`
 	// Base64url-encoded 32-byte X25519 private key the visitor chat widget seals
 	// message content to (app-layer encryption on top of HTTPS, so TLS-inspecting
 	// middleboxes can't read visitor email / chat). Distinct from NoiseStaticKey for
 	// crypto domain separation between the gRPC Noise_IK protocol and the widget
-	// sealed-box protocol. Generate with: hulactl visitor-chat-key. When empty, the
+	// sealed-box protocol. Generate with: hula visitor-chat-key-update. When empty, the
 	// widget falls back to plaintext (chat still works) and /installation/identity
 	// omits the visitor_chat_public_key_b64 field.
 	VisitorChatKey string `yaml:"visitor_chat_key,omitempty" env:"HULA_VISITOR_CHAT_KEY"`
