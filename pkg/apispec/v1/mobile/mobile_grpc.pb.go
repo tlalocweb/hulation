@@ -29,6 +29,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	MobileService_ListMobileSites_FullMethodName  = "/hulation.v1.mobile.MobileService/ListMobileSites"
 	MobileService_RegisterDevice_FullMethodName   = "/hulation.v1.mobile.MobileService/RegisterDevice"
 	MobileService_UnregisterDevice_FullMethodName = "/hulation.v1.mobile.MobileService/UnregisterDevice"
 	MobileService_ListMyDevices_FullMethodName    = "/hulation.v1.mobile.MobileService/ListMyDevices"
@@ -42,6 +43,10 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MobileServiceClient interface {
+	// ListMobileSites returns the configured Site IDs this caller can
+	// access. The app uses this to switch the analytics/chat server_id
+	// without changing the paired Hula installation or forcing relogin.
+	ListMobileSites(ctx context.Context, in *ListMobileSitesRequest, opts ...grpc.CallOption) (*ListMobileSitesResponse, error)
 	// RegisterDevice records an APNs / FCM token for the caller. The
 	// plaintext token is sealed in AES-GCM before persisting (see
 	// pkg/mobile/tokenbox). Idempotent: re-registering the same
@@ -75,6 +80,16 @@ type mobileServiceClient struct {
 
 func NewMobileServiceClient(cc grpc.ClientConnInterface) MobileServiceClient {
 	return &mobileServiceClient{cc}
+}
+
+func (c *mobileServiceClient) ListMobileSites(ctx context.Context, in *ListMobileSitesRequest, opts ...grpc.CallOption) (*ListMobileSitesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMobileSitesResponse)
+	err := c.cc.Invoke(ctx, MobileService_ListMobileSites_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *mobileServiceClient) RegisterDevice(ctx context.Context, in *RegisterDeviceRequest, opts ...grpc.CallOption) (*Device, error) {
@@ -151,6 +166,10 @@ func (c *mobileServiceClient) MobileLiveChats(ctx context.Context, in *MobileLiv
 // All implementations must embed UnimplementedMobileServiceServer
 // for forward compatibility.
 type MobileServiceServer interface {
+	// ListMobileSites returns the configured Site IDs this caller can
+	// access. The app uses this to switch the analytics/chat server_id
+	// without changing the paired Hula installation or forcing relogin.
+	ListMobileSites(context.Context, *ListMobileSitesRequest) (*ListMobileSitesResponse, error)
 	// RegisterDevice records an APNs / FCM token for the caller. The
 	// plaintext token is sealed in AES-GCM before persisting (see
 	// pkg/mobile/tokenbox). Idempotent: re-registering the same
@@ -186,6 +205,9 @@ type MobileServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMobileServiceServer struct{}
 
+func (UnimplementedMobileServiceServer) ListMobileSites(context.Context, *ListMobileSitesRequest) (*ListMobileSitesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListMobileSites not implemented")
+}
 func (UnimplementedMobileServiceServer) RegisterDevice(context.Context, *RegisterDeviceRequest) (*Device, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterDevice not implemented")
 }
@@ -226,6 +248,24 @@ func RegisterMobileServiceServer(s grpc.ServiceRegistrar, srv MobileServiceServe
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MobileService_ServiceDesc, srv)
+}
+
+func _MobileService_ListMobileSites_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMobileSitesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MobileServiceServer).ListMobileSites(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MobileService_ListMobileSites_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MobileServiceServer).ListMobileSites(ctx, req.(*ListMobileSitesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _MobileService_RegisterDevice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -361,6 +401,10 @@ var MobileService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "hulation.v1.mobile.MobileService",
 	HandlerType: (*MobileServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListMobileSites",
+			Handler:    _MobileService_ListMobileSites_Handler,
+		},
 		{
 			MethodName: "RegisterDevice",
 			Handler:    _MobileService_RegisterDevice_Handler,

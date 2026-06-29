@@ -37,7 +37,7 @@ func makeServer(t *testing.T) (*Server, context.Context) {
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		t.Fatalf("rand key: %s", err)
 	}
-	srv := New(nil, nil, nil, nil, func() ([]byte, error) { return key, nil })
+	srv := New(nil, nil, nil, nil, nil, func() ([]byte, error) { return key, nil })
 
 	ctx := context.WithValue(context.Background(), authware.ClaimsKey,
 		&authware.Claims{Username: "test-user"})

@@ -22,35 +22,35 @@ import (
 	"github.com/tlalocweb/hulation/handler"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
-	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
-	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
-	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
 	alertsimpl "github.com/tlalocweb/hulation/pkg/api/v1/alerts"
 	analyticsimpl "github.com/tlalocweb/hulation/pkg/api/v1/analytics"
-	chatimpl "github.com/tlalocweb/hulation/pkg/api/v1/chat"
-	mobileimpl "github.com/tlalocweb/hulation/pkg/api/v1/mobile"
-	notifyimpl "github.com/tlalocweb/hulation/pkg/api/v1/notify"
 	authimpl "github.com/tlalocweb/hulation/pkg/api/v1/auth"
 	badactorimpl "github.com/tlalocweb/hulation/pkg/api/v1/badactor"
+	chatimpl "github.com/tlalocweb/hulation/pkg/api/v1/chat"
 	formsimpl "github.com/tlalocweb/hulation/pkg/api/v1/forms"
 	goalsimpl "github.com/tlalocweb/hulation/pkg/api/v1/goals"
 	landersimpl "github.com/tlalocweb/hulation/pkg/api/v1/landers"
+	mobileimpl "github.com/tlalocweb/hulation/pkg/api/v1/mobile"
+	notifyimpl "github.com/tlalocweb/hulation/pkg/api/v1/notify"
 	reportsimpl "github.com/tlalocweb/hulation/pkg/api/v1/reports"
 	siteimpl "github.com/tlalocweb/hulation/pkg/api/v1/site"
 	stagingimpl "github.com/tlalocweb/hulation/pkg/api/v1/staging"
+	statusimpl "github.com/tlalocweb/hulation/pkg/api/v1/status"
 	alertsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/alerts"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
-	chatspec "github.com/tlalocweb/hulation/pkg/apispec/v1/chat"
-	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
-	notifyspec "github.com/tlalocweb/hulation/pkg/apispec/v1/notify"
 	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	badactorspec "github.com/tlalocweb/hulation/pkg/apispec/v1/badactor"
+	chatspec "github.com/tlalocweb/hulation/pkg/apispec/v1/chat"
 	formsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/forms"
 	goalsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/goals"
 	landersspec "github.com/tlalocweb/hulation/pkg/apispec/v1/landers"
+	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
+	notifyspec "github.com/tlalocweb/hulation/pkg/apispec/v1/notify"
 	reportsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/reports"
 	sitespec "github.com/tlalocweb/hulation/pkg/apispec/v1/site"
 	stagingspec "github.com/tlalocweb/hulation/pkg/apispec/v1/staging"
+	statusspec "github.com/tlalocweb/hulation/pkg/apispec/v1/status"
+	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 	authprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider"
 	baseprovider "github.com/tlalocweb/hulation/pkg/server/authware/provider/base"
@@ -369,6 +369,7 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		analyticsSvc.Timeseries,
 		analyticsSvc.Pages,
 		chatStore,
+		cfg,
 		func() ([]byte, error) {
 			return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
 		},
@@ -567,4 +568,3 @@ func initProviderManager(cfg *config.Config) error {
 	}
 	return nil
 }
-
