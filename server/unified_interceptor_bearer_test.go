@@ -350,6 +350,88 @@ func TestBuildBearerClaims_TotpPending_FlaggedAndNotAdmin(t *testing.T) {
 	}
 }
 
+// A totp_pending bearer must be rejected on any method outside the
+// TOTP-completion allowlist — the password passed but the second factor
+// hasn't, so it is not a full session. gRPC path.
+func TestGRPC_TotpPendingBearer_BlockedOnProtectedMethod(t *testing.T) {
+	setupBearerTestDB(t)
+	pending, err := model.NewTotpPendingToken(model.GetDB(), "admin")
+	if err != nil {
+		t.Fatalf("issue totp-pending token: %v", err)
+	}
+	interceptor := AdminBearerInterceptor(nil)
+	called := false
+	_, err = interceptor(bearerMD(pending),
+		nil,
+		&grpc.UnaryServerInfo{FullMethod: authspec.AuthService_RefreshToken_FullMethodName},
+		func(ctx context.Context, req any) (any, error) { called = true; return nil, nil })
+	if called {
+		t.Fatal("totp_pending token reached a protected method")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("want PermissionDenied, got %v", err)
+	}
+}
+
+// The same token IS allowed on a TOTP-completion method, with claims
+// carrying the pending flag so the handler knows it's limited.
+func TestGRPC_TotpPendingBearer_AllowedOnTotpValidate(t *testing.T) {
+	setupBearerTestDB(t)
+	pending, err := model.NewTotpPendingToken(model.GetDB(), "admin")
+	if err != nil {
+		t.Fatalf("issue totp-pending token: %v", err)
+	}
+	interceptor := AdminBearerInterceptor(nil)
+	var got *authware.Claims
+	_, err = interceptor(bearerMD(pending),
+		nil,
+		&grpc.UnaryServerInfo{FullMethod: authspec.AuthService_TotpValidate_FullMethodName},
+		func(ctx context.Context, req any) (any, error) {
+			got, _ = ctx.Value(authware.ClaimsKey).(*authware.Claims)
+			return nil, nil
+		})
+	if err != nil {
+		t.Fatalf("totp_pending token rejected on an allowed method: %v", err)
+	}
+	if got == nil || !got.IsTotpPendingToken() {
+		t.Fatalf("expected pending claims on the allowed method, got %+v", got)
+	}
+}
+
+// HTTP path: a totp_pending bearer on a protected (non-allowlisted) route
+// gets 403, and the handler never runs.
+func TestHTTP_TotpPendingBearer_BlockedOnProtectedRoute(t *testing.T) {
+	setupBearerTestDB(t)
+	pending, err := model.NewTotpPendingToken(model.GetDB(), "admin")
+	if err != nil {
+		t.Fatalf("issue totp-pending token: %v", err)
+	}
+	w, rec := doBearerRequest(t, "GET", "/api/v1/auth/me/permissions", pending)
+	if rec.called {
+		t.Fatal("totp_pending token reached a protected route")
+	}
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+// HTTP path: the same token passes through on WhoAmI (allowlisted) so the
+// client can read its state while completing TOTP.
+func TestHTTP_TotpPendingBearer_AllowedOnWhoami(t *testing.T) {
+	setupBearerTestDB(t)
+	pending, err := model.NewTotpPendingToken(model.GetDB(), "admin")
+	if err != nil {
+		t.Fatalf("issue totp-pending token: %v", err)
+	}
+	_, rec := doBearerRequest(t, "GET", "/api/v1/auth/whoami", pending)
+	if !rec.called {
+		t.Fatal("totp_pending token should reach WhoAmI")
+	}
+	if rec.claims == nil || !rec.claims.IsTotpPendingToken() {
+		t.Fatalf("expected pending claims at WhoAmI, got %+v", rec.claims)
+	}
+}
+
 func hasRoleStr(roles []string, want string) bool {
 	for _, r := range roles {
 		if r == want {

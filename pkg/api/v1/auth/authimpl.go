@@ -732,10 +732,15 @@ func (s *Server) TotpValidate(ctx context.Context, req *authspec.TotpValidateReq
 		}
 	}
 
-	// Issue a full JWT (admin flag — LoginAdmin sets it; TOTP validation
-	// upgrades the totp_pending token to a full one with the same admin
-	// privilege).
-	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), username, &model.LoginOpts{IsAdmin: true})
+	// Upgrade the totp_pending token to a full JWT. Derive the admin flag
+	// from identity — hardcoding IsAdmin:true would escalate an internal
+	// user who validates TOTP to admin. Only the configured admin user
+	// gets the admin claim.
+	isAdmin := false
+	if cfg := config.GetConfig(); cfg != nil && cfg.Admin != nil && cfg.Admin.Username == username {
+		isAdmin = true
+	}
+	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), username, &model.LoginOpts{IsAdmin: isAdmin})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "issue jwt: %v", err)
 	}

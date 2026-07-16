@@ -248,8 +248,34 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	// Best-effort: bump LastSuccessLogin on the record.
 	_ = hulabolt.MarkOpaqueLoginSuccess(ctx, storage.Global(), finish.Provider, finish.Username)
 
-	// Issue JWT — admin gets the admin claim, everyone else gets a user JWT.
 	isAdmin := finish.Provider == providerAdmin
+
+	// TOTP gate: the password check succeeded, but if this user has TOTP
+	// enabled (or is the admin and config mandates it) we must NOT hand
+	// out a full session yet. Issue a short-lived, limited totp_pending
+	// token and set totp_required so the client completes the second
+	// factor via TotpValidate. The pending token is scoped to the
+	// TOTP-completion endpoints by the bearer interceptors.
+	if totpRequiredForLogin(finish.Username, finish.Provider) {
+		pending, err := model.NewTotpPendingToken(model.GetDB(), finish.Username)
+		if err != nil {
+			aLog.Errorf("OPAQUE LoginFinish: totp-pending token issue: %v", err)
+			return nil, status.Errorf(codes.Internal, "issue totp token: %v", err)
+		}
+		resp := &authspec.OpaqueLoginFinishResponse{TotpRequired: true}
+		// The client reads admintoken-then-token as the bearer regardless
+		// of totp_required, so populate the same field the full JWT would
+		// have used.
+		if isAdmin {
+			resp.Admintoken = pending
+		} else {
+			resp.Token = pending
+		}
+		aLog.Infof("OPAQUE: password OK, TOTP required %s|%s", finish.Provider, finish.Username)
+		return resp, nil
+	}
+
+	// No TOTP — issue the full JWT. Admin gets the admin claim.
 	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), finish.Username, &model.LoginOpts{
 		IsAdmin: isAdmin,
 	})
@@ -265,4 +291,21 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	}
 	aLog.Infof("OPAQUE: login OK %s|%s", finish.Provider, finish.Username)
 	return resp, nil
+}
+
+// totpRequiredForLogin reports whether a successful password login must be
+// followed by TOTP validation before a full session is issued. Mirrors
+// handler.CheckTotpRequired: any user with an enabled TOTP record must
+// validate; the admin must also validate (to enroll) when config sets
+// admin.totp_required even before enrollment.
+func totpRequiredForLogin(username, provider string) bool {
+	if rec, err := model.GetAdminTotp(model.GetDB(), username); err == nil && rec != nil && rec.TotpEnabled {
+		return true
+	}
+	if provider == providerAdmin {
+		if cfg := config.GetConfig(); cfg != nil && cfg.Admin != nil && cfg.Admin.TotpRequired {
+			return true
+		}
+	}
+	return false
 }
