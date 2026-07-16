@@ -188,7 +188,10 @@ func (s *Server) WhoAmI(ctx context.Context, req *authspec.WhoAmIRequest) (*auth
 		IsAdmin:        hasRole(claims.Roles, "admin") || hasRole(claims.Roles, "root"),
 	}
 	if claims.ExpiresAt != nil {
-		resp.TokenExpires = claims.ExpiresAt.Time.Format("2006-01-02T15:04:05Z07:00")
+		// Normalized to UTC: jwt decodes `exp` into the server's local
+		// zone, and clients comparing against "now" shouldn't care what
+		// TZ the server happens to run in.
+		resp.TokenExpires = claims.ExpiresAt.Time.UTC().Format(time.RFC3339)
 	}
 	return resp, nil
 }
@@ -210,6 +213,15 @@ func (s *Server) GetMyPermissions(ctx context.Context, req *authspec.GetMyPermis
 func hasRole(roles []string, want string) bool {
 	for _, r := range roles {
 		if r == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPermission(perms []string, want string) bool {
+	for _, p := range perms {
+		if p == want {
 			return true
 		}
 	}
@@ -444,6 +456,19 @@ func (s *Server) RefreshToken(ctx context.Context, req *authspec.RefreshTokenReq
 	claims, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
 	if !ok || claims == nil {
 		return nil, status.Error(codes.Unauthenticated, "no claims in context")
+	}
+	// A totp_pending token is not a full session — refreshing it would
+	// mint a full-privilege token without the second factor ever being
+	// entered. The pending token's only valid use is TotpValidate.
+	if hasPermission(claims.Permissions, "totp_pending") {
+		return nil, status.Error(codes.Unauthenticated, "TOTP validation pending; cannot refresh")
+	}
+	// Defense in depth: the bearer interceptors reject expired tokens
+	// before claims are ever injected (jwt parse fails on `exp`), so an
+	// expired ExpiresAt should never reach here — but an expired session
+	// must never be refreshable, so check anyway.
+	if claims.ExpiresAt != nil && time.Now().After(claims.ExpiresAt.Time) {
+		return nil, status.Error(codes.Unauthenticated, "token expired")
 	}
 	var userid string
 	if claims.Username != "" {
