@@ -131,6 +131,11 @@ func buildBearerClaims(token string) (*authware.Claims, error) {
 		Username:    perms.UserID,
 		Roles:       roles,
 		Permissions: perms.ListCaps(),
+		// Carry the limited-token flag through so authware's middleware
+		// (Claims.IsTotpPendingToken) enforces the same restrictions on
+		// this path as everywhere else — a totp_pending token must not
+		// reach TOTP-gated RPCs on the unified server either.
+		TotpPending: totpPending,
 	}
 	// Carry the verified standard claims through — ExpiresAt drives
 	// WhoAmI's token_expires and the mobile app's proactive refresh.

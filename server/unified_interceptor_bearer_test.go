@@ -328,6 +328,28 @@ func TestGRPC_ValidBearer_ClaimsCarryExpiresAt(t *testing.T) {
 	}
 }
 
+// A totp_pending token converted to authware.Claims must carry
+// TotpPending=true (so authware's middleware still gates it) and must NOT
+// receive the admin role, even for the admin user — otherwise it could
+// reach admin-gated RPCs without the second factor.
+func TestBuildBearerClaims_TotpPending_FlaggedAndNotAdmin(t *testing.T) {
+	setupBearerTestDB(t)
+	token, err := model.NewTotpPendingToken(model.GetDB(), "admin")
+	if err != nil {
+		t.Fatalf("issue totp-pending token: %v", err)
+	}
+	claims, err := buildBearerClaims(token)
+	if err != nil || claims == nil {
+		t.Fatalf("totp-pending token should verify into claims: %v", err)
+	}
+	if !claims.TotpPending || !claims.IsTotpPendingToken() {
+		t.Fatalf("TotpPending must survive conversion, got %+v", claims)
+	}
+	if hasRoleStr(claims.Roles, "admin") {
+		t.Fatalf("totp-pending token must not carry admin role: %+v", claims.Roles)
+	}
+}
+
 func hasRoleStr(roles []string, want string) bool {
 	for _, r := range roles {
 		if r == want {
