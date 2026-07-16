@@ -1,7 +1,7 @@
 #!/bin/bash
 # Suite 29: Mobile-tuned APIs.
 #
-# Exercises /api/mobile/v1/summary + /timeseries + devices CRUD.
+# Exercises /api/mobile/v1/sites + /summary + /timeseries + devices CRUD.
 # Asserts payload shape + size budgets for phone-network friendliness.
 
 SERVER_ID="testsite-seed"
@@ -15,6 +15,22 @@ if [ -z "$admin_token" ]; then
 fi
 
 auth_hdr="Authorization: Bearer ${admin_token}"
+
+# --- 0. Authorized Site ID list --------------------------------------
+
+sites_body=$(curl_test -s -H "$auth_hdr" \
+    "https://${HULA_HOST}/api/mobile/v1/sites" || true)
+sites_status=$(curl_test -s -o /dev/null -w '%{http_code}' -H "$auth_hdr" \
+    "https://${HULA_HOST}/api/mobile/v1/sites" || true)
+
+if [ "$sites_status" = "200" ]; then
+    pass "ListMobileSites returns 200"
+else
+    fail "ListMobileSites unexpected status ${sites_status}" "$(echo "$sites_body" | head -c 160)"
+fi
+assert_contains "$sites_body" '"sites"' "ListMobileSites has sites field"
+assert_contains "$sites_body" "$SERVER_ID" "ListMobileSites includes ${SERVER_ID}"
+assert_contains "$sites_body" '"current_server_id"' "ListMobileSites has current_server_id"
 
 # --- 1. Summary shape + size -----------------------------------------
 

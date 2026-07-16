@@ -56,9 +56,9 @@ type StoredDevice struct {
 	NoiseEncryptionPub string `json:"noise_encryption_pub,omitempty"`
 }
 
-func deviceKey(id string) string                 { return "mobile_devices/" + id }
-func notifSendKey(id string) string              { return "notification_sends/" + id }
-func notifPrefsKey(userID string) string         { return "notification_prefs/" + userID }
+func deviceKey(id string) string         { return "mobile_devices/" + id }
+func notifSendKey(id string) string      { return "notification_sends/" + id }
+func notifPrefsKey(userID string) string { return "notification_prefs/" + userID }
 
 // PutDevice upserts. Idempotent by (user_id, device_fingerprint)
 // when the caller re-uses an existing ID; otherwise a new row.
@@ -267,6 +267,29 @@ func GetNotificationPrefs(ctx context.Context, s storage.Storage, userID string)
 		return DefaultPrefs(userID), uerr
 	}
 	return out, nil
+}
+
+// EnsureNotificationPrefsForDeviceRegistration makes a newly registered device
+// eligible for push fanout without overriding a user's explicit notification
+// choice. If a prefs row already exists, it is preserved exactly.
+func EnsureNotificationPrefsForDeviceRegistration(ctx context.Context, s storage.Storage, userID string) error {
+	if s == nil {
+		return ErrNotOpen
+	}
+	if userID == "" {
+		return fmt.Errorf("notification prefs: user_id required")
+	}
+	if _, err := s.Get(ctx, notifPrefsKey(userID)); err == nil {
+		return nil
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+	_, err := PutNotificationPrefs(ctx, s, StoredNotificationPrefs{
+		UserID:       userID,
+		EmailEnabled: true,
+		PushEnabled:  true,
+	})
+	return err
 }
 
 // ListNotificationPrefs returns every prefs row. Used by the admin

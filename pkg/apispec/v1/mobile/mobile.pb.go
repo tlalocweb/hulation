@@ -83,6 +83,154 @@ func (Platform) EnumDescriptor() ([]byte, []int) {
 	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{0}
 }
 
+type ListMobileSitesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMobileSitesRequest) Reset() {
+	*x = ListMobileSitesRequest{}
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMobileSitesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMobileSitesRequest) ProtoMessage() {}
+
+func (x *ListMobileSitesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMobileSitesRequest.ProtoReflect.Descriptor instead.
+func (*ListMobileSitesRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{0}
+}
+
+type MobileSite struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MobileSite) Reset() {
+	*x = MobileSite{}
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MobileSite) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MobileSite) ProtoMessage() {}
+
+func (x *MobileSite) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MobileSite.ProtoReflect.Descriptor instead.
+func (*MobileSite) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MobileSite) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *MobileSite) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *MobileSite) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type ListMobileSitesResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Sites           []*MobileSite          `protobuf:"bytes,1,rep,name=sites,proto3" json:"sites,omitempty"`
+	CurrentServerId string                 `protobuf:"bytes,2,opt,name=current_server_id,json=currentServerId,proto3" json:"current_server_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ListMobileSitesResponse) Reset() {
+	*x = ListMobileSitesResponse{}
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMobileSitesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMobileSitesResponse) ProtoMessage() {}
+
+func (x *ListMobileSitesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMobileSitesResponse.ProtoReflect.Descriptor instead.
+func (*ListMobileSitesResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ListMobileSitesResponse) GetSites() []*MobileSite {
+	if x != nil {
+		return x.Sites
+	}
+	return nil
+}
+
+func (x *ListMobileSitesResponse) GetCurrentServerId() string {
+	if x != nil {
+		return x.CurrentServerId
+	}
+	return ""
+}
+
 type Device struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -103,7 +251,7 @@ type Device struct {
 
 func (x *Device) Reset() {
 	*x = Device{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[0]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -115,7 +263,7 @@ func (x *Device) String() string {
 func (*Device) ProtoMessage() {}
 
 func (x *Device) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[0]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -128,7 +276,7 @@ func (x *Device) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Device.ProtoReflect.Descriptor instead.
 func (*Device) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{0}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Device) GetId() string {
@@ -219,7 +367,7 @@ type RegisterDeviceRequest struct {
 
 func (x *RegisterDeviceRequest) Reset() {
 	*x = RegisterDeviceRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[1]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +379,7 @@ func (x *RegisterDeviceRequest) String() string {
 func (*RegisterDeviceRequest) ProtoMessage() {}
 
 func (x *RegisterDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[1]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +392,7 @@ func (x *RegisterDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterDeviceRequest.ProtoReflect.Descriptor instead.
 func (*RegisterDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{1}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RegisterDeviceRequest) GetPlatform() Platform {
@@ -305,7 +453,7 @@ type UnregisterDeviceRequest struct {
 
 func (x *UnregisterDeviceRequest) Reset() {
 	*x = UnregisterDeviceRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[2]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -317,7 +465,7 @@ func (x *UnregisterDeviceRequest) String() string {
 func (*UnregisterDeviceRequest) ProtoMessage() {}
 
 func (x *UnregisterDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[2]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -330,7 +478,7 @@ func (x *UnregisterDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnregisterDeviceRequest.ProtoReflect.Descriptor instead.
 func (*UnregisterDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{2}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UnregisterDeviceRequest) GetDeviceId() string {
@@ -349,7 +497,7 @@ type UnregisterDeviceResponse struct {
 
 func (x *UnregisterDeviceResponse) Reset() {
 	*x = UnregisterDeviceResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[3]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -361,7 +509,7 @@ func (x *UnregisterDeviceResponse) String() string {
 func (*UnregisterDeviceResponse) ProtoMessage() {}
 
 func (x *UnregisterDeviceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[3]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -374,7 +522,7 @@ func (x *UnregisterDeviceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnregisterDeviceResponse.ProtoReflect.Descriptor instead.
 func (*UnregisterDeviceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{3}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UnregisterDeviceResponse) GetOk() bool {
@@ -392,7 +540,7 @@ type ListMyDevicesRequest struct {
 
 func (x *ListMyDevicesRequest) Reset() {
 	*x = ListMyDevicesRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[4]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -404,7 +552,7 @@ func (x *ListMyDevicesRequest) String() string {
 func (*ListMyDevicesRequest) ProtoMessage() {}
 
 func (x *ListMyDevicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[4]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -417,7 +565,7 @@ func (x *ListMyDevicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMyDevicesRequest.ProtoReflect.Descriptor instead.
 func (*ListMyDevicesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{4}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{7}
 }
 
 type ListMyDevicesResponse struct {
@@ -429,7 +577,7 @@ type ListMyDevicesResponse struct {
 
 func (x *ListMyDevicesResponse) Reset() {
 	*x = ListMyDevicesResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[5]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -441,7 +589,7 @@ func (x *ListMyDevicesResponse) String() string {
 func (*ListMyDevicesResponse) ProtoMessage() {}
 
 func (x *ListMyDevicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[5]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -454,7 +602,7 @@ func (x *ListMyDevicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMyDevicesResponse.ProtoReflect.Descriptor instead.
 func (*ListMyDevicesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{5}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListMyDevicesResponse) GetDevices() []*Device {
@@ -477,7 +625,7 @@ type MobileSummaryRequest struct {
 
 func (x *MobileSummaryRequest) Reset() {
 	*x = MobileSummaryRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[6]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -489,7 +637,7 @@ func (x *MobileSummaryRequest) String() string {
 func (*MobileSummaryRequest) ProtoMessage() {}
 
 func (x *MobileSummaryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[6]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -502,7 +650,7 @@ func (x *MobileSummaryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileSummaryRequest.ProtoReflect.Descriptor instead.
 func (*MobileSummaryRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{6}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *MobileSummaryRequest) GetServerId() string {
@@ -533,7 +681,7 @@ type MobileSummaryResponse struct {
 
 func (x *MobileSummaryResponse) Reset() {
 	*x = MobileSummaryResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[7]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -545,7 +693,7 @@ func (x *MobileSummaryResponse) String() string {
 func (*MobileSummaryResponse) ProtoMessage() {}
 
 func (x *MobileSummaryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[7]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -558,7 +706,7 @@ func (x *MobileSummaryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileSummaryResponse.ProtoReflect.Descriptor instead.
 func (*MobileSummaryResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{7}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *MobileSummaryResponse) GetVisitors() int64 {
@@ -609,7 +757,7 @@ type MobileTimeseriesRequest struct {
 
 func (x *MobileTimeseriesRequest) Reset() {
 	*x = MobileTimeseriesRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[8]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +769,7 @@ func (x *MobileTimeseriesRequest) String() string {
 func (*MobileTimeseriesRequest) ProtoMessage() {}
 
 func (x *MobileTimeseriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[8]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +782,7 @@ func (x *MobileTimeseriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileTimeseriesRequest.ProtoReflect.Descriptor instead.
 func (*MobileTimeseriesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{8}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *MobileTimeseriesRequest) GetServerId() string {
@@ -671,7 +819,7 @@ type MobileTimeseriesResponse struct {
 
 func (x *MobileTimeseriesResponse) Reset() {
 	*x = MobileTimeseriesResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[9]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -683,7 +831,7 @@ func (x *MobileTimeseriesResponse) String() string {
 func (*MobileTimeseriesResponse) ProtoMessage() {}
 
 func (x *MobileTimeseriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[9]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -696,7 +844,7 @@ func (x *MobileTimeseriesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileTimeseriesResponse.ProtoReflect.Descriptor instead.
 func (*MobileTimeseriesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{9}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *MobileTimeseriesResponse) GetTs() []string {
@@ -733,7 +881,7 @@ type MobileTopPagesRequest struct {
 
 func (x *MobileTopPagesRequest) Reset() {
 	*x = MobileTopPagesRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[10]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -745,7 +893,7 @@ func (x *MobileTopPagesRequest) String() string {
 func (*MobileTopPagesRequest) ProtoMessage() {}
 
 func (x *MobileTopPagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[10]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -758,7 +906,7 @@ func (x *MobileTopPagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileTopPagesRequest.ProtoReflect.Descriptor instead.
 func (*MobileTopPagesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{10}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *MobileTopPagesRequest) GetServerId() string {
@@ -793,7 +941,7 @@ type MobileTopPage struct {
 
 func (x *MobileTopPage) Reset() {
 	*x = MobileTopPage{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[11]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -805,7 +953,7 @@ func (x *MobileTopPage) String() string {
 func (*MobileTopPage) ProtoMessage() {}
 
 func (x *MobileTopPage) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[11]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +966,7 @@ func (x *MobileTopPage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileTopPage.ProtoReflect.Descriptor instead.
 func (*MobileTopPage) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{11}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *MobileTopPage) GetPath() string {
@@ -851,7 +999,7 @@ type MobileTopPagesResponse struct {
 
 func (x *MobileTopPagesResponse) Reset() {
 	*x = MobileTopPagesResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[12]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -863,7 +1011,7 @@ func (x *MobileTopPagesResponse) String() string {
 func (*MobileTopPagesResponse) ProtoMessage() {}
 
 func (x *MobileTopPagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[12]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -876,7 +1024,7 @@ func (x *MobileTopPagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileTopPagesResponse.ProtoReflect.Descriptor instead.
 func (*MobileTopPagesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{12}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *MobileTopPagesResponse) GetPages() []*MobileTopPage {
@@ -895,7 +1043,7 @@ type MobileLiveChatsRequest struct {
 
 func (x *MobileLiveChatsRequest) Reset() {
 	*x = MobileLiveChatsRequest{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[13]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +1055,7 @@ func (x *MobileLiveChatsRequest) String() string {
 func (*MobileLiveChatsRequest) ProtoMessage() {}
 
 func (x *MobileLiveChatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[13]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1068,7 @@ func (x *MobileLiveChatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileLiveChatsRequest.ProtoReflect.Descriptor instead.
 func (*MobileLiveChatsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{13}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MobileLiveChatsRequest) GetServerId() string {
@@ -946,7 +1094,7 @@ type MobileLiveChatsResponse struct {
 
 func (x *MobileLiveChatsResponse) Reset() {
 	*x = MobileLiveChatsResponse{}
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[14]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -958,7 +1106,7 @@ func (x *MobileLiveChatsResponse) String() string {
 func (*MobileLiveChatsResponse) ProtoMessage() {}
 
 func (x *MobileLiveChatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[14]
+	mi := &file_pkg_apispec_v1_mobile_mobile_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -971,7 +1119,7 @@ func (x *MobileLiveChatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MobileLiveChatsResponse.ProtoReflect.Descriptor instead.
 func (*MobileLiveChatsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{14}
+	return file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *MobileLiveChatsResponse) GetAwaitingReply() int32 {
@@ -999,7 +1147,16 @@ var File_pkg_apispec_v1_mobile_mobile_proto protoreflect.FileDescriptor
 
 const file_pkg_apispec_v1_mobile_mobile_proto_rawDesc = "" +
 	"\n" +
-	"\"pkg/apispec/v1/mobile/mobile.proto\x12\x12hulation.v1.mobile\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc7\x02\n" +
+	"\"pkg/apispec/v1/mobile/mobile.proto\x12\x12hulation.v1.mobile\x1a\x1cgoogle/api/annotations.proto\x1a\x1ahula/auth/permission.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x18\n" +
+	"\x16ListMobileSitesRequest\"D\n" +
+	"\n" +
+	"MobileSite\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"{\n" +
+	"\x17ListMobileSitesResponse\x124\n" +
+	"\x05sites\x18\x01 \x03(\v2\x1e.hulation.v1.mobile.MobileSiteR\x05sites\x12*\n" +
+	"\x11current_server_id\x18\x02 \x01(\tR\x0fcurrentServerId\"\xc7\x02\n" +
 	"\x06Device\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x128\n" +
@@ -1062,8 +1219,10 @@ const file_pkg_apispec_v1_mobile_mobile_proto_rawDesc = "" +
 	"\bPlatform\x12\x18\n" +
 	"\x14PLATFORM_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rPLATFORM_APNS\x10\x01\x12\x10\n" +
-	"\fPLATFORM_FCM\x10\x022\xfb\b\n" +
-	"\rMobileService\x12z\n" +
+	"\fPLATFORM_FCM\x10\x022\x86\n" +
+	"\n" +
+	"\rMobileService\x12\x88\x01\n" +
+	"\x0fListMobileSites\x12*.hulation.v1.mobile.ListMobileSitesRequest\x1a+.hulation.v1.mobile.ListMobileSitesResponse\"\x1c\x82\xd3\xe4\x93\x02\x16\x12\x14/api/mobile/v1/sites\x12z\n" +
 	"\x0eRegisterDevice\x12).hulation.v1.mobile.RegisterDeviceRequest\x1a\x1a.hulation.v1.mobile.Device\"!\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/api/mobile/v1/devices\x12\x99\x01\n" +
 	"\x10UnregisterDevice\x12+.hulation.v1.mobile.UnregisterDeviceRequest\x1a,.hulation.v1.mobile.UnregisterDeviceResponse\"*\x82\xd3\xe4\x93\x02$*\"/api/mobile/v1/devices/{device_id}\x12\x84\x01\n" +
 	"\rListMyDevices\x12(.hulation.v1.mobile.ListMyDevicesRequest\x1a).hulation.v1.mobile.ListMyDevicesResponse\"\x1e\x82\xd3\xe4\x93\x02\x18\x12\x16/api/mobile/v1/devices\x12\xab\x01\n" +
@@ -1089,52 +1248,58 @@ func file_pkg_apispec_v1_mobile_mobile_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_apispec_v1_mobile_mobile_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pkg_apispec_v1_mobile_mobile_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_pkg_apispec_v1_mobile_mobile_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_pkg_apispec_v1_mobile_mobile_proto_goTypes = []any{
 	(Platform)(0),                    // 0: hulation.v1.mobile.Platform
-	(*Device)(nil),                   // 1: hulation.v1.mobile.Device
-	(*RegisterDeviceRequest)(nil),    // 2: hulation.v1.mobile.RegisterDeviceRequest
-	(*UnregisterDeviceRequest)(nil),  // 3: hulation.v1.mobile.UnregisterDeviceRequest
-	(*UnregisterDeviceResponse)(nil), // 4: hulation.v1.mobile.UnregisterDeviceResponse
-	(*ListMyDevicesRequest)(nil),     // 5: hulation.v1.mobile.ListMyDevicesRequest
-	(*ListMyDevicesResponse)(nil),    // 6: hulation.v1.mobile.ListMyDevicesResponse
-	(*MobileSummaryRequest)(nil),     // 7: hulation.v1.mobile.MobileSummaryRequest
-	(*MobileSummaryResponse)(nil),    // 8: hulation.v1.mobile.MobileSummaryResponse
-	(*MobileTimeseriesRequest)(nil),  // 9: hulation.v1.mobile.MobileTimeseriesRequest
-	(*MobileTimeseriesResponse)(nil), // 10: hulation.v1.mobile.MobileTimeseriesResponse
-	(*MobileTopPagesRequest)(nil),    // 11: hulation.v1.mobile.MobileTopPagesRequest
-	(*MobileTopPage)(nil),            // 12: hulation.v1.mobile.MobileTopPage
-	(*MobileTopPagesResponse)(nil),   // 13: hulation.v1.mobile.MobileTopPagesResponse
-	(*MobileLiveChatsRequest)(nil),   // 14: hulation.v1.mobile.MobileLiveChatsRequest
-	(*MobileLiveChatsResponse)(nil),  // 15: hulation.v1.mobile.MobileLiveChatsResponse
-	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
+	(*ListMobileSitesRequest)(nil),   // 1: hulation.v1.mobile.ListMobileSitesRequest
+	(*MobileSite)(nil),               // 2: hulation.v1.mobile.MobileSite
+	(*ListMobileSitesResponse)(nil),  // 3: hulation.v1.mobile.ListMobileSitesResponse
+	(*Device)(nil),                   // 4: hulation.v1.mobile.Device
+	(*RegisterDeviceRequest)(nil),    // 5: hulation.v1.mobile.RegisterDeviceRequest
+	(*UnregisterDeviceRequest)(nil),  // 6: hulation.v1.mobile.UnregisterDeviceRequest
+	(*UnregisterDeviceResponse)(nil), // 7: hulation.v1.mobile.UnregisterDeviceResponse
+	(*ListMyDevicesRequest)(nil),     // 8: hulation.v1.mobile.ListMyDevicesRequest
+	(*ListMyDevicesResponse)(nil),    // 9: hulation.v1.mobile.ListMyDevicesResponse
+	(*MobileSummaryRequest)(nil),     // 10: hulation.v1.mobile.MobileSummaryRequest
+	(*MobileSummaryResponse)(nil),    // 11: hulation.v1.mobile.MobileSummaryResponse
+	(*MobileTimeseriesRequest)(nil),  // 12: hulation.v1.mobile.MobileTimeseriesRequest
+	(*MobileTimeseriesResponse)(nil), // 13: hulation.v1.mobile.MobileTimeseriesResponse
+	(*MobileTopPagesRequest)(nil),    // 14: hulation.v1.mobile.MobileTopPagesRequest
+	(*MobileTopPage)(nil),            // 15: hulation.v1.mobile.MobileTopPage
+	(*MobileTopPagesResponse)(nil),   // 16: hulation.v1.mobile.MobileTopPagesResponse
+	(*MobileLiveChatsRequest)(nil),   // 17: hulation.v1.mobile.MobileLiveChatsRequest
+	(*MobileLiveChatsResponse)(nil),  // 18: hulation.v1.mobile.MobileLiveChatsResponse
+	(*timestamppb.Timestamp)(nil),    // 19: google.protobuf.Timestamp
 }
 var file_pkg_apispec_v1_mobile_mobile_proto_depIdxs = []int32{
-	0,  // 0: hulation.v1.mobile.Device.platform:type_name -> hulation.v1.mobile.Platform
-	16, // 1: hulation.v1.mobile.Device.registered_at:type_name -> google.protobuf.Timestamp
-	16, // 2: hulation.v1.mobile.Device.last_seen_at:type_name -> google.protobuf.Timestamp
-	0,  // 3: hulation.v1.mobile.RegisterDeviceRequest.platform:type_name -> hulation.v1.mobile.Platform
-	1,  // 4: hulation.v1.mobile.ListMyDevicesResponse.devices:type_name -> hulation.v1.mobile.Device
-	12, // 5: hulation.v1.mobile.MobileTopPagesResponse.pages:type_name -> hulation.v1.mobile.MobileTopPage
-	2,  // 6: hulation.v1.mobile.MobileService.RegisterDevice:input_type -> hulation.v1.mobile.RegisterDeviceRequest
-	3,  // 7: hulation.v1.mobile.MobileService.UnregisterDevice:input_type -> hulation.v1.mobile.UnregisterDeviceRequest
-	5,  // 8: hulation.v1.mobile.MobileService.ListMyDevices:input_type -> hulation.v1.mobile.ListMyDevicesRequest
-	7,  // 9: hulation.v1.mobile.MobileService.MobileSummary:input_type -> hulation.v1.mobile.MobileSummaryRequest
-	9,  // 10: hulation.v1.mobile.MobileService.MobileTimeseries:input_type -> hulation.v1.mobile.MobileTimeseriesRequest
-	11, // 11: hulation.v1.mobile.MobileService.MobileTopPages:input_type -> hulation.v1.mobile.MobileTopPagesRequest
-	14, // 12: hulation.v1.mobile.MobileService.MobileLiveChats:input_type -> hulation.v1.mobile.MobileLiveChatsRequest
-	1,  // 13: hulation.v1.mobile.MobileService.RegisterDevice:output_type -> hulation.v1.mobile.Device
-	4,  // 14: hulation.v1.mobile.MobileService.UnregisterDevice:output_type -> hulation.v1.mobile.UnregisterDeviceResponse
-	6,  // 15: hulation.v1.mobile.MobileService.ListMyDevices:output_type -> hulation.v1.mobile.ListMyDevicesResponse
-	8,  // 16: hulation.v1.mobile.MobileService.MobileSummary:output_type -> hulation.v1.mobile.MobileSummaryResponse
-	10, // 17: hulation.v1.mobile.MobileService.MobileTimeseries:output_type -> hulation.v1.mobile.MobileTimeseriesResponse
-	13, // 18: hulation.v1.mobile.MobileService.MobileTopPages:output_type -> hulation.v1.mobile.MobileTopPagesResponse
-	15, // 19: hulation.v1.mobile.MobileService.MobileLiveChats:output_type -> hulation.v1.mobile.MobileLiveChatsResponse
-	13, // [13:20] is the sub-list for method output_type
-	6,  // [6:13] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	2,  // 0: hulation.v1.mobile.ListMobileSitesResponse.sites:type_name -> hulation.v1.mobile.MobileSite
+	0,  // 1: hulation.v1.mobile.Device.platform:type_name -> hulation.v1.mobile.Platform
+	19, // 2: hulation.v1.mobile.Device.registered_at:type_name -> google.protobuf.Timestamp
+	19, // 3: hulation.v1.mobile.Device.last_seen_at:type_name -> google.protobuf.Timestamp
+	0,  // 4: hulation.v1.mobile.RegisterDeviceRequest.platform:type_name -> hulation.v1.mobile.Platform
+	4,  // 5: hulation.v1.mobile.ListMyDevicesResponse.devices:type_name -> hulation.v1.mobile.Device
+	15, // 6: hulation.v1.mobile.MobileTopPagesResponse.pages:type_name -> hulation.v1.mobile.MobileTopPage
+	1,  // 7: hulation.v1.mobile.MobileService.ListMobileSites:input_type -> hulation.v1.mobile.ListMobileSitesRequest
+	5,  // 8: hulation.v1.mobile.MobileService.RegisterDevice:input_type -> hulation.v1.mobile.RegisterDeviceRequest
+	6,  // 9: hulation.v1.mobile.MobileService.UnregisterDevice:input_type -> hulation.v1.mobile.UnregisterDeviceRequest
+	8,  // 10: hulation.v1.mobile.MobileService.ListMyDevices:input_type -> hulation.v1.mobile.ListMyDevicesRequest
+	10, // 11: hulation.v1.mobile.MobileService.MobileSummary:input_type -> hulation.v1.mobile.MobileSummaryRequest
+	12, // 12: hulation.v1.mobile.MobileService.MobileTimeseries:input_type -> hulation.v1.mobile.MobileTimeseriesRequest
+	14, // 13: hulation.v1.mobile.MobileService.MobileTopPages:input_type -> hulation.v1.mobile.MobileTopPagesRequest
+	17, // 14: hulation.v1.mobile.MobileService.MobileLiveChats:input_type -> hulation.v1.mobile.MobileLiveChatsRequest
+	3,  // 15: hulation.v1.mobile.MobileService.ListMobileSites:output_type -> hulation.v1.mobile.ListMobileSitesResponse
+	4,  // 16: hulation.v1.mobile.MobileService.RegisterDevice:output_type -> hulation.v1.mobile.Device
+	7,  // 17: hulation.v1.mobile.MobileService.UnregisterDevice:output_type -> hulation.v1.mobile.UnregisterDeviceResponse
+	9,  // 18: hulation.v1.mobile.MobileService.ListMyDevices:output_type -> hulation.v1.mobile.ListMyDevicesResponse
+	11, // 19: hulation.v1.mobile.MobileService.MobileSummary:output_type -> hulation.v1.mobile.MobileSummaryResponse
+	13, // 20: hulation.v1.mobile.MobileService.MobileTimeseries:output_type -> hulation.v1.mobile.MobileTimeseriesResponse
+	16, // 21: hulation.v1.mobile.MobileService.MobileTopPages:output_type -> hulation.v1.mobile.MobileTopPagesResponse
+	18, // 22: hulation.v1.mobile.MobileService.MobileLiveChats:output_type -> hulation.v1.mobile.MobileLiveChatsResponse
+	15, // [15:23] is the sub-list for method output_type
+	7,  // [7:15] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_pkg_apispec_v1_mobile_mobile_proto_init() }
@@ -1148,7 +1313,7 @@ func file_pkg_apispec_v1_mobile_mobile_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_apispec_v1_mobile_mobile_proto_rawDesc), len(file_pkg_apispec_v1_mobile_mobile_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

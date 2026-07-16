@@ -19,6 +19,15 @@ import "hula/auth/permission.proto";
 import "google/protobuf/timestamp.proto";
 
 service MobileService {
+  // ListMobileSites returns the configured Site IDs this caller can
+  // access. The app uses this to switch the analytics/chat server_id
+  // without changing the paired Hula installation or forcing relogin.
+  rpc ListMobileSites(ListMobileSitesRequest) returns (ListMobileSitesResponse) {
+    option (google.api.http) = {
+      get: "/api/mobile/v1/sites"
+    };
+  }
+
   // RegisterDevice records an APNs / FCM token for the caller. The
   // plaintext token is sealed in AES-GCM before persisting (see
   // pkg/mobile/tokenbox). Idempotent: re-registering the same
@@ -86,6 +95,19 @@ service MobileService {
     // visitor PII or message bodies.
     option (hula.auth.permission) = { needs: ["server.{server_id}.chat.read"] };
   }
+}
+
+message ListMobileSitesRequest {}
+
+message MobileSite {
+  string id = 1;
+  string host = 2;
+  string name = 3;
+}
+
+message ListMobileSitesResponse {
+  repeated MobileSite sites = 1;
+  string current_server_id = 2;
 }
 
 enum Platform {

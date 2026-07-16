@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tlalocweb/hulation/config"
 	"github.com/tlalocweb/hulation/model"
 	analyticsspec "github.com/tlalocweb/hulation/pkg/apispec/v1/analytics"
 	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
@@ -51,6 +52,7 @@ type Server struct {
 	// chatStore drives MobileLiveChats. nil → that RPC returns
 	// FailedPrecondition (chat not wired into this build).
 	chatStore  *chatpkg.Store
+	cfg        *config.Config
 	tokenKeyFn TokenKeyFn
 }
 
@@ -62,6 +64,7 @@ func New(
 	timeseriesFn func(context.Context, *analyticsspec.TimeseriesRequest) (*analyticsspec.TimeseriesResponse, error),
 	pagesFn func(context.Context, *analyticsspec.PagesRequest) (*analyticsspec.PagesResponse, error),
 	chatStore *chatpkg.Store,
+	cfg *config.Config,
 	tokenKeyFn TokenKeyFn,
 ) *Server {
 	return &Server{
@@ -69,6 +72,7 @@ func New(
 		timeseriesFn: timeseriesFn,
 		pagesFn:      pagesFn,
 		chatStore:    chatStore,
+		cfg:          cfg,
 		tokenKeyFn:   tokenKeyFn,
 	}
 }
@@ -85,15 +89,48 @@ func newID() string {
 // installed by the AdminBearerInterceptor. Admins can spoof via
 // explicit user_id args in write endpoints; read endpoints always
 // trust the claim.
+//
+// Delegates to claimsUserID so every MobileService RPC keys off the SAME
+// identifier: a device registered under this ID and a server-access grant
+// looked up under it must agree, or ListMobileSites could return an empty
+// list for a caller who can still register devices/prefs (they'd be keyed
+// differently). See claimsUserID for the canonical order.
 func currentUserID(ctx context.Context) string {
-	c, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
-	if !ok || c == nil {
+	return claimsUserID(currentClaims(ctx))
+}
+
+func currentClaims(ctx context.Context) *authware.Claims {
+	c, _ := ctx.Value(authware.ClaimsKey).(*authware.Claims)
+	return c
+}
+
+// claimsUserID is the single canonical user-identity derivation for
+// MobileService: Subject (the stable user id — buildBearerClaims sets
+// Subject == the model user ID) first, then Email, then Username. All
+// server_access grants and device/pref records are keyed by this value.
+func claimsUserID(c *authware.Claims) string {
+	if c == nil {
 		return ""
+	}
+	if c.Subject != "" {
+		return c.Subject
 	}
 	if c.Email != "" {
 		return c.Email
 	}
 	return c.Username
+}
+
+func claimsHasRole(c *authware.Claims, want string) bool {
+	if c == nil {
+		return false
+	}
+	for _, r := range c.Roles {
+		if r == want {
+			return true
+		}
+	}
+	return false
 }
 
 // presetToRange maps "24h" / "7d" / "30d" to (from, to, granularity).
@@ -174,6 +211,58 @@ func storedDeviceToProto(d hulabolt.StoredDevice) *mobilespec.Device {
 }
 
 // --- RPCs ------------------------------------------------------------
+
+func (s *Server) ListMobileSites(ctx context.Context, req *mobilespec.ListMobileSitesRequest) (*mobilespec.ListMobileSitesResponse, error) {
+	claims := currentClaims(ctx)
+	if claims == nil {
+		return nil, status.Error(codes.Unauthenticated, "caller has no identity")
+	}
+	if s.cfg == nil {
+		return &mobilespec.ListMobileSitesResponse{Sites: []*mobilespec.MobileSite{}}, nil
+	}
+
+	allowed := map[string]struct{}{}
+	superadmin := claimsHasRole(claims, "admin") || claimsHasRole(claims, "root")
+	if superadmin {
+		for _, configured := range s.cfg.Servers {
+			if configured != nil && configured.ID != "" {
+				allowed[configured.ID] = struct{}{}
+			}
+		}
+	} else {
+		userID := claimsUserID(claims)
+		ids, err := hulabolt.AllowedServerIDsForUser(ctx, storage.Global(), userID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "list server access: %s", err)
+		}
+		for _, id := range ids {
+			if id != "" {
+				allowed[id] = struct{}{}
+			}
+		}
+	}
+
+	out := &mobilespec.ListMobileSitesResponse{
+		Sites: []*mobilespec.MobileSite{},
+	}
+	for _, configured := range s.cfg.Servers {
+		if configured == nil || configured.ID == "" {
+			continue
+		}
+		if _, ok := allowed[configured.ID]; !ok {
+			continue
+		}
+		out.Sites = append(out.Sites, &mobilespec.MobileSite{
+			Id:   configured.ID,
+			Host: configured.Host,
+			Name: configured.ID,
+		})
+		if out.CurrentServerId == "" {
+			out.CurrentServerId = configured.ID
+		}
+	}
+	return out, nil
+}
 
 func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDeviceRequest) (*mobilespec.Device, error) {
 	if req == nil || req.GetPlatform() == mobilespec.Platform_PLATFORM_UNSPECIFIED {
@@ -263,6 +352,9 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 	saved, err := hulabolt.PutDevice(ctx, storage.Global(), d)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "put device: %s", err)
+	}
+	if err := hulabolt.EnsureNotificationPrefsForDeviceRegistration(ctx, storage.Global(), userID); err != nil {
+		return nil, status.Errorf(codes.Internal, "ensure notification prefs: %s", err)
 	}
 	return storedDeviceToProto(saved), nil
 }
