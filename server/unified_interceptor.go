@@ -13,18 +13,48 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	hulaapp "github.com/tlalocweb/hulation/app"
+	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 )
+
+var authLog = log.GetTaggedLogger("bearer-auth", "Unified server bearer authentication")
+
+// totp_pending is a LIMITED token: the password check passed but the second
+// factor hasn't. It may only reach the endpoints needed to complete or
+// enroll TOTP (plus WhoAmI). The full authware middleware enforces this via
+// checkTotpPendingToken, but that middleware isn't wired on the unified
+// server — these bearer interceptors are the only gate, so the same
+// restriction lives here. Keep the two maps in sync.
+var totpPendingAllowedMethods = map[string]bool{
+	authspec.AuthService_TotpValidate_FullMethodName:    true,
+	authspec.AuthService_TotpSetup_FullMethodName:       true,
+	authspec.AuthService_TotpVerifySetup_FullMethodName: true,
+	authspec.AuthService_TotpStatus_FullMethodName:      true,
+	authspec.AuthService_WhoAmI_FullMethodName:          true,
+}
+
+var totpPendingAllowedHTTP = map[string]bool{
+	"POST /api/v1/auth/totp/validate":     true,
+	"POST /api/v1/auth/totp/setup":        true,
+	"POST /api/v1/auth/totp/verify-setup": true,
+	"GET /api/v1/auth/totp/status":        true,
+	"GET /api/v1/auth/whoami":             true,
+}
 
 // AdminBearerHTTPMiddleware mirrors AdminBearerInterceptor for the
 // grpc-gateway path. grpc-gateway calls the gRPC service
@@ -39,25 +69,136 @@ func AdminBearerHTTPMiddleware(next http.Handler) http.Handler {
 		authz := r.Header.Get("Authorization")
 		if len(authz) > len(prefix) && authz[:len(prefix)] == prefix {
 			token := authz[len(prefix):]
-			if ok, perms, verified, err := model.VerifyJWTClaimsDetailed(model.GetDB(), token); err == nil && ok && perms != nil {
-				cfg := hulaapp.GetConfig()
-				adminUsername := ""
-				if cfg != nil {
-					adminUsername = cfg.Admin.Username
+			claims, err := buildBearerClaims(token)
+			switch {
+			case claims != nil:
+				// A limited totp_pending bearer may only reach the
+				// TOTP-completion endpoints. Anywhere else, reject with
+				// 403 — the token is valid but the second factor isn't
+				// done yet, so it's forbidden here rather than unauthenticated.
+				if claims.TotpPending && !totpPendingAllowedHTTP[r.Method+" "+r.URL.Path] {
+					authLog.Debugf("totp_pending bearer blocked on %s %s", r.Method, r.URL.Path)
+					writeTotpPendingReject(w)
+					return
 				}
-				claims := claimsFromVerifiedBearer(perms, verified, adminUsername)
 				r = r.WithContext(context.WithValue(r.Context(), authware.ClaimsKey, claims))
+			case bearerRequiredForHTTP(r):
+				// A bearer was presented and failed verification on a
+				// route that requires auth: reject here with a clean
+				// status instead of letting the handler surface an
+				// ambiguous "no claims in context". Mobile clients key
+				// session teardown off this 401.
+				writeBearerReject(w, r, err)
+				return
+			default:
+				// Public (noauth) gateway routes and non-gateway paths
+				// keep the legacy pass-through: a stale bearer on a
+				// login retry must not lock the client out, and host-
+				// routed proxies / static sites do their own auth.
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
+// bearerRequiredForHTTP reports whether r targets a grpc-gateway route that
+// requires authentication, per the proto `noauth` annotations surfaced
+// through authware's method registry. Only such routes reject invalid
+// bearers at the middleware; everything else preserves pass-through.
+func bearerRequiredForHTTP(r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		return false
+	}
+	info, ok := authware.GetMethodInfoByHTTP(r.Method, r.URL.Path)
+	return ok && info.NeedAuth
+}
+
+// writeBearerReject maps a bearer verification failure onto the wire: 401
+// (grpc-gateway UNAUTHENTICATED envelope) when the token itself is at
+// fault, 503 when verification failed for infrastructure reasons — clients
+// must not treat a server-side blip as an invalid session.
+func writeBearerReject(w http.ResponseWriter, r *http.Request, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	if err == nil || errors.Is(err, model.ErrUnauthorized) {
+		authLog.Debugf("rejecting invalid bearer on %s %s: %v", r.Method, r.URL.Path, err)
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"code":16,"message":"invalid or expired token"}`))
+		return
+	}
+	authLog.Errorf("bearer verification unavailable on %s %s: %v", r.Method, r.URL.Path, err)
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte(`{"code":14,"message":"authentication temporarily unavailable"}`))
+}
+
+// writeTotpPendingReject rejects a limited totp_pending bearer used outside
+// the TOTP-completion allowlist. 403 (not 401): the token is valid, but the
+// second factor must be completed before it grants access here.
+func writeTotpPendingReject(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"code":7,"message":"TOTP validation required"}`))
+}
+
+// buildBearerClaims verifies a raw bearer JWT and converts it into
+// authware.Claims. The verified RegisteredClaims — notably ExpiresAt — are
+// copied through so downstream handlers (WhoAmI in particular) can report
+// the session's expiry to clients. Returns (nil, err) on verification
+// failure; err wraps model.ErrUnauthorized when the token is at fault, and
+// is a bare infrastructure error otherwise.
+func buildBearerClaims(token string) (*authware.Claims, error) {
+	ok, perms, jc, err := model.VerifyJWTClaimsDetailed(model.GetDB(), token)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || perms == nil || jc == nil {
+		return nil, fmt.Errorf("%w: token not valid", model.ErrUnauthorized)
+	}
+	cfg := hulaapp.GetConfig()
+	adminUsername := ""
+	if cfg != nil {
+		adminUsername = cfg.Admin.Username
+	}
+	roles := []string{}
+	// A totp_pending token is a limited credential awaiting second-factor
+	// validation. It must never carry the admin role — with it, the token
+	// could reach admin-gated RPCs (including RefreshToken, which would
+	// upgrade it to a full session without the TOTP code).
+	totpPending := jc.TotpPending || perms.HasCap("totp_pending")
+	if !totpPending && perms.UserID != "" && adminUsername != "" && perms.UserID == adminUsername {
+		roles = append(roles, "admin")
+	}
+	claims := &authware.Claims{
+		Username:    perms.UserID,
+		Roles:       roles,
+		Permissions: perms.ListCaps(),
+		// Carry the limited-token flag through so authware's middleware
+		// (Claims.IsTotpPendingToken) enforces the same restrictions on
+		// this path as everywhere else — a totp_pending token must not
+		// reach TOTP-gated RPCs on the unified server either.
+		TotpPending: totpPending,
+	}
+	// Carry the verified standard claims through — ExpiresAt drives
+	// WhoAmI's token_expires and the mobile app's proactive refresh.
+	claims.RegisteredClaims = jc.RegisteredClaims
+	claims.Subject = perms.UserID
+	// The login-token UUID is the server-side session handle (the
+	// revocable row in login_tokens); expose it so logout/revocation
+	// paths can address the session.
+	claims.ID = jc.LoginToken
+	claims.SessionID = jc.LoginToken
+	return claims, nil
+}
+
 // AdminBearerInterceptor returns a UnaryServerInterceptor that:
 //   - Looks for an "authorization: Bearer <jwt>" metadata header.
-//   - If present, validates the JWT against model.VerifyJWTClaims and
-//     stores a minimal *authware.Claims on the context when the token
-//     belongs to the admin account.
+//   - If present, validates the JWT via model.VerifyJWTClaimsDetailed and
+//     stores *authware.Claims (including the verified RegisteredClaims,
+//     so ExpiresAt survives) on the context. A presented bearer that
+//     FAILS verification is rejected with Unauthenticated on any method
+//     that requires auth (per the proto `noauth` annotations) — expired
+//     sessions get a clean 401 instead of an ambiguous downstream
+//     "no claims in context".
 //   - If absent, falls back to `Hula-Device-*` signature auth against `deviceKeys`
 //     (QR-paired devices). When that also fails to produce claims the context is
 //     left untouched and downstream handlers that *require* claims return
@@ -68,57 +209,56 @@ func AdminBearerHTTPMiddleware(next http.Handler) http.Handler {
 // signature-auth path entirely.
 func AdminBearerInterceptor(deviceKeys authware.DeviceKeyStore) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if claims := claimsFromContext(ctx, deviceKeys); claims != nil {
-			ctx = context.WithValue(ctx, authware.ClaimsKey, claims)
+		ctx, err := authenticateGRPC(ctx, deviceKeys, info.FullMethod)
+		if err != nil {
+			return nil, err
 		}
 		return handler(ctx, req)
 	}
 }
 
-// claimsFromContext consolidates the bearer-then-signature lookup logic so both the
-// unary and stream interceptors share one source of truth.
-func claimsFromContext(ctx context.Context, deviceKeys authware.DeviceKeyStore) *authware.Claims {
-	if claims := claimsFromBearer(ctx); claims != nil {
-		return claims
+// authenticateGRPC resolves claims for a native-gRPC request. A presented
+// bearer that fails verification is rejected outright on auth-required
+// methods; absent credentials keep the legacy pass-through (handlers that
+// require claims return Unauthenticated themselves, and noauth RPCs run
+// anonymously).
+func authenticateGRPC(ctx context.Context, deviceKeys authware.DeviceKeyStore, fullMethod string) (context.Context, error) {
+	token := extractBearer(ctx)
+	if token != "" {
+		claims, err := buildBearerClaims(token)
+		if claims != nil {
+			// A limited totp_pending bearer may only reach the
+			// TOTP-completion endpoints; reject it everywhere else.
+			if claims.TotpPending && !totpPendingAllowedMethods[fullMethod] {
+				authLog.Debugf("totp_pending bearer blocked on %s", fullMethod)
+				return ctx, status.Error(codes.PermissionDenied, "TOTP validation required")
+			}
+			return context.WithValue(ctx, authware.ClaimsKey, claims), nil
+		}
+		if authware.RequiresAuth(fullMethod) {
+			return ctx, bearerRejectStatus(fullMethod, err)
+		}
+		// noauth RPC — continue unauthenticated so e.g. a login retry
+		// carrying a stale bearer still works.
+		return ctx, nil
 	}
 	if deviceKeys != nil {
 		if claims := claimsFromDeviceSignature(ctx, deviceKeys); claims != nil {
-			return claims
+			return context.WithValue(ctx, authware.ClaimsKey, claims), nil
 		}
 	}
-	return nil
+	return ctx, nil
 }
 
-func claimsFromBearer(ctx context.Context) *authware.Claims {
-	token := extractBearer(ctx)
-	if token == "" {
-		return nil
+// bearerRejectStatus is the gRPC counterpart of writeBearerReject: token
+// faults map to Unauthenticated, infrastructure faults to Unavailable.
+func bearerRejectStatus(fullMethod string, err error) error {
+	if err == nil || errors.Is(err, model.ErrUnauthorized) {
+		authLog.Debugf("rejecting invalid bearer on %s: %v", fullMethod, err)
+		return status.Error(codes.Unauthenticated, "invalid or expired token")
 	}
-	ok, perms, verified, err := model.VerifyJWTClaimsDetailed(model.GetDB(), token)
-	if err != nil || !ok || perms == nil {
-		return nil
-	}
-	cfg := hulaapp.GetConfig()
-	adminUsername := ""
-	if cfg != nil {
-		adminUsername = cfg.Admin.Username
-	}
-	return claimsFromVerifiedBearer(perms, verified, adminUsername)
-}
-
-func claimsFromVerifiedBearer(perms *model.UserPermissions, verified *model.JWTClaims, adminUsername string) *authware.Claims {
-	claims := &authware.Claims{
-		Username:    perms.UserID,
-		Permissions: perms.ListCaps(),
-	}
-	if verified != nil {
-		claims.RegisteredClaims = verified.RegisteredClaims
-	}
-	if perms.UserID != "" && adminUsername != "" && perms.UserID == adminUsername {
-		claims.Roles = []string{"admin"}
-	}
-	claims.Subject = perms.UserID
-	return claims
+	authLog.Errorf("bearer verification unavailable on %s: %v", fullMethod, err)
+	return status.Error(codes.Unavailable, "authentication temporarily unavailable")
 }
 
 // claimsFromDeviceSignature reads the Hula-Device-* metadata headers, verifies the
@@ -195,9 +335,9 @@ func mdFirst(md metadata.MD, key string) string {
 var deviceNonces = newDeviceNonceSet(8192)
 
 type deviceNonceSet struct {
-	mu  sync.Mutex
-	cap int
-	by  map[string]time.Time // key = deviceID + "\x00" + nonce
+	mu    sync.Mutex
+	cap   int
+	by    map[string]time.Time // key = deviceID + "\x00" + nonce
 }
 
 func newDeviceNonceSet(cap int) *deviceNonceSet {
@@ -245,13 +385,14 @@ func (s *deviceNonceSet) remember(deviceID, nonce string, ts time.Time) bool {
 // disable the signature-auth path.
 func AdminBearerStreamInterceptor(deviceKeys authware.DeviceKeyStore) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		ctx := ss.Context()
-		claims := claimsFromContext(ctx, deviceKeys)
-		if claims == nil {
+		ctx, err := authenticateGRPC(ss.Context(), deviceKeys, info.FullMethod)
+		if err != nil {
+			return err
+		}
+		if ctx == ss.Context() {
 			return handler(srv, ss)
 		}
-		newCtx := context.WithValue(ctx, authware.ClaimsKey, claims)
-		return handler(srv, &claimsServerStream{ServerStream: ss, ctx: newCtx})
+		return handler(srv, &claimsServerStream{ServerStream: ss, ctx: ctx})
 	}
 }
 

@@ -137,15 +137,19 @@ func TestClaimsFromDeviceSignature_NonceReplay(t *testing.T) {
 	}
 }
 
-func TestClaimsFromContext_PrefersBearerOverSignature(t *testing.T) {
-	// No bearer is configured (extractBearer returns ""), so claimsFromBearer is nil and
-	// the signature path is taken. With nil device store the call should also be nil.
+func TestAuthenticateGRPC_NoCredentials_NoClaims(t *testing.T) {
+	// No bearer and no device signature: the context passes through
+	// untouched (handlers that require claims reject on their own), for
+	// both a nil and a noop device store.
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(nil))
-	if c := claimsFromContext(ctx, nil); c != nil {
-		t.Fatalf("expected nil claims with no auth + no store, got %+v", c)
-	}
-	if c := claimsFromContext(ctx, authware.NoopDeviceKeyStore{}); c != nil {
-		t.Fatalf("expected nil claims with no auth + noop store, got %+v", c)
+	for _, store := range []authware.DeviceKeyStore{nil, authware.NoopDeviceKeyStore{}} {
+		got, err := authenticateGRPC(ctx, store, "/hulation.v1.auth.AuthService/WhoAmI")
+		if err != nil {
+			t.Fatalf("no-credential request must pass through, got %v", err)
+		}
+		if c, ok := got.Value(authware.ClaimsKey).(*authware.Claims); ok && c != nil {
+			t.Fatalf("expected no claims with no auth (store %T), got %+v", store, c)
+		}
 	}
 }
 

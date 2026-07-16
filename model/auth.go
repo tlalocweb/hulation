@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,9 +33,9 @@ func GetCaps(caps string) []string {
 
 type JWTClaims struct {
 	Id          string   // user id
-	LoginToken  string   `json:"t"`            // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
-	Caps        []string `json:"c"`            // map of capabilities
-	TotpPending bool     `json:"tp,omitempty"` // true if this is a limited token pending TOTP validation
+	LoginToken  string   `json:"t"`              // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
+	Caps        []string `json:"c"`              // map of capabilities
+	TotpPending bool     `json:"tp,omitempty"`   // true if this is a limited token pending TOTP validation
 	jwt.RegisteredClaims
 }
 
@@ -163,6 +164,18 @@ func (p *UserPermissions) ListCaps() []string {
 	return p.capslist
 }
 
+// ErrUnauthorized classifies a verification failure as the presented
+// token's fault (malformed, bad signature, expired, revoked/unknown login
+// token, user mismatch). Transport layers map errors wrapping it to
+// 401/Unauthenticated. Failures that do NOT wrap it (DB unreachable,
+// config not loaded) are infrastructure faults and must map to 5xx — a
+// client must not discard its session over a server-side blip.
+var ErrUnauthorized = errors.New("unauthorized")
+
+// errServerNotReady marks keyfunc failures that are server faults, not
+// token faults, so they aren't misclassified as ErrUnauthorized below.
+var errServerNotReady = errors.New("server config not loaded")
+
 // Takes an incoming JWT, verifies it is valid and then provides a  UserPermissions struct
 // which tells us the user's ID and the roles / attrs it has
 func VerifyJWTClaims(db *gorm.DB, token string) (valid bool, perms *UserPermissions, err error) {
@@ -170,43 +183,75 @@ func VerifyJWTClaims(db *gorm.DB, token string) (valid bool, perms *UserPermissi
 	return
 }
 
-// VerifyJWTClaimsDetailed is the verified-token variant used by middleware that
-// must preserve standard JWT metadata such as expiration in the request context.
+// VerifyJWTClaimsDetailed verifies an incoming JWT — signature, expiry, and
+// the backing login-token row — and returns the caller's permissions along
+// with the complete verified claims. RegisteredClaims.ExpiresAt in the
+// returned claims is what transport layers propagate so clients can discover
+// when their session ends. Claims are returned only on full verification;
+// expiration is never reported from an unverified token.
 func VerifyJWTClaimsDetailed(db *gorm.DB, token string) (valid bool, perms *UserPermissions, claims *JWTClaims, err error) {
-	claims = &JWTClaims{}
+	parsed := &JWTClaims{}
 
-	tkn, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (any, error) {
-		return []byte(app.GetConfig().JWTKey), nil
+	tkn, err := jwt.ParseWithClaims(token, parsed, func(token *jwt.Token) (any, error) {
+		cfg := app.GetConfig()
+		if cfg == nil {
+			return nil, errServerNotReady
+		}
+		return []byte(cfg.JWTKey), nil
 	})
 	if err != nil {
-		err = fmt.Errorf("error parsing JWT: %w", err)
+		// Parse failures are token faults (malformed / bad signature /
+		// expired / not yet valid) — except our own keyfunc error.
+		if errors.Is(err, errServerNotReady) {
+			err = fmt.Errorf("error parsing JWT: %w", err)
+		} else {
+			err = fmt.Errorf("%w: error parsing JWT: %w", ErrUnauthorized, err)
+		}
 		return
 	}
 	valid = tkn.Valid
-	if tkn.Valid {
-		var userid string
-		userid, err = LookupLoginToken(db, claims.LoginToken)
-		if err != nil {
-			err = fmt.Errorf("error LookupLoginToken: %w", err)
-			valid = false
-			return
+	if !valid {
+		err = fmt.Errorf("%w: token not valid", ErrUnauthorized)
+		return
+	}
+	// The signature/expiry checks above need no DB; only the login-token
+	// revocation lookup does. A nil DB here means the model layer isn't
+	// connected yet (early startup / reconnect): that's an infrastructure
+	// fault, NOT a bad token, so return a bare error (no ErrUnauthorized)
+	// — transports map it to 5xx and the client keeps its session — and
+	// LookupLoginToken never nil-derefs. A provably-bad token (bad sig /
+	// expired) has already been rejected as ErrUnauthorized above,
+	// independent of DB availability.
+	if db == nil {
+		valid = false
+		err = fmt.Errorf("database not available for JWT verification")
+		return
+	}
+	var userid string
+	userid, lerr := LookupLoginToken(db, parsed.LoginToken)
+	if lerr != nil {
+		valid = false
+		if errors.Is(lerr, ErrTokenInvalid) || errors.Is(lerr, ErrTokenExpired) {
+			err = fmt.Errorf("%w: error LookupLoginToken: %w", ErrUnauthorized, lerr)
+		} else {
+			// DB fault — deliberately not ErrUnauthorized.
+			err = fmt.Errorf("error LookupLoginToken: %w", lerr)
 		}
-		if userid != claims.Id {
-			err = fmt.Errorf("user id does not match login token")
-			valid = false
-			return
-		}
-	} else {
-		err = fmt.Errorf("token not valid")
+		return
+	}
+	if userid != parsed.Id {
+		valid = false
+		err = fmt.Errorf("%w: user id does not match login token", ErrUnauthorized)
 		return
 	}
 	perms = &UserPermissions{}
-	perms.mapcaps = make(map[string]bool, len(claims.Caps))
-	for _, cap := range claims.Caps {
+	perms.mapcaps = make(map[string]bool, len(parsed.Caps))
+	for _, cap := range parsed.Caps {
 		perms.mapcaps[cap] = true
 	}
-	perms.capslist = claims.Caps
-	perms.UserID = claims.Id
+	perms.capslist = parsed.Caps
+	perms.UserID = parsed.Id
+	claims = parsed
 	return
 }
 
@@ -557,7 +602,11 @@ func LookupLoginToken(db *gorm.DB, token string) (userid string, err error) {
 		err = ErrTokenExpired
 		err2 := db.Delete(&LoginToken{}, "id = ?", token).Error
 		if err2 != nil {
-			err = fmt.Errorf("token expired and could not be deleted: %w", err2)
+			// Keep ErrTokenExpired in the chain (two %w verbs) so callers
+			// that classify with errors.Is still see this as an expired
+			// token — a failed cleanup delete is an expired session, not
+			// an infrastructure fault.
+			err = fmt.Errorf("%w (cleanup delete failed: %w)", ErrTokenExpired, err2)
 		}
 		return
 	}

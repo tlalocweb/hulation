@@ -248,8 +248,43 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	// Best-effort: bump LastSuccessLogin on the record.
 	_ = hulabolt.MarkOpaqueLoginSuccess(ctx, storage.Global(), finish.Provider, finish.Username)
 
-	// Issue JWT — admin gets the admin claim, everyone else gets a user JWT.
 	isAdmin := finish.Provider == providerAdmin
+
+	// TOTP gate: the password check succeeded, but if this user has TOTP
+	// enabled (or is the admin and config mandates it) we must NOT hand
+	// out a full session yet. Issue a short-lived, limited totp_pending
+	// token and set totp_required so the client completes the second
+	// factor via TotpValidate. The pending token is scoped to the
+	// TOTP-completion endpoints by the bearer interceptors.
+	//
+	// Fail closed: if the TOTP-state lookup errors we cannot know whether
+	// this user is 2FA-protected, so we refuse to issue any session
+	// rather than risk minting a full JWT that bypasses the gate.
+	totpNeeded, terr := totpRequiredForLogin(finish.Username, finish.Provider)
+	if terr != nil {
+		aLog.Errorf("OPAQUE LoginFinish: TOTP-state check failed for %s|%s: %v", finish.Provider, finish.Username, terr)
+		return nil, status.Error(codes.Unavailable, "cannot verify authentication state; please retry")
+	}
+	if totpNeeded {
+		pending, err := model.NewTotpPendingToken(model.GetDB(), finish.Username)
+		if err != nil {
+			aLog.Errorf("OPAQUE LoginFinish: totp-pending token issue: %v", err)
+			return nil, status.Errorf(codes.Internal, "issue totp token: %v", err)
+		}
+		resp := &authspec.OpaqueLoginFinishResponse{TotpRequired: true}
+		// The client reads admintoken-then-token as the bearer regardless
+		// of totp_required, so populate the same field the full JWT would
+		// have used.
+		if isAdmin {
+			resp.Admintoken = pending
+		} else {
+			resp.Token = pending
+		}
+		aLog.Infof("OPAQUE: password OK, TOTP required %s|%s", finish.Provider, finish.Username)
+		return resp, nil
+	}
+
+	// No TOTP — issue the full JWT. Admin gets the admin claim.
 	jwt, err := model.NewJWTClaimsCommit(model.GetDB(), finish.Username, &model.LoginOpts{
 		IsAdmin: isAdmin,
 	})
@@ -265,4 +300,30 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	}
 	aLog.Infof("OPAQUE: login OK %s|%s", finish.Provider, finish.Username)
 	return resp, nil
+}
+
+// totpRequiredForLogin reports whether a successful password login must be
+// followed by TOTP validation before a full session is issued. Mirrors
+// handler.CheckTotpRequired: any user with an enabled TOTP record must
+// validate; the admin must also validate (to enroll) when config sets
+// admin.totp_required even before enrollment.
+//
+// Returns an error if the TOTP-state lookup fails so the caller can fail
+// closed — a DB fault must never be read as "no TOTP required". A user with
+// simply no TOTP record is (false, nil): GetAdminTotp maps not-found to
+// (nil, nil), so ordinary non-2FA logins are not blocked.
+func totpRequiredForLogin(username, provider string) (bool, error) {
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil {
+		return false, err
+	}
+	if rec != nil && rec.TotpEnabled {
+		return true, nil
+	}
+	if provider == providerAdmin {
+		if cfg := config.GetConfig(); cfg != nil && cfg.Admin != nil && cfg.Admin.TotpRequired {
+			return true, nil
+		}
+	}
+	return false, nil
 }
