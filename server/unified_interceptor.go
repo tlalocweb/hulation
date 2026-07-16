@@ -73,8 +73,9 @@ func AdminBearerHTTPMiddleware(next http.Handler) http.Handler {
 			switch {
 			case claims != nil:
 				// A limited totp_pending bearer may only reach the
-				// TOTP-completion endpoints. Anywhere else, reject as if
-				// unauthenticated — the second factor isn't done yet.
+				// TOTP-completion endpoints. Anywhere else, reject with
+				// 403 — the token is valid but the second factor isn't
+				// done yet, so it's forbidden here rather than unauthenticated.
 				if claims.TotpPending && !totpPendingAllowedHTTP[r.Method+" "+r.URL.Path] {
 					authLog.Debugf("totp_pending bearer blocked on %s %s", r.Method, r.URL.Path)
 					writeTotpPendingReject(w)

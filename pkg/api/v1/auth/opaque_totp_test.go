@@ -17,15 +17,23 @@ var (
 	totpDBErr  error
 )
 
+var totpCfgErr error
+
 func setupTotpTestDB(t *testing.T) {
 	t.Helper()
 	totpDBOnce.Do(func() {
 		if _, cerr := app.LoadConfigWithFile("testdata/opaque-totp-test.yaml"); cerr != nil {
-			totpDBErr = cerr
+			totpCfgErr = cerr
 			return
 		}
 		_, _, _, totpDBErr = model.SetupAppDB(config.GetConfig())
 	})
+	// A config-load failure is a real test-setup bug, not an environment
+	// gap — fail on it rather than masking it as "DB unavailable". Only
+	// genuine DB connectivity problems are skip-worthy.
+	if totpCfgErr != nil {
+		t.Fatalf("loading testdata/opaque-totp-test.yaml: %v", totpCfgErr)
+	}
 	if totpDBErr != nil || model.GetDB() == nil {
 		t.Skipf("ClickHouse not available for OPAQUE-TOTP tests: %v", totpDBErr)
 	}
@@ -34,7 +42,11 @@ func setupTotpTestDB(t *testing.T) {
 // A user with no TOTP record and non-admin provider does not require TOTP.
 func TestTotpRequiredForLogin_NoRecord_Internal_False(t *testing.T) {
 	setupTotpTestDB(t)
-	if totpRequiredForLogin("no-totp-user@example.com", providerInternal) {
+	need, err := totpRequiredForLogin("no-totp-user@example.com", providerInternal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if need {
 		t.Fatal("internal user without a TOTP record must not require TOTP")
 	}
 }
@@ -51,12 +63,20 @@ func TestTotpRequiredForLogin_AdminConfigRequired_True(t *testing.T) {
 	cfg.Admin.TotpRequired = true
 	defer func() { cfg.Admin.TotpRequired = prev }()
 
-	if !totpRequiredForLogin(cfg.Admin.Username, providerAdmin) {
+	need, err := totpRequiredForLogin(cfg.Admin.Username, providerAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !need {
 		t.Fatal("admin must require TOTP when config.admin.totp_required is set")
 	}
 	// The same flag must NOT force TOTP on an internal user (it's an
 	// admin-scoped setting).
-	if totpRequiredForLogin("someone-else@example.com", providerInternal) {
+	need, err = totpRequiredForLogin("someone-else@example.com", providerInternal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if need {
 		t.Fatal("admin.totp_required must not apply to internal users")
 	}
 }
@@ -71,7 +91,11 @@ func TestTotpRequiredForLogin_EnabledRecord_True(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed TOTP record: %v", err)
 	}
-	if !totpRequiredForLogin(u, providerInternal) {
+	need, err := totpRequiredForLogin(u, providerInternal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !need {
 		t.Fatal("a user with an enabled TOTP record must require TOTP")
 	}
 }
