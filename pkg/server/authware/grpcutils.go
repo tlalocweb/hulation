@@ -74,8 +74,11 @@ func precomputeHTTPMethods() {
 					method := service.Methods().Get(j)
 					fn := method.FullName()
 					fn2 := transformToSlashFormat(string(fn))
-					// only worry about izcr and agentctl RPCs
-					if strings.Contains(string(fn), "izcr") || strings.Contains(string(fn), "agentctl") {
+					// hulation RPCs plus the ported izcr/agentctl ones.
+					// (This filter predates the hula port — without
+					// "hulation" the registry was empty and every
+					// annotation lookup fell back to its default.)
+					if strings.Contains(string(fn), "hulation") || strings.Contains(string(fn), "izcr") || strings.Contains(string(fn), "agentctl") {
 						priv, err := getPrivileged(method)
 						if err != nil {
 							log.Debugf("(this is likely expected) Error extracting privileged for %s: %v", fn, err)

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -163,43 +164,81 @@ func (p *UserPermissions) ListCaps() []string {
 	return p.capslist
 }
 
+// ErrUnauthorized classifies a verification failure as the presented
+// token's fault (malformed, bad signature, expired, revoked/unknown login
+// token, user mismatch). Transport layers map errors wrapping it to
+// 401/Unauthenticated. Failures that do NOT wrap it (DB unreachable,
+// config not loaded) are infrastructure faults and must map to 5xx — a
+// client must not discard its session over a server-side blip.
+var ErrUnauthorized = errors.New("unauthorized")
+
+// errServerNotReady marks keyfunc failures that are server faults, not
+// token faults, so they aren't misclassified as ErrUnauthorized below.
+var errServerNotReady = errors.New("server config not loaded")
+
 // Takes an incoming JWT, verifies it is valid and then provides a  UserPermissions struct
 // which tells us the user's ID and the roles / attrs it has
 func VerifyJWTClaims(db *gorm.DB, token string) (valid bool, perms *UserPermissions, err error) {
-	claims := &JWTClaims{}
+	valid, perms, _, err = VerifyJWTClaimsDetailed(db, token)
+	return
+}
 
-	tkn, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (any, error) {
-		return []byte(app.GetConfig().JWTKey), nil
+// VerifyJWTClaimsDetailed verifies an incoming JWT — signature, expiry, and
+// the backing login-token row — and returns the caller's permissions along
+// with the complete verified claims. RegisteredClaims.ExpiresAt in the
+// returned claims is what transport layers propagate so clients can discover
+// when their session ends. Claims are returned only on full verification;
+// expiration is never reported from an unverified token.
+func VerifyJWTClaimsDetailed(db *gorm.DB, token string) (valid bool, perms *UserPermissions, claims *JWTClaims, err error) {
+	parsed := &JWTClaims{}
+
+	tkn, err := jwt.ParseWithClaims(token, parsed, func(token *jwt.Token) (any, error) {
+		cfg := app.GetConfig()
+		if cfg == nil {
+			return nil, errServerNotReady
+		}
+		return []byte(cfg.JWTKey), nil
 	})
 	if err != nil {
-		err = fmt.Errorf("error parsing JWT: %w", err)
+		// Parse failures are token faults (malformed / bad signature /
+		// expired / not yet valid) — except our own keyfunc error.
+		if errors.Is(err, errServerNotReady) {
+			err = fmt.Errorf("error parsing JWT: %w", err)
+		} else {
+			err = fmt.Errorf("%w: error parsing JWT: %w", ErrUnauthorized, err)
+		}
 		return
 	}
 	valid = tkn.Valid
-	if tkn.Valid {
-		var userid string
-		userid, err = LookupLoginToken(db, claims.LoginToken)
-		if err != nil {
-			err = fmt.Errorf("error LookupLoginToken: %w", err)
-			valid = false
-			return
+	if !valid {
+		err = fmt.Errorf("%w: token not valid", ErrUnauthorized)
+		return
+	}
+	var userid string
+	userid, lerr := LookupLoginToken(db, parsed.LoginToken)
+	if lerr != nil {
+		valid = false
+		if errors.Is(lerr, ErrTokenInvalid) || errors.Is(lerr, ErrTokenExpired) {
+			err = fmt.Errorf("%w: error LookupLoginToken: %w", ErrUnauthorized, lerr)
+		} else {
+			// DB fault — deliberately not ErrUnauthorized.
+			err = fmt.Errorf("error LookupLoginToken: %w", lerr)
 		}
-		if userid != claims.Id {
-			err = fmt.Errorf("user id does not match login token")
-			valid = false
-			return
-		}
-	} else {
-		err = fmt.Errorf("token not valid")
+		return
+	}
+	if userid != parsed.Id {
+		valid = false
+		err = fmt.Errorf("%w: user id does not match login token", ErrUnauthorized)
 		return
 	}
 	perms = &UserPermissions{}
-	perms.mapcaps = make(map[string]bool, len(claims.Caps))
-	for _, cap := range claims.Caps {
+	perms.mapcaps = make(map[string]bool, len(parsed.Caps))
+	for _, cap := range parsed.Caps {
 		perms.mapcaps[cap] = true
 	}
-	perms.capslist = claims.Caps
-	perms.UserID = claims.Id
+	perms.capslist = parsed.Caps
+	perms.UserID = parsed.Id
+	claims = parsed
 	return
 }
 

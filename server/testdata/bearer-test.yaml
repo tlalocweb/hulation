@@ -1,0 +1,14 @@
+port: 8443
+admin:
+  username: admin
+  hash: blah
+jwt_key: "bearer-test-signing-key-0123456789abcdef"
+jwt_expiration: "72h"
+servers:
+  - host: localhost
+    id: testsrv
+dbconfig:
+  host: localhost
+  port: 9010
+  user: default
+  dbname: dbtestmodel
