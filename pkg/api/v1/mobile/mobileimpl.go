@@ -89,15 +89,14 @@ func newID() string {
 // installed by the AdminBearerInterceptor. Admins can spoof via
 // explicit user_id args in write endpoints; read endpoints always
 // trust the claim.
+//
+// Delegates to claimsUserID so every MobileService RPC keys off the SAME
+// identifier: a device registered under this ID and a server-access grant
+// looked up under it must agree, or ListMobileSites could return an empty
+// list for a caller who can still register devices/prefs (they'd be keyed
+// differently). See claimsUserID for the canonical order.
 func currentUserID(ctx context.Context) string {
-	c, ok := ctx.Value(authware.ClaimsKey).(*authware.Claims)
-	if !ok || c == nil {
-		return ""
-	}
-	if c.Email != "" {
-		return c.Email
-	}
-	return c.Username
+	return claimsUserID(currentClaims(ctx))
 }
 
 func currentClaims(ctx context.Context) *authware.Claims {
@@ -105,6 +104,10 @@ func currentClaims(ctx context.Context) *authware.Claims {
 	return c
 }
 
+// claimsUserID is the single canonical user-identity derivation for
+// MobileService: Subject (the stable user id — buildBearerClaims sets
+// Subject == the model user ID) first, then Email, then Username. All
+// server_access grants and device/pref records are keyed by this value.
 func claimsUserID(c *authware.Claims) string {
 	if c == nil {
 		return ""

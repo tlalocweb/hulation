@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/tlalocweb/hulation/config"
 	mobilespec "github.com/tlalocweb/hulation/pkg/apispec/v1/mobile"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
@@ -36,10 +37,10 @@ func makeSitesServer(t *testing.T) (*Server, context.Context) {
 	}
 	srv := New(nil, nil, nil, nil, cfg, nil)
 	ctx := context.WithValue(context.Background(), authware.ClaimsKey, &authware.Claims{
-		Subject:  "user@example.com",
-		Username: "user@example.com",
-		Email:    "user@example.com",
-		Roles:    []string{"user"},
+		RegisteredClaims: jwt.RegisteredClaims{Subject: "user@example.com"},
+		Username:         "user@example.com",
+		Email:            "user@example.com",
+		Roles:            []string{"user"},
 	})
 	return srv, ctx
 }
@@ -47,9 +48,9 @@ func makeSitesServer(t *testing.T) (*Server, context.Context) {
 func TestListMobileSites_AdminGetsAllConfiguredSites(t *testing.T) {
 	srv, _ := makeSitesServer(t)
 	ctx := context.WithValue(context.Background(), authware.ClaimsKey, &authware.Claims{
-		Subject:  "admin@example.com",
-		Username: "admin@example.com",
-		Roles:    []string{"admin"},
+		RegisteredClaims: jwt.RegisteredClaims{Subject: "admin@example.com"},
+		Username:         "admin@example.com",
+		Roles:            []string{"admin"},
 	})
 
 	got, err := srv.ListMobileSites(ctx, &mobilespec.ListMobileSitesRequest{})
