@@ -350,6 +350,9 @@ func (s *Server) RegisterDevice(ctx context.Context, req *mobilespec.RegisterDev
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "put device: %s", err)
 	}
+	if err := hulabolt.EnsureNotificationPrefsForDeviceRegistration(ctx, storage.Global(), userID); err != nil {
+		return nil, status.Errorf(codes.Internal, "ensure notification prefs: %s", err)
+	}
 	return storedDeviceToProto(saved), nil
 }
 

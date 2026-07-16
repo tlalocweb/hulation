@@ -202,6 +202,61 @@ func TestRegisterDevice_LegacyPath_StillWorks(t *testing.T) {
 	}
 }
 
+func TestRegisterDevice_FirstRegistrationEnablesPushPrefs(t *testing.T) {
+	srv, ctx := makeServer(t)
+	pubBytes := make([]byte, 32)
+	_, _ = io.ReadFull(rand.Reader, pubBytes)
+
+	if _, err := srv.RegisterDevice(ctx, &mobilespec.RegisterDeviceRequest{
+		Platform:              mobilespec.Platform_PLATFORM_APNS,
+		DeviceFingerprint:     "fp-prefs-1",
+		RelayChannelId:        "pch_prefs",
+		RelayChannelAuth:      "secret-prefs",
+		NoiseEncryptionPubB64: base64.StdEncoding.EncodeToString(pubBytes),
+	}); err != nil {
+		t.Fatalf("register: %s", err)
+	}
+
+	prefs, err := hulabolt.GetNotificationPrefs(ctx, storage.Global(), "test-user")
+	if err != nil {
+		t.Fatalf("get prefs: %s", err)
+	}
+	if !prefs.PushEnabled {
+		t.Fatalf("PushEnabled = false, want true after first device registration")
+	}
+}
+
+func TestRegisterDevice_PreservesExplicitPushDisabledPrefs(t *testing.T) {
+	srv, ctx := makeServer(t)
+	if _, err := hulabolt.PutNotificationPrefs(ctx, storage.Global(), hulabolt.StoredNotificationPrefs{
+		UserID:       "test-user",
+		EmailEnabled: true,
+		PushEnabled:  false,
+	}); err != nil {
+		t.Fatalf("put prefs: %s", err)
+	}
+	pubBytes := make([]byte, 32)
+	_, _ = io.ReadFull(rand.Reader, pubBytes)
+
+	if _, err := srv.RegisterDevice(ctx, &mobilespec.RegisterDeviceRequest{
+		Platform:              mobilespec.Platform_PLATFORM_APNS,
+		DeviceFingerprint:     "fp-prefs-2",
+		RelayChannelId:        "pch_prefs_2",
+		RelayChannelAuth:      "secret-prefs-2",
+		NoiseEncryptionPubB64: base64.StdEncoding.EncodeToString(pubBytes),
+	}); err != nil {
+		t.Fatalf("register: %s", err)
+	}
+
+	prefs, err := hulabolt.GetNotificationPrefs(ctx, storage.Global(), "test-user")
+	if err != nil {
+		t.Fatalf("get prefs: %s", err)
+	}
+	if prefs.PushEnabled {
+		t.Fatalf("PushEnabled = true, want explicit disabled preference preserved")
+	}
+}
+
 func TestRegisterDevice_DualPath_BothFieldsStored(t *testing.T) {
 	// A device that registers with both legacy + relay fields keeps both on the
 	// row — `resolveChatRecipientCohorts` picks the relay path when both exist

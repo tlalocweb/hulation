@@ -39,22 +39,13 @@ func AdminBearerHTTPMiddleware(next http.Handler) http.Handler {
 		authz := r.Header.Get("Authorization")
 		if len(authz) > len(prefix) && authz[:len(prefix)] == prefix {
 			token := authz[len(prefix):]
-			if ok, perms, err := model.VerifyJWTClaims(model.GetDB(), token); err == nil && ok && perms != nil {
+			if ok, perms, verified, err := model.VerifyJWTClaimsDetailed(model.GetDB(), token); err == nil && ok && perms != nil {
 				cfg := hulaapp.GetConfig()
 				adminUsername := ""
 				if cfg != nil {
 					adminUsername = cfg.Admin.Username
 				}
-				roles := []string{}
-				if perms.UserID != "" && adminUsername != "" && perms.UserID == adminUsername {
-					roles = append(roles, "admin")
-				}
-				claims := &authware.Claims{
-					Username:    perms.UserID,
-					Roles:       roles,
-					Permissions: perms.ListCaps(),
-				}
-				claims.Subject = perms.UserID
+				claims := claimsFromVerifiedBearer(perms, verified, adminUsername)
 				r = r.WithContext(context.WithValue(r.Context(), authware.ClaimsKey, claims))
 			}
 		}
@@ -103,7 +94,7 @@ func claimsFromBearer(ctx context.Context) *authware.Claims {
 	if token == "" {
 		return nil
 	}
-	ok, perms, err := model.VerifyJWTClaims(model.GetDB(), token)
+	ok, perms, verified, err := model.VerifyJWTClaimsDetailed(model.GetDB(), token)
 	if err != nil || !ok || perms == nil {
 		return nil
 	}
@@ -112,14 +103,19 @@ func claimsFromBearer(ctx context.Context) *authware.Claims {
 	if cfg != nil {
 		adminUsername = cfg.Admin.Username
 	}
-	roles := []string{}
-	if perms.UserID != "" && adminUsername != "" && perms.UserID == adminUsername {
-		roles = append(roles, "admin")
-	}
+	return claimsFromVerifiedBearer(perms, verified, adminUsername)
+}
+
+func claimsFromVerifiedBearer(perms *model.UserPermissions, verified *model.JWTClaims, adminUsername string) *authware.Claims {
 	claims := &authware.Claims{
 		Username:    perms.UserID,
-		Roles:       roles,
 		Permissions: perms.ListCaps(),
+	}
+	if verified != nil {
+		claims.RegisteredClaims = verified.RegisteredClaims
+	}
+	if perms.UserID != "" && adminUsername != "" && perms.UserID == adminUsername {
+		claims.Roles = []string{"admin"}
 	}
 	claims.Subject = perms.UserID
 	return claims
@@ -199,9 +195,9 @@ func mdFirst(md metadata.MD, key string) string {
 var deviceNonces = newDeviceNonceSet(8192)
 
 type deviceNonceSet struct {
-	mu    sync.Mutex
-	cap   int
-	by    map[string]time.Time // key = deviceID + "\x00" + nonce
+	mu  sync.Mutex
+	cap int
+	by  map[string]time.Time // key = deviceID + "\x00" + nonce
 }
 
 func newDeviceNonceSet(cap int) *deviceNonceSet {

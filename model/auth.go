@@ -32,9 +32,9 @@ func GetCaps(caps string) []string {
 
 type JWTClaims struct {
 	Id          string   // user id
-	LoginToken  string   `json:"t"`              // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
-	Caps        []string `json:"c"`              // map of capabilities
-	TotpPending bool     `json:"tp,omitempty"`   // true if this is a limited token pending TOTP validation
+	LoginToken  string   `json:"t"`            // the login token - which is a UUID also, but has an associated expiration in the database along with a user id which should match the 'id' in the claim
+	Caps        []string `json:"c"`            // map of capabilities
+	TotpPending bool     `json:"tp,omitempty"` // true if this is a limited token pending TOTP validation
 	jwt.RegisteredClaims
 }
 
@@ -166,7 +166,14 @@ func (p *UserPermissions) ListCaps() []string {
 // Takes an incoming JWT, verifies it is valid and then provides a  UserPermissions struct
 // which tells us the user's ID and the roles / attrs it has
 func VerifyJWTClaims(db *gorm.DB, token string) (valid bool, perms *UserPermissions, err error) {
-	claims := &JWTClaims{}
+	valid, perms, _, err = VerifyJWTClaimsDetailed(db, token)
+	return
+}
+
+// VerifyJWTClaimsDetailed is the verified-token variant used by middleware that
+// must preserve standard JWT metadata such as expiration in the request context.
+func VerifyJWTClaimsDetailed(db *gorm.DB, token string) (valid bool, perms *UserPermissions, claims *JWTClaims, err error) {
+	claims = &JWTClaims{}
 
 	tkn, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (any, error) {
 		return []byte(app.GetConfig().JWTKey), nil
