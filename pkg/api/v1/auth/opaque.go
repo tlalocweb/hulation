@@ -256,7 +256,16 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 	// token and set totp_required so the client completes the second
 	// factor via TotpValidate. The pending token is scoped to the
 	// TOTP-completion endpoints by the bearer interceptors.
-	if totpRequiredForLogin(finish.Username, finish.Provider) {
+	//
+	// Fail closed: if the TOTP-state lookup errors we cannot know whether
+	// this user is 2FA-protected, so we refuse to issue any session
+	// rather than risk minting a full JWT that bypasses the gate.
+	totpNeeded, terr := totpRequiredForLogin(finish.Username, finish.Provider)
+	if terr != nil {
+		aLog.Errorf("OPAQUE LoginFinish: TOTP-state check failed for %s|%s: %v", finish.Provider, finish.Username, terr)
+		return nil, status.Error(codes.Unavailable, "cannot verify authentication state; please retry")
+	}
+	if totpNeeded {
 		pending, err := model.NewTotpPendingToken(model.GetDB(), finish.Username)
 		if err != nil {
 			aLog.Errorf("OPAQUE LoginFinish: totp-pending token issue: %v", err)
@@ -298,14 +307,23 @@ func (s *Server) OpaqueLoginFinish(ctx context.Context, req *authspec.OpaqueLogi
 // handler.CheckTotpRequired: any user with an enabled TOTP record must
 // validate; the admin must also validate (to enroll) when config sets
 // admin.totp_required even before enrollment.
-func totpRequiredForLogin(username, provider string) bool {
-	if rec, err := model.GetAdminTotp(model.GetDB(), username); err == nil && rec != nil && rec.TotpEnabled {
-		return true
+//
+// Returns an error if the TOTP-state lookup fails so the caller can fail
+// closed — a DB fault must never be read as "no TOTP required". A user with
+// simply no TOTP record is (false, nil): GetAdminTotp maps not-found to
+// (nil, nil), so ordinary non-2FA logins are not blocked.
+func totpRequiredForLogin(username, provider string) (bool, error) {
+	rec, err := model.GetAdminTotp(model.GetDB(), username)
+	if err != nil {
+		return false, err
+	}
+	if rec != nil && rec.TotpEnabled {
+		return true, nil
 	}
 	if provider == providerAdmin {
 		if cfg := config.GetConfig(); cfg != nil && cfg.Admin != nil && cfg.Admin.TotpRequired {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
