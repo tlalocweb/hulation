@@ -214,6 +214,19 @@ func VerifyJWTClaimsDetailed(db *gorm.DB, token string) (valid bool, perms *User
 		err = fmt.Errorf("%w: token not valid", ErrUnauthorized)
 		return
 	}
+	// The signature/expiry checks above need no DB; only the login-token
+	// revocation lookup does. A nil DB here means the model layer isn't
+	// connected yet (early startup / reconnect): that's an infrastructure
+	// fault, NOT a bad token, so return a bare error (no ErrUnauthorized)
+	// — transports map it to 5xx and the client keeps its session — and
+	// LookupLoginToken never nil-derefs. A provably-bad token (bad sig /
+	// expired) has already been rejected as ErrUnauthorized above,
+	// independent of DB availability.
+	if db == nil {
+		valid = false
+		err = fmt.Errorf("database not available for JWT verification")
+		return
+	}
 	var userid string
 	userid, lerr := LookupLoginToken(db, parsed.LoginToken)
 	if lerr != nil {
@@ -589,7 +602,11 @@ func LookupLoginToken(db *gorm.DB, token string) (userid string, err error) {
 		err = ErrTokenExpired
 		err2 := db.Delete(&LoginToken{}, "id = ?", token).Error
 		if err2 != nil {
-			err = fmt.Errorf("token expired and could not be deleted: %w", err2)
+			// Keep ErrTokenExpired in the chain (two %w verbs) so callers
+			// that classify with errors.Is still see this as an expired
+			// token — a failed cleanup delete is an expired session, not
+			// an infrastructure fault.
+			err = fmt.Errorf("%w (cleanup delete failed: %w)", ErrTokenExpired, err2)
 		}
 		return
 	}
