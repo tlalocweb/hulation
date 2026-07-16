@@ -28,10 +28,33 @@ import (
 	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
+	authspec "github.com/tlalocweb/hulation/pkg/apispec/v1/auth"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 )
 
 var authLog = log.GetTaggedLogger("bearer-auth", "Unified server bearer authentication")
+
+// totp_pending is a LIMITED token: the password check passed but the second
+// factor hasn't. It may only reach the endpoints needed to complete or
+// enroll TOTP (plus WhoAmI). The full authware middleware enforces this via
+// checkTotpPendingToken, but that middleware isn't wired on the unified
+// server — these bearer interceptors are the only gate, so the same
+// restriction lives here. Keep the two maps in sync.
+var totpPendingAllowedMethods = map[string]bool{
+	authspec.AuthService_TotpValidate_FullMethodName:    true,
+	authspec.AuthService_TotpSetup_FullMethodName:       true,
+	authspec.AuthService_TotpVerifySetup_FullMethodName: true,
+	authspec.AuthService_TotpStatus_FullMethodName:      true,
+	authspec.AuthService_WhoAmI_FullMethodName:          true,
+}
+
+var totpPendingAllowedHTTP = map[string]bool{
+	"POST /api/v1/auth/totp/validate":     true,
+	"POST /api/v1/auth/totp/setup":        true,
+	"POST /api/v1/auth/totp/verify-setup": true,
+	"GET /api/v1/auth/totp/status":        true,
+	"GET /api/v1/auth/whoami":             true,
+}
 
 // AdminBearerHTTPMiddleware mirrors AdminBearerInterceptor for the
 // grpc-gateway path. grpc-gateway calls the gRPC service
@@ -49,6 +72,14 @@ func AdminBearerHTTPMiddleware(next http.Handler) http.Handler {
 			claims, err := buildBearerClaims(token)
 			switch {
 			case claims != nil:
+				// A limited totp_pending bearer may only reach the
+				// TOTP-completion endpoints. Anywhere else, reject as if
+				// unauthenticated — the second factor isn't done yet.
+				if claims.TotpPending && !totpPendingAllowedHTTP[r.Method+" "+r.URL.Path] {
+					authLog.Debugf("totp_pending bearer blocked on %s %s", r.Method, r.URL.Path)
+					writeTotpPendingReject(w)
+					return
+				}
 				r = r.WithContext(context.WithValue(r.Context(), authware.ClaimsKey, claims))
 			case bearerRequiredForHTTP(r):
 				// A bearer was presented and failed verification on a
@@ -97,6 +128,15 @@ func writeBearerReject(w http.ResponseWriter, r *http.Request, err error) {
 	authLog.Errorf("bearer verification unavailable on %s %s: %v", r.Method, r.URL.Path, err)
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_, _ = w.Write([]byte(`{"code":14,"message":"authentication temporarily unavailable"}`))
+}
+
+// writeTotpPendingReject rejects a limited totp_pending bearer used outside
+// the TOTP-completion allowlist. 403 (not 401): the token is valid, but the
+// second factor must be completed before it grants access here.
+func writeTotpPendingReject(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"code":7,"message":"TOTP validation required"}`))
 }
 
 // buildBearerClaims verifies a raw bearer JWT and converts it into
@@ -186,6 +226,12 @@ func authenticateGRPC(ctx context.Context, deviceKeys authware.DeviceKeyStore, f
 	if token != "" {
 		claims, err := buildBearerClaims(token)
 		if claims != nil {
+			// A limited totp_pending bearer may only reach the
+			// TOTP-completion endpoints; reject it everywhere else.
+			if claims.TotpPending && !totpPendingAllowedMethods[fullMethod] {
+				authLog.Debugf("totp_pending bearer blocked on %s", fullMethod)
+				return ctx, status.Error(codes.PermissionDenied, "TOTP validation required")
+			}
 			return context.WithValue(ctx, authware.ClaimsKey, claims), nil
 		}
 		if authware.RequiresAuth(fullMethod) {
