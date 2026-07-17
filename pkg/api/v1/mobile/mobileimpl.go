@@ -133,7 +133,7 @@ func claimsHasRole(c *authware.Claims, want string) bool {
 	return false
 }
 
-// presetToRange maps "24h" / "7d" / "30d" to (from, to, granularity).
+// presetToRange maps "24h" / "7d" / "30d" / "90d" to (from, to, granularity).
 func presetToRange(preset string) (time.Time, time.Time, string) {
 	to := time.Now().UTC()
 	var from time.Time
@@ -145,11 +145,17 @@ func presetToRange(preset string) (time.Time, time.Time, string) {
 	case "30d":
 		from = to.Add(-30 * 24 * time.Hour)
 		grain = "day"
+	case "90d":
+		from = to.Add(-90 * 24 * time.Hour)
+		grain = "day"
 	case "", "7d":
 		from = to.Add(-7 * 24 * time.Hour)
 		grain = "day"
 	default:
+		// Unknown/typo preset: fall back to the same 7-day daily
+		// window as "7d" rather than 7 days at the initial hourly grain.
 		from = to.Add(-7 * 24 * time.Hour)
+		grain = "day"
 	}
 	return from, to, grain
 }
