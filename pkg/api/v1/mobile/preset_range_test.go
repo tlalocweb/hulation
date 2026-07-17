@@ -15,6 +15,9 @@ func TestPresetToRange(t *testing.T) {
 		{"7d", 7 * 24 * time.Hour, "day"},
 		{"30d", 30 * 24 * time.Hour, "day"},
 		{"90d", 90 * 24 * time.Hour, "day"},
+		// Empty and unknown presets both fall back to the 7-day daily window.
+		{"", 7 * 24 * time.Hour, "day"},
+		{"bogus", 7 * 24 * time.Hour, "day"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.preset, func(t *testing.T) {
