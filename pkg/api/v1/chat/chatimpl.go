@@ -87,6 +87,28 @@ type Server struct {
 	store *chatpkg.Store
 	live  LiveSessionsView
 	acl   ACLLookup
+	// hubFn lazily resolves the per-process chat hub so CloseSession can
+	// broadcast the authoritative session_closed frame to the visitor.
+	// A getter (not a captured pointer) because the hub singleton is
+	// constructed later in boot than this service; nil until SetHub is
+	// called → CloseSession still persists, it just can't broadcast.
+	hubFn func() *chatpkg.Hub
+}
+
+// SetHub wires the lazy hub accessor after construction. Called from
+// boot once the per-process hub exists so the REST CloseSession RPC can
+// broadcast session_closed to the connected visitor.
+func (s *Server) SetHub(hubFn func() *chatpkg.Hub) {
+	if s != nil {
+		s.hubFn = hubFn
+	}
+}
+
+func (s *Server) hub() *chatpkg.Hub {
+	if s == nil || s.hubFn == nil {
+		return nil
+	}
+	return s.hubFn()
 }
 
 // New constructs the service.
@@ -370,7 +392,11 @@ func (s *Server) CloseSession(ctx context.Context, req *chatspec.CloseSessionReq
 	if err != nil {
 		return nil, err
 	}
-	sess, err := s.store.MarkSessionClosed(ctx, req.GetServerId(), id, req.GetReason())
+	// Funnel through the shared close path so REST closes persist AND
+	// broadcast the authoritative session_closed frame to the visitor,
+	// exactly like the WS/gRPC agent-close paths. Idempotent: re-closing
+	// an already-closed session is a no-op success.
+	sess, _, err := chatpkg.CloseSession(ctx, s.store, s.hub(), req.GetServerId(), id, req.GetReason())
 	if errors.Is(err, chatpkg.ErrNotFound) {
 		return nil, status.Error(codes.NotFound, "session not found")
 	}

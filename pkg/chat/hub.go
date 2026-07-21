@@ -77,12 +77,26 @@ type PresenceSnapshot struct {
 type Hub struct {
 	mu       sync.RWMutex
 	sessions map[uuid.UUID]map[*Subscriber]struct{}
+	// closed is the set of sessions an agent has explicitly closed in
+	// this process. It is the race-free, in-process source of truth the
+	// visitor reader checks before persisting a message: once an agent
+	// close flips the flag (under mu), a concurrent visitor send loses
+	// the race deterministically. ClickHouse remains the durable
+	// authority (and covers a process restart / cross-node reconnect);
+	// this flag just closes the live-session window without a DB
+	// round-trip. Entries are never removed — a closed session stays
+	// closed for the life of the process, and the cardinality is bounded
+	// by sessions handled since boot.
+	closed map[uuid.UUID]struct{}
 }
 
 // NewHub returns an empty Hub. Tests use it directly; the runtime
 // holds one shared Hub per process.
 func NewHub() *Hub {
-	return &Hub{sessions: make(map[uuid.UUID]map[*Subscriber]struct{})}
+	return &Hub{
+		sessions: make(map[uuid.UUID]map[*Subscriber]struct{}),
+		closed:   make(map[uuid.UUID]struct{}),
+	}
 }
 
 // Subscribe registers s on sessionID. Returns a snapshot of who
@@ -158,6 +172,35 @@ func (h *Hub) Unsubscribe(sessionID uuid.UUID, s *Subscriber) {
 	if len(subs) == 0 {
 		delete(h.sessions, sessionID)
 	}
+}
+
+// MarkClosed records that sessionID has been explicitly closed in this
+// process. Idempotent; nil-safe. Set by CloseSession under the same
+// lock Publish uses so the flag and the terminal broadcast are
+// consistent for any observer.
+func (h *Hub) MarkClosed(sessionID uuid.UUID) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.closed == nil {
+		h.closed = make(map[uuid.UUID]struct{})
+	}
+	h.closed[sessionID] = struct{}{}
+	h.mu.Unlock()
+}
+
+// IsClosed reports whether sessionID was explicitly closed in this
+// process. The visitor reader consults it before persisting a message
+// so a send racing an agent close loses. nil-safe → false.
+func (h *Hub) IsClosed(sessionID uuid.UUID) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	_, ok := h.closed[sessionID]
+	h.mu.RUnlock()
+	return ok
 }
 
 // Publish fans frame to every subscriber on sessionID. exclude

@@ -70,7 +70,8 @@
    after the session opens. */
 #hula-chat .hc-start[hidden],
 #hula-chat .hc-log[hidden],
-#hula-chat .hc-composer[hidden] {
+#hula-chat .hc-composer[hidden],
+#hula-chat .hc-ended[hidden] {
   display: none;
 }
 
@@ -224,6 +225,27 @@
   cursor: not-allowed;
 }
 
+/* Terminal state: shown in place of the composer once the server sends
+   session_closed. The composer is hidden and this banner takes its
+   spot at the foot of the panel. */
+#hula-chat .hc-ended {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+  text-align: center;
+}
+#hula-chat .hc-ended-note {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+#hula-chat .hc-restart {
+  margin-top: 0;
+}
+
 @media (prefers-color-scheme: dark) {
   #hula-chat {
     background: #1f2937;
@@ -244,6 +266,10 @@
     color: #f9fafb;
   }
   #hula-chat .hc-composer {
+    background: #1f2937;
+    border-top-color: #374151;
+  }
+  #hula-chat .hc-ended {
     background: #1f2937;
     border-top-color: #374151;
   }

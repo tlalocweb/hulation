@@ -129,6 +129,18 @@ func TestTranslateAgentJSONToProto(t *testing.T) {
 		}
 	})
 
+	t.Run("session_closed frame becomes terminal SystemEvent", func(t *testing.T) {
+		raw := mustMarshal(map[string]any{
+			"type":   "session_closed",
+			"reason": "agent wrapped up",
+		})
+		out, _ := translateAgentJSONToProto(raw, sessionID)
+		sys := out.GetSystem()
+		if sys == nil || sys.Kind != "session_closed" || sys.Message != "agent wrapped up" {
+			t.Fatalf("session_closed frame: %+v", sys)
+		}
+	})
+
 	t.Run("presence frame becomes SystemEvent with namespaced kind", func(t *testing.T) {
 		raw := mustMarshal(map[string]any{
 			"type":  "presence",

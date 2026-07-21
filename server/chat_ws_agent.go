@@ -48,8 +48,8 @@ import (
 	hulaapp "github.com/tlalocweb/hulation/app"
 	"github.com/tlalocweb/hulation/log"
 	"github.com/tlalocweb/hulation/model"
-	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	chatimpl "github.com/tlalocweb/hulation/pkg/api/v1/chat"
+	chatpkg "github.com/tlalocweb/hulation/pkg/chat"
 	"github.com/tlalocweb/hulation/pkg/server/authware"
 )
 
@@ -300,14 +300,14 @@ func agentReader(
 				"ts":        msg.When,
 			}), sub)
 		case "close":
-			_, err := deps.Store.MarkSessionClosed(ctx, sess.ServerID, sessionID, fr.Reason)
-			if err != nil {
+			// Explicit agent close: persist + broadcast the
+			// authoritative session_closed frame (idempotent). This is
+			// distinct from the agent's WS merely dropping — a
+			// disconnect falls through to the `stop` branch below and
+			// only emits an agent_left presence event, never a close.
+			if _, _, err := chatpkg.CloseSession(ctx, deps.Store, deps.Hub, sess.ServerID, sessionID, fr.Reason); err != nil {
 				log.Warnf("chat agent ws close: %s", err)
 			}
-			deps.Hub.Publish(sessionID, mustMarshal(map[string]any{
-				"type":    "system",
-				"content": "Session closed by agent.",
-			}), nil)
 			return
 		default:
 			_ = trySend(sub.Out, errFrame("unknown_type", fr.Type))

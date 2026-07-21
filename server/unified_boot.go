@@ -319,6 +319,10 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	// each call so /chat/admin/live-sessions returns real data
 	// the moment the WS endpoint is up.
 	chatSvc := chatimpl.New(chatStore, chatLiveLazy{}, chatACLLookup(cfg))
+	// Wire the lazy hub accessor so the REST CloseSession RPC can
+	// broadcast session_closed to the connected visitor once the
+	// per-process hub is up (registerChatPublic, later in boot).
+	chatSvc.SetHub(ChatHub)
 	chatspec.RegisterChatServiceServer(grpcSrv, chatSvc)
 	if err := chatspec.RegisterChatServiceHandlerServer(ctx, gwMux, chatSvc); err != nil {
 		return nil, fmt.Errorf("register chat handler: %w", err)

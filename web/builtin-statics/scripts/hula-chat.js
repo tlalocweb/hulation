@@ -285,6 +285,10 @@
       + '<div class="hc-composer" hidden>'
       +   '<input type="text" name="msg" placeholder="Type a message…" />'
       +   '<button type="button" class="hc-send" disabled>Send</button>'
+      + '</div>'
+      + '<div class="hc-ended" hidden>'
+      +   '<p class="hc-ended-note">This chat has ended.</p>'
+      +   '<button type="button" class="hc-primary hc-restart">Start new chat</button>'
       + '</div>';
     document.body.appendChild(root);
     return root;
@@ -483,17 +487,24 @@
     var startEl    = panel.querySelector(".hc-start");
     var logEl      = panel.querySelector(".hc-log");
     var composerEl = panel.querySelector(".hc-composer");
+    var endedEl    = panel.querySelector(".hc-ended");
     var emailInput = panel.querySelector('input[name="email"]');
     var firstInput = panel.querySelector('textarea[name="first"]');
     var msgInput   = panel.querySelector('input[name="msg"]');
     var startBtn   = panel.querySelector(".hc-start-btn");
     var sendBtn    = panel.querySelector(".hc-send");
+    var restartBtn = panel.querySelector(".hc-restart");
     var closeBtn   = panel.querySelector(".hc-close");
     var captchaContainer = panel.querySelector("#hc-captcha");
     var errorEl    = panel.querySelector("#hc-error");
 
     var ws = null;
     var session = null;
+    // chatEnded latches once the server declares the session terminal
+    // (session_closed frame). It gates the composer AND suppresses the
+    // generic "Disconnected." notice — an explicit close is final, not
+    // a "you can keep typing" reconnect prompt.
+    var chatEnded = false;
 
     function showError(msg) {
       if (!errorEl) return;
@@ -649,8 +660,16 @@
               appendMsg(frame.direction === "agent" ? "them" : "me", frame.content || "");
             }
             break;
+          case "session_closed":
+            // Authoritative terminal signal from the server. The chat
+            // can never accept another message — end it locally.
+            endChat();
+            break;
           case "presence":
-            // not surfaced today
+            // Presence (incl. agent_left) is not surfaced today, and
+            // must never be after an explicit close: session_closed is
+            // final, so we deliberately don't render "agent left, keep
+            // typing" here.
             break;
           case "ack":
           default:
@@ -659,11 +678,54 @@
       };
       ws.onclose = function () {
         sendBtn.disabled = true;
+        // A terminal close already showed "This chat has ended." — don't
+        // follow it with a "Disconnected." that implies reconnect/retry.
+        if (chatEnded) return;
         appendMsg("sys", "Disconnected.");
       };
     }
 
+    // endChat marks the session terminal in the UI: disable the
+    // composer, swap in the "This chat has ended." banner (with a Start
+    // new chat action), and drop the socket. Idempotent.
+    function endChat() {
+      if (chatEnded) return;
+      chatEnded = true;
+      msgInput.disabled = true;
+      sendBtn.disabled = true;
+      composerEl.hidden = true;
+      endedEl.hidden = false;
+      appendMsg("sys", "This chat has ended.");
+      try { if (ws) ws.close(); } catch (_) {}
+    }
+
+    // startNewChat tears down the ended session and returns to the start
+    // form, so the next "Start chat" mints a brand-new session id.
+    function startNewChat() {
+      try { if (ws) ws.close(); } catch (_) {}
+      ws = null;
+      session = null;
+      chatEnded = false;
+      logEl.innerHTML = "";
+      msgInput.disabled = false;
+      msgInput.value = "";
+      sendBtn.disabled = true;
+      endedEl.hidden = true;
+      composerEl.hidden = true;
+      logEl.hidden = true;
+      startEl.hidden = false;
+      startBtn.disabled = false;
+      startBtn.textContent = "Start chat";
+      showError("");
+      if (CAPTCHA) {
+        CAPTCHA.load().then(function () { CAPTCHA.render(captchaContainer); });
+      }
+      emailInput.focus();
+    }
+    restartBtn.addEventListener("click", startNewChat);
+
     function sendMessage() {
+      if (chatEnded) return;
       var text = (msgInput.value || "").trim();
       if (!text || !ws || ws.readyState !== 1) return;
       if (enc.ready) {
