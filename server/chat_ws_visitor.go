@@ -121,7 +121,10 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			return
 		}
 
-		// Confirm session exists + isn't closed.
+		// Load the session row. A terminal (closed/expired) status is NOT
+		// refused here: the block below upgrades such a session and serves
+		// it read-only so the widget can read an authoritative
+		// session_closed frame. We still require the row to exist.
 		sess, err := svc.Store.GetSession(r.Context(), claims.ServerID, sessionID)
 		if err != nil {
 			if errors.Is(err, chatpkg.ErrNotFound) {
@@ -132,25 +135,31 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			http.Error(w, "internal", http.StatusInternalServerError)
 			return
 		}
-		if sess.Status == chatpkg.StatusClosed || sess.Status == chatpkg.StatusExpired {
-			http.Error(w, "session closed", http.StatusGone)
-			return
-		}
+		// A terminal (closed/expired) session is read-only. We do NOT
+		// refuse the upgrade: the widget needs an authoritative
+		// session_closed frame to disable its composer, and it can't
+		// read one off a rejected upgrade. Instead we upgrade, send the
+		// terminal frame, and serve a read-only connection that never
+		// joins the active chat stream nor persists anything.
+		terminalAtConnect := chatpkg.IsTerminalStatus(sess.Status) || svc.Hub.IsClosed(sessionID)
 
 		// Kick any prior visitor socket so a reconnect doesn't
-		// stack a ghost reader against the same session.
-		if old := svc.Hub.VisitorSubscriber(sessionID); old != nil {
-			// Send a system close-ish notice; we don't have a
-			// handle on the old conn directly, but draining its
-			// Out + closing it via the hub achieves the effect:
-			// the writer goroutine on the old WS will see the
-			// channel close and exit.
-			_ = trySend(old.Out, mustMarshal(map[string]any{
-				"type":    "system",
-				"content": "Reconnected from another tab; closing this connection.",
-			}))
-			svc.Hub.Unsubscribe(sessionID, old)
-			close(old.Out)
+		// stack a ghost reader against the same session. Skipped for a
+		// terminal session — there is no live stream to protect.
+		if !terminalAtConnect {
+			if old := svc.Hub.VisitorSubscriber(sessionID); old != nil {
+				// Send a system close-ish notice; we don't have a
+				// handle on the old conn directly, but draining its
+				// Out + closing it via the hub achieves the effect:
+				// the writer goroutine on the old WS will see the
+				// channel close and exit.
+				_ = trySend(old.Out, mustMarshal(map[string]any{
+					"type":    "system",
+					"content": "Reconnected from another tab; closing this connection.",
+				}))
+				svc.Hub.Unsubscribe(sessionID, old)
+				close(old.Out)
+			}
 		}
 
 		conn, err := chatWSUpgrader.Upgrade(w, r, nil)
@@ -159,6 +168,14 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			return
 		}
 		defer conn.Close()
+
+		// Reconnect to an already-closed session: send the terminal
+		// status immediately and serve read-only (no subscribe, no
+		// persist), so a closed chat can never rejoin the live stream.
+		if terminalAtConnect {
+			serveClosedVisitorWS(conn, cfg)
+			return
+		}
 
 		sub := &chatpkg.Subscriber{
 			Out:  make(chan []byte, chatpkg.SubscriberOutBufferSize),
@@ -184,6 +201,12 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 		})
 
 		stop := make(chan struct{})
+
+		// readOnly latches once this connection observes its session go
+		// terminal (agent closed it mid-chat). From then on every send
+		// is rejected with a session_closed frame without another DB
+		// round-trip — the socket is read-only until the client closes.
+		readOnly := false
 
 		// Reader goroutine.
 		go func() {
@@ -229,6 +252,30 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 					content := strings.TrimSpace(fr.Content)
 					if content == "" {
 						_ = trySend(sub.Out, errFrame("empty_content", "message cannot be empty"))
+						continue
+					}
+					// Authoritative closure gate. An agent may have
+					// closed the chat while this socket stayed open; a
+					// closed/expired session can never accept another
+					// visitor message. Check the race-free in-process
+					// flag first, then reload the source of truth
+					// (ClickHouse) — never trust the optimistic "still
+					// open" view this long-lived reader started with. On
+					// terminal: reject with session_closed, persist
+					// nothing, broadcast nothing, and latch read-only.
+					if readOnly || svc.Hub.IsClosed(sessionID) {
+						readOnly = true
+						_ = trySend(sub.Out, chatpkg.SessionClosedFrame(""))
+						continue
+					}
+					if _, gerr := chatpkg.ReloadOpenSession(r.Context(), svc.Store, claims.ServerID, sessionID); gerr != nil {
+						if errors.Is(gerr, chatpkg.ErrSessionClosed) || errors.Is(gerr, chatpkg.ErrNotFound) {
+							readOnly = true
+							_ = trySend(sub.Out, chatpkg.SessionClosedFrame(""))
+							continue
+						}
+						log.Warnf("chat ws: reload session: %s", gerr)
+						_ = trySend(sub.Out, errFrame("internal", "could not verify session"))
 						continue
 					}
 					if !ratelimit.Allow(claims.ServerID, claims.SessionID) {
@@ -298,6 +345,68 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 				}), sub)
 				return
 			}
+		}
+	}
+}
+
+// serveClosedVisitorWS handles a visitor WebSocket bound to a session
+// that is already terminal (closed/expired) at connect time. It sends
+// the authoritative session_closed frame straight away so the widget
+// disables its composer, then serves the connection read-only: it never
+// subscribes to the hub (so it can't rejoin the live stream), never
+// persists, and answers any send attempt with another session_closed.
+// The connection stays open for heartbeats until the client closes.
+func serveClosedVisitorWS(conn *websocket.Conn, cfg visitorWSConfig) {
+	_ = conn.SetWriteDeadline(time.Now().Add(cfg.WriteTimeout))
+	if err := conn.WriteMessage(websocket.TextMessage, chatpkg.SessionClosedFrame("")); err != nil {
+		return
+	}
+
+	conn.SetReadDeadline(time.Now().Add(cfg.PongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(cfg.PongTimeout))
+		return nil
+	})
+
+	stop := make(chan struct{})
+	// Reader goroutine: it is the SOLE data-frame writer here
+	// (SetWriteDeadline + WriteMessage on a "msg" attempt). The ping loop
+	// below must therefore only ever call WriteControl — which gorilla
+	// allows concurrently with a single writer, and which carries its own
+	// deadline — and must NOT call SetWriteDeadline, which would race this
+	// goroutine's SetWriteDeadline on the same conn.
+	go func() {
+		defer close(stop)
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			conn.SetReadDeadline(time.Now().Add(cfg.PongTimeout))
+			var fr visitorFrameIn
+			if json.Unmarshal(raw, &fr) == nil && fr.Type == "msg" {
+				_ = conn.SetWriteDeadline(time.Now().Add(cfg.WriteTimeout))
+				if err := conn.WriteMessage(websocket.TextMessage, chatpkg.SessionClosedFrame("")); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(cfg.PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			// WriteControl carries its own deadline and is the only conn
+			// write this goroutine makes; do NOT SetWriteDeadline here —
+			// the reader goroutine is the sole SetWriteDeadline caller, and
+			// concurrent SetWriteDeadline calls are a data race.
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(cfg.WriteTimeout)); err != nil {
+				return
+			}
+		case <-stop:
+			return
 		}
 	}
 }

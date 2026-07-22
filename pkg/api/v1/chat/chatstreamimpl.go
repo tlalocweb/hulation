@@ -360,13 +360,13 @@ func (s *StreamServer) runAgentStream(stream agentStream) error {
 			}), subscriber)
 		case *chatspec.AgentClientFrame_Close:
 			_ = body
-			if _, err := s.store.MarkSessionClosed(ctx, sess.ServerID, sessionID, ""); err != nil {
+			// Explicit agent close: persist + broadcast the
+			// authoritative session_closed frame (idempotent). Distinct
+			// from the stream simply ending (io.EOF), which only emits
+			// the deferred agent_left presence event.
+			if _, _, err := chatpkg.CloseSession(ctx, s.store, hub, sess.ServerID, sessionID, ""); err != nil {
 				log.Warnf("chat stream close: %s", err)
 			}
-			hub.Publish(sessionID, mustMarshal(map[string]any{
-				"type":    "system",
-				"content": "Session closed by agent.",
-			}), nil)
 			return nil
 		case *chatspec.AgentClientFrame_Subscribe:
 			_ = body
@@ -581,8 +581,8 @@ func translateControlJSONToProto(raw []byte) (*chatspec.ControlServerFrame, erro
 		return &chatspec.ControlServerFrame{
 			Body: &chatspec.ControlServerFrame_Assigned{
 				Assigned: &chatspec.SessionAssigned{
-					SessionId:   sid,
-					AssignedAt:  timestamppb.New(time.Now().UTC()),
+					SessionId:  sid,
+					AssignedAt: timestamppb.New(time.Now().UTC()),
 				},
 			},
 		}, nil
@@ -665,6 +665,16 @@ func translateAgentJSONToProto(raw []byte, sessionID uuid.UUID) (*chatspec.Agent
 		return &chatspec.AgentServerFrame{
 			Body: &chatspec.AgentServerFrame_System{
 				System: &chatspec.SystemEvent{Kind: "info", Message: content},
+			},
+		}, nil
+	case "session_closed":
+		// Authoritative terminal event. Surface it to observing agent
+		// streams as a namespaced SystemEvent (Kind "session_closed")
+		// so their UI can mark the thread closed too.
+		reason, _ := frame["reason"].(string)
+		return &chatspec.AgentServerFrame{
+			Body: &chatspec.AgentServerFrame_System{
+				System: &chatspec.SystemEvent{Kind: "session_closed", Message: reason},
 			},
 		}, nil
 	case "presence":
@@ -787,4 +797,3 @@ func sendControlError(stream chatspec.ChatStreamService_ControlStreamServer, cod
 		},
 	})
 }
-

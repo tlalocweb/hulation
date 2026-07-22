@@ -77,12 +77,31 @@ type PresenceSnapshot struct {
 type Hub struct {
 	mu       sync.RWMutex
 	sessions map[uuid.UUID]map[*Subscriber]struct{}
+	// closed is the set of sessions an agent has explicitly closed in
+	// this process while a subscriber is connected. It is the race-free,
+	// in-process source of truth the visitor reader checks before
+	// persisting a message: once an agent close flips the flag (under mu),
+	// a concurrent visitor send loses the race deterministically.
+	// ClickHouse remains the durable authority (and covers a process
+	// restart / cross-node reconnect); this flag just closes the live-
+	// session window without a DB round-trip.
+	//
+	// Lifetime is bounded to sessions with a live subscriber: MarkClosed
+	// only records a flag while one is connected, and Unsubscribe drops it
+	// when the last subscriber leaves — so the map tracks live sessions,
+	// not every session ever closed, and can't grow unbounded over the
+	// life of the process. A reconnect after eviction re-derives terminal
+	// status from the durable row at connect time.
+	closed map[uuid.UUID]struct{}
 }
 
 // NewHub returns an empty Hub. Tests use it directly; the runtime
 // holds one shared Hub per process.
 func NewHub() *Hub {
-	return &Hub{sessions: make(map[uuid.UUID]map[*Subscriber]struct{})}
+	return &Hub{
+		sessions: make(map[uuid.UUID]map[*Subscriber]struct{}),
+		closed:   make(map[uuid.UUID]struct{}),
+	}
 }
 
 // Subscribe registers s on sessionID. Returns a snapshot of who
@@ -157,7 +176,50 @@ func (h *Hub) Unsubscribe(sessionID uuid.UUID, s *Subscriber) {
 	delete(subs, s)
 	if len(subs) == 0 {
 		delete(h.sessions, sessionID)
+		// Last subscriber gone: drop any closed-flag too. It only guards a
+		// live visitor's send race; with nobody connected the durable
+		// ClickHouse status is authoritative, so keeping it would leak. A
+		// later reconnect re-derives terminal status from the row.
+		delete(h.closed, sessionID)
 	}
+}
+
+// MarkClosed records that sessionID has been explicitly closed in this
+// process — but only while a subscriber is live on it. The flag exists
+// solely to arbitrate the race between an agent close and a still-
+// connected visitor's in-flight send; with no subscribers there is no
+// in-process race, and the durable ClickHouse status (persisted by
+// CloseSession before this call) is the sole authority a later reconnect
+// reads. Skipping the flag when nobody is connected — and dropping it in
+// Unsubscribe when the last subscriber leaves — keeps `closed` bounded by
+// the live-session count instead of growing once per closed session for
+// the life of the process. Idempotent; nil-safe.
+func (h *Hub) MarkClosed(sessionID uuid.UUID) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.sessions[sessionID]) == 0 {
+		return
+	}
+	if h.closed == nil {
+		h.closed = make(map[uuid.UUID]struct{})
+	}
+	h.closed[sessionID] = struct{}{}
+}
+
+// IsClosed reports whether sessionID was explicitly closed in this
+// process. The visitor reader consults it before persisting a message
+// so a send racing an agent close loses. nil-safe → false.
+func (h *Hub) IsClosed(sessionID uuid.UUID) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	_, ok := h.closed[sessionID]
+	h.mu.RUnlock()
+	return ok
 }
 
 // Publish fans frame to every subscriber on sessionID. exclude
