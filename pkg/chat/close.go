@@ -130,9 +130,9 @@ func CloseSession(
 		return Session{}, false, err
 	}
 	if IsTerminalStatus(prev.Status) {
-		// Already terminal: idempotent no-op. Ensure the in-process
-		// flag is set (cheap, covers a hub that came up after the
-		// original close) but do not re-broadcast.
+		// Already terminal: idempotent no-op. Refresh the in-process flag
+		// (a no-op unless a subscriber is currently live on the session)
+		// but do not re-broadcast.
 		hub.MarkClosed(id)
 		return prev, false, nil
 	}

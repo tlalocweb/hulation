@@ -121,7 +121,10 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			return
 		}
 
-		// Confirm session exists + isn't closed.
+		// Load the session row. A terminal (closed/expired) status is NOT
+		// refused here: the block below upgrades such a session and serves
+		// it read-only so the widget can read an authoritative
+		// session_closed frame. We still require the row to exist.
 		sess, err := svc.Store.GetSession(r.Context(), claims.ServerID, sessionID)
 		if err != nil {
 			if errors.Is(err, chatpkg.ErrNotFound) {
@@ -366,9 +369,12 @@ func serveClosedVisitorWS(conn *websocket.Conn, cfg visitorWSConfig) {
 	})
 
 	stop := make(chan struct{})
-	// Reader goroutine: it is the sole data-frame writer, so the main
-	// loop below only ever issues WriteControl (ping), which gorilla
-	// permits concurrently with a single writer.
+	// Reader goroutine: it is the SOLE data-frame writer here
+	// (SetWriteDeadline + WriteMessage on a "msg" attempt). The ping loop
+	// below must therefore only ever call WriteControl — which gorilla
+	// allows concurrently with a single writer, and which carries its own
+	// deadline — and must NOT call SetWriteDeadline, which would race this
+	// goroutine's SetWriteDeadline on the same conn.
 	go func() {
 		defer close(stop)
 		for {
@@ -392,7 +398,10 @@ func serveClosedVisitorWS(conn *websocket.Conn, cfg visitorWSConfig) {
 	for {
 		select {
 		case <-ticker.C:
-			_ = conn.SetWriteDeadline(time.Now().Add(cfg.WriteTimeout))
+			// WriteControl carries its own deadline and is the only conn
+			// write this goroutine makes; do NOT SetWriteDeadline here —
+			// the reader goroutine is the sole SetWriteDeadline caller, and
+			// concurrent SetWriteDeadline calls are a data race.
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(cfg.WriteTimeout)); err != nil {
 				return
 			}

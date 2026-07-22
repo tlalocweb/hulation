@@ -361,6 +361,14 @@ func TestCloseSendRaceClosureWins(t *testing.T) {
 	s := openSession("acme")
 	store.put(s)
 
+	// A visitor is connected for the duration of the race — its rapid
+	// sends are modelled by the gatedVisitorSend goroutines below. This is
+	// what makes the in-process closed-flag apply (it only guards a live
+	// subscriber's send race). Its Out is buffered; we never read it since
+	// we only assert that closure wins.
+	visitor := &Subscriber{Out: make(chan []byte, 8), Role: RoleVisitor}
+	hub.Subscribe(s.ID, visitor)
+
 	const senders = 8
 	var wg sync.WaitGroup
 	var countAtClose int64 = -1
@@ -406,5 +414,52 @@ func TestCloseSendRaceClosureWins(t *testing.T) {
 	}
 	if gatedVisitorSend(ctx, store, hub, "acme", s.ID) {
 		t.Fatal("a send after the race resolved must be rejected")
+	}
+}
+
+// The in-process closed-flag is bounded: it is only held while a
+// subscriber is live, and is dropped when the last one leaves, so the hub
+// can't accumulate a flag for every session ever closed over the life of
+// the process. Correctness never depends on the flag — the durable store
+// stays authoritative — so eviction only trades a fast-path for one DB
+// read on a later reconnect.
+func TestClosedFlagBoundedToLiveSubscribers(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	hub := NewHub()
+
+	// Closed while a subscriber is connected: the flag is set...
+	s := openSession("acme")
+	store.put(s)
+	v := &Subscriber{Out: make(chan []byte, 4), Role: RoleVisitor}
+	hub.Subscribe(s.ID, v)
+	if _, _, err := CloseSession(ctx, store, hub, "acme", s.ID, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if !hub.IsClosed(s.ID) {
+		t.Fatal("flag should be set while the subscriber is connected")
+	}
+	// ...and evicted once the last subscriber leaves.
+	hub.Unsubscribe(s.ID, v)
+	if hub.IsClosed(s.ID) {
+		t.Fatal("flag must be evicted after the last subscriber unsubscribes")
+	}
+	// The durable store still reports terminal, so a reconnect is still
+	// read-only even without the flag.
+	if _, err := ReloadOpenSession(ctx, store, "acme", s.ID); err != ErrSessionClosed {
+		t.Fatalf("store must still be terminal after eviction, got %v", err)
+	}
+
+	// Closed with NO subscriber connected: no flag is retained at all.
+	s2 := openSession("acme")
+	store.put(s2)
+	if _, _, err := CloseSession(ctx, store, hub, "acme", s2.ID, ""); err != nil {
+		t.Fatalf("close idle: %v", err)
+	}
+	if hub.IsClosed(s2.ID) {
+		t.Fatal("closing with no subscriber must not retain an in-process flag")
+	}
+	if _, err := ReloadOpenSession(ctx, store, "acme", s2.ID); err != ErrSessionClosed {
+		t.Fatalf("idle-closed session must still be terminal in the store, got %v", err)
 	}
 }
