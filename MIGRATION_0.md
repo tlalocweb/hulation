@@ -16,8 +16,10 @@ user-visible break and how to adapt.
 
 ### 1. `hula_ssl` TLS material
 
-The unified HTTPS listener needs TLS material. The simplest option is a static
-cert + key on disk:
+For production, configure TLS material for the unified HTTPS listener (with
+nothing configured it falls back to an in-memory self-signed cert — fine for
+dev/test, but untrusted by clients). The simplest option is a static cert + key
+on disk:
 
 ```yaml
 hula_ssl:

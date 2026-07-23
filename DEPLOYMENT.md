@@ -262,15 +262,16 @@ authoritatively. WebSocket upgrades pass through cleanly (bidirectional).
 servers:
   - host: app.example.com
     proxy_only: true
-    proxy_pass: http://127.0.0.1:8080   # absolute http(s)://host[:port], no path/query/creds
+    proxy_pass: http://127.0.0.1:8080   # absolute http(s)://host[:port]; optional trailing "/" ok, no other path/query/creds
     ssl:
       cloudflare_origin_ca: {}          # or cert/key, acme, or dev_ca — any normal TLS option
 ```
 
 - **`proxy_pass` must be an absolute `http://` or `https://` URL** with a host
-  and **no path, query, or credentials** (userinfo). These are rejected at config
-  load; a path/query would be silently ignored (the request path is forwarded
-  as-is) and userinfo is never turned into an `Authorization` header.
+  and **no path** (an optional trailing `/` is allowed), **query, or credentials**
+  (userinfo). These are rejected at config load; a path/query would be silently
+  ignored (the request path is forwarded as-is) and userinfo is never turned into
+  an `Authorization` header.
 - **Bad-actor security monitoring still applies.** A blocked / rate-limited /
   flagged client IP is stopped before the upstream is ever contacted — the same
   cross-cutting gate hula applies to its own hosts.

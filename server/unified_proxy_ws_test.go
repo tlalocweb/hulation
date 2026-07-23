@@ -43,7 +43,7 @@ func newWSEchoUpstream(t *testing.T) *httptest.Server {
 	}))
 }
 
-// wsHostPort turns an httptest.Server URL (http://127.0.0.1:PORT) into a ws://
+// wsDialURL turns an httptest.Server URL (http://127.0.0.1:PORT) into a ws://
 // dial URL with the given path.
 func wsDialURL(t *testing.T, serverURL, path string) string {
 	t.Helper()
