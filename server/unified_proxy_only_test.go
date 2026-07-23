@@ -42,7 +42,7 @@ func TestProxyOnlyForwardsAllPathsToUpstream(t *testing.T) {
 		req.Host = "proxy.example.com"
 		rec := httptest.NewRecorder()
 		// nil blockCheck = bad-actor disabled; routes nil = no top-level proxies.
-		if !proxyDispatch(nil, proxyOnly, nil, hasRoute, rec, req) {
+		if !proxyDispatch(nil, proxyOnly, nil, nil, hasRoute, rec, req) {
 			t.Fatalf("%s: proxy_only host must be handled by the proxy dispatch", path)
 		}
 		if rec.Body.String() != "upstream" {
@@ -74,7 +74,7 @@ func TestProxyOnlyClaimsAliases(t *testing.T) {
 	req := httptest.NewRequest("GET", "https://alt.example.com/x", nil)
 	req.Host = "ALT.example.com:8443" // mixed case + port must still match
 	rec := httptest.NewRecorder()
-	if !proxyDispatch(nil, proxyOnly, nil, func(*http.Request) bool { return false }, rec, req) {
+	if !proxyDispatch(nil, proxyOnly, nil, nil, func(*http.Request) bool { return false }, rec, req) {
 		t.Fatal("alias of a proxy_only host must be proxied")
 	}
 	if rec.Body.String() != "upstream" {
@@ -99,7 +99,7 @@ func TestProxyOnlyLeavesOtherHostsToHula(t *testing.T) {
 		req := httptest.NewRequest("GET", "https://hula.example.com"+path, nil)
 		req.Host = "hula.example.com"
 		rec := httptest.NewRecorder()
-		if proxyDispatch(nil, proxyOnly, nil, func(*http.Request) bool { return false }, rec, req) {
+		if proxyDispatch(nil, proxyOnly, nil, nil, func(*http.Request) bool { return false }, rec, req) {
 			t.Fatalf("%s: non-proxy host must fall through to hula, not be proxied", path)
 		}
 	}
@@ -130,7 +130,7 @@ func TestProxyOnlyBadActorBlockedBeforeUpstream(t *testing.T) {
 		}()
 		req := httptest.NewRequest("GET", "https://proxy.example.com/anything", nil)
 		req.Host = "proxy.example.com"
-		proxyDispatch(nil, proxyOnly, blocked, func(*http.Request) bool { return false }, httptest.NewRecorder(), req)
+		proxyDispatch(nil, proxyOnly, blocked, nil, func(*http.Request) bool { return false }, httptest.NewRecorder(), req)
 		t.Fatal("proxyDispatch should have aborted before returning")
 	}()
 	if upstreamHits != 0 {
@@ -141,7 +141,7 @@ func TestProxyOnlyBadActorBlockedBeforeUpstream(t *testing.T) {
 	allow := func(*http.Request) bool { return false }
 	req := httptest.NewRequest("GET", "https://proxy.example.com/anything", nil)
 	req.Host = "proxy.example.com"
-	if !proxyDispatch(nil, proxyOnly, allow, func(*http.Request) bool { return false }, httptest.NewRecorder(), req) {
+	if !proxyDispatch(nil, proxyOnly, allow, nil, func(*http.Request) bool { return false }, httptest.NewRecorder(), req) {
 		t.Fatal("allowed request should be proxied")
 	}
 	if upstreamHits != 1 {
