@@ -727,6 +727,28 @@ func (t *TLSOptions) GetMaxVersion() uint16 {
 	return v
 }
 
+// DevCAConfig configures the Caddy/mkcert-style local development CA. When
+// enabled AND no static cert / ACME / Cloudflare Origin CA applies, the dev CA
+// becomes the catch-all cert source: a cached local root signs a per-host leaf
+// on demand so local/dev hosts get certs that all chain to ONE root the
+// developer can trust — instead of a bare self-signed cert no client trusts.
+//
+// This is opt-in. When Enabled is false the legacy self-signed fallback is used
+// and behaviour is unchanged. Installing the root into the OS trust store is a
+// SEPARATE opt-in (InstallTrust) because it is invasive and hard to reverse.
+type DevCAConfig struct {
+	// Enabled opts into the local dev CA. Presence alone is not enough — this
+	// must be true (conftagz may materialise the struct from default tags).
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Dir is where the root cert+key are cached so restarts reuse the same
+	// root (stable trust). Defaults to ".hula-devca".
+	Dir string `yaml:"dir,omitempty" default:".hula-devca"`
+	// InstallTrust ALSO installs the root into the OS trust store at boot
+	// (mkcert-style). OPT-IN and off by default: installing a CA is invasive
+	// and must never happen implicitly.
+	InstallTrust bool `yaml:"install_trust,omitempty"`
+}
+
 type SSLConfig struct {
 	// can be either the cert / key itself infline or a path to the cert / key
 	Cert string `yaml:"cert,omitempty"`
@@ -735,12 +757,37 @@ type SSLConfig struct {
 	ACME *ACMEConfig `yaml:"acme,omitempty"`
 	// Cloudflare Origin CA automatic certificate provisioning
 	CloudflareOriginCA *CloudflareOriginCAConfig `yaml:"cloudflare_origin_ca,omitempty"`
+	// Local development CA (Caddy "tls internal" style). Opt-in fallback that
+	// replaces the bare self-signed cert with certs chaining to a trusted root.
+	DevCA *DevCAConfig `yaml:"dev_ca,omitempty"`
 	// TLS version controls (min/max)
 	TLS *TLSOptions `yaml:"tls,omitempty"`
 	// if the above is a path, it moved here
 	certPath string
 	keyPath  string
 	tlsCert  *tls.Certificate
+}
+
+// hasDevCA reports whether the local development CA was explicitly enabled.
+// Gates on Enabled (not mere struct presence) because conftagz auto-populates
+// the pointer from Dir's default tag even when the user's YAML never set it.
+func (cfg *SSLConfig) hasDevCA() bool {
+	return cfg.DevCA != nil && cfg.DevCA.Enabled
+}
+
+// DevCADir returns the configured cache dir for the dev CA root, or a sensible
+// default when the dev CA is enabled but no dir was given.
+func (cfg *SSLConfig) DevCADir() string {
+	if cfg.DevCA == nil || cfg.DevCA.Dir == "" {
+		return ".hula-devca"
+	}
+	return cfg.DevCA.Dir
+}
+
+// DevCAInstallTrust reports whether the operator opted into installing the dev
+// CA root into the OS trust store at boot.
+func (cfg *SSLConfig) DevCAInstallTrust() bool {
+	return cfg.DevCA != nil && cfg.DevCA.InstallTrust
 }
 
 // NoConfig returns true if no TLS mode was configured at all.
@@ -1242,6 +1289,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	if cfg.HulaSSL != nil && cfg.HulaSSL.Cert == "" && cfg.HulaSSL.Key == "" &&
 		!cfaUsed &&
+		!cfg.HulaSSL.hasDevCA() &&
 		(cfg.HulaSSL.ACME == nil || cfg.HulaSSL.ACME.Email == "") {
 		log.Warnf("hula_ssl not configured — will use auto-generated self-signed certificate for admin/localhost connections")
 		cfg.HulaSSL = nil
