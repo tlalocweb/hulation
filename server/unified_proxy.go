@@ -185,26 +185,42 @@ func newPlainProxy(target *url.URL) http.Handler {
 	}
 }
 
-// registerProxies wires the top-level `proxies:` config into the unified server
-// as path-preserving reverse proxies. No-op when none are configured.
+// registerProxies wires the reverse-proxy layer into the unified server:
+//   - top-level `proxies:` entries (path-preserving reverse proxies), and
+//   - per-vhost `proxy_only` servers (a whole Host forwarded to its upstream).
+//
+// Both are dispatched by ONE middleware (proxyDispatch) so there's a single
+// coherent "host is a proxy, skip hula's handlers" path. No-op when neither is
+// configured. Attached (in unified_boot.go) AFTER the backend/static layers and
+// BEFORE CORS/HSTS, so a proxy host intercepts before hula's serving handlers
+// while CORS + HSTS stay outermost and decorate the proxied response.
 func registerProxies(srv *unified.Server, cfg *config.Config) {
-	if srv == nil || cfg == nil || len(cfg.Proxies) == 0 {
+	if srv == nil || cfg == nil {
 		return
 	}
 	routes := compileProxyRoutes(cfg.Proxies)
-	if len(routes) == 0 {
+	proxyOnly := compileProxyOnlyHosts(cfg.Servers)
+	if len(routes) == 0 && len(proxyOnly) == 0 {
 		return
 	}
 
+	// blockCheck is hula's cross-cutting bad-actor gate for proxy_only hosts.
+	// The unified listener scores connection-level incidents at Accept (TLS
+	// errors, TCP probes) for every host, but has no HTTP-level bad-actor
+	// middleware — so we invoke the store's per-request CheckAndBlock inline
+	// here, before forwarding, exactly as the legacy h2handler path did. A
+	// blocked/rate-limited/flagged actor is stopped short of the upstream.
+	blockCheck := badactorBlockCheck
+
 	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if proxyDispatch(routes, srv.HasRoute, w, r) {
+			if proxyDispatch(routes, proxyOnly, blockCheck, srv.HasRoute, w, r) {
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	})
-	log.Infof("Registered %d reverse-proxy route(s) on unified server", len(routes))
+	log.Infof("Registered reverse-proxy layer on unified server: %d top-level route(s), %d proxy_only hostname(s) (incl. aliases)", len(routes), len(proxyOnly))
 }
 
 // compileProxyRoutes validates and compiles `proxies:` config entries into
@@ -282,7 +298,14 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 
 // proxyDispatch routes r to a matching proxy and reports whether it handled the
 // request. Order-independent precedence:
-//   1. by_domain routes are checked first — a dedicated host is unambiguous, so
+//   0. proxy_only vhosts (config.Server.ProxyOnly) win first and unconditionally.
+//      A single O(1) map lookup on the port-stripped, lowercased Host decides it,
+//      done as the very first step so a proxy_only host NEVER reaches any of
+//      hula's serving handlers (/api, /v/*, /analytics, /hulastatus, gRPC, static
+//      roots, backends) or its own by_domain/by_path steps below. This is the
+//      Servers[] equivalent of a top-level by_domain proxy — folded in here so
+//      there is ONE coherent "host is a proxy, skip hula's handlers" path.
+//   1. by_domain routes are checked next — a dedicated host is unambiguous, so
 //      a matching by_domain proxy always wins regardless of config order. A
 //      dedicated host fully owns itself, so service-path reservations don't apply.
 //   2. A by_path route shares hula's host, so it must never shadow hula's own
@@ -290,12 +313,38 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 //      and to the reserved service prefixes (/api/*, /v/*, /scripts/*, /analytics,
 //      /hulastatus, …) via staticPassthrough — covering present and future REST
 //      endpoints the same way the static layer does.
+//
+// blockCheck is hula's cross-cutting bad-actor gate: it runs FIRST for a
+// proxy_only host (before the upstream is contacted) so a blocked / rate-limited
+// / flagged actor is stopped short of the upstream. It is nil in tests and when
+// bad-actor detection is disabled. The unified listener has no HTTP-level
+// bad-actor middleware (only connection-level incident scoring at Accept, which
+// already runs for every host); invoking blockCheck inline here is what keeps
+// proxy_only hosts under bad-actor enforcement — see registerProxies.
 func proxyDispatch(
 	routes []*proxyRoute,
+	proxyOnly map[string]http.Handler,
+	blockCheck func(*http.Request) bool,
 	hasRoute func(*http.Request) bool,
 	w http.ResponseWriter,
 	r *http.Request,
 ) bool {
+	// 0. proxy_only vhosts fully own their host — O(1) lookup, checked first.
+	if len(proxyOnly) > 0 {
+		if h, ok := proxyOnly[hostOnly(r.Host)]; ok {
+			// Bad-actor enforcement runs BEFORE the upstream is contacted.
+			// Silent abort mirrors the legacy h2handler bad-actor path.
+			if blockCheck != nil && blockCheck(r) {
+				panic(http.ErrAbortHandler)
+			}
+			// PR-3: server-side stats hook — record a server-side pageview
+			// for this proxied request (host, path, peer IP, status) HERE,
+			// just before forwarding. Intentionally NOT implemented in this
+			// PR; this is the documented seam the analytics PR plugs into.
+			h.ServeHTTP(w, r)
+			return true
+		}
+	}
 	// 1. Host-scoped (by_domain) routes win first.
 	if rt := longestMatch(routes, r, true); rt != nil {
 		rt.handler.ServeHTTP(w, r)
