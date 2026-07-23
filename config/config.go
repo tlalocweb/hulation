@@ -1156,6 +1156,20 @@ func validateProxyServer(s *Server) error {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("server %s: proxy_pass %q must be an absolute http:// or https:// URL with a host", s.Host, s.ProxyPass)
 	}
+	// The reverse proxy forwards to the upstream's scheme+host and preserves
+	// the REQUEST path/query verbatim (see newPlainProxy). A path, query,
+	// fragment, or credentials on proxy_pass would be silently ignored, so
+	// reject them rather than mislead the operator. An optional trailing "/"
+	// is allowed.
+	if u.User != nil {
+		return fmt.Errorf("server %s: proxy_pass %q must not contain credentials (userinfo)", s.Host, s.ProxyPass)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("server %s: proxy_pass %q must not contain a path (the request path is preserved and forwarded as-is; only an optional trailing %q is allowed)", s.Host, s.ProxyPass, "/")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("server %s: proxy_pass %q must not contain a query or fragment", s.Host, s.ProxyPass)
+	}
 	return nil
 }
 

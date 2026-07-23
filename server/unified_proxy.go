@@ -220,7 +220,7 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	log.Infof("Registered reverse-proxy layer on unified server: %d top-level route(s), %d proxy_only host(s)", len(routes), len(proxyOnly))
+	log.Infof("Registered reverse-proxy layer on unified server: %d top-level route(s), %d proxy_only hostname(s) (incl. aliases)", len(routes), len(proxyOnly))
 }
 
 // compileProxyRoutes validates and compiles `proxies:` config entries into

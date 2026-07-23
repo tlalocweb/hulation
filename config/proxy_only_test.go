@@ -21,6 +21,13 @@ func TestValidateProxyServer(t *testing.T) {
 		{"proxy_pass missing scheme", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "127.0.0.1:8080"}, true},
 		{"proxy_pass non-http scheme", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "ftp://127.0.0.1:8080"}, true},
 		{"proxy_pass missing host", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://"}, true},
+		// The upstream path/query is ignored (request path is preserved), and
+		// credentials aren't forwarded — reject them rather than mislead.
+		{"proxy_pass with path rejected", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://up.internal:8080/foo"}, true},
+		{"proxy_pass with query rejected", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://up.internal:8080?x=1"}, true},
+		{"proxy_pass with fragment rejected", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://up.internal:8080#frag"}, true},
+		{"proxy_pass with credentials rejected", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://user:pw@up.internal:8080"}, true},
+		{"proxy_pass trailing slash allowed", &Server{Host: "p.test", ProxyOnly: true, ProxyPass: "http://up.internal:8080/"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
