@@ -139,7 +139,7 @@ func TestProxyDispatchPrecedence(t *testing.T) {
 		req.Host = "relay.example.com"
 		rec := httptest.NewRecorder()
 		// path route listed FIRST and also matches — by_domain must still win.
-		handled := proxyDispatch([]*proxyRoute{pathRoute, domainRoute}, func(*http.Request) bool { return false }, rec, req)
+		handled := proxyDispatch([]*proxyRoute{pathRoute, domainRoute}, nil, nil, func(*http.Request) bool { return false }, rec, req)
 		if !handled || rec.Body.String() != "domain" {
 			t.Fatalf("handled=%v body=%q, want domain", handled, rec.Body.String())
 		}
@@ -149,7 +149,7 @@ func TestProxyDispatchPrecedence(t *testing.T) {
 		req := httptest.NewRequest("GET", "https://other.test/relay/x", nil)
 		req.Host = "other.test"
 		rec := httptest.NewRecorder()
-		handled := proxyDispatch([]*proxyRoute{pathRoute}, func(*http.Request) bool { return true }, rec, req)
+		handled := proxyDispatch([]*proxyRoute{pathRoute}, nil, nil, func(*http.Request) bool { return true }, rec, req)
 		if handled {
 			t.Fatal("by_path must not handle when hula has a route (hasRoute=true)")
 		}
@@ -159,7 +159,7 @@ func TestProxyDispatchPrecedence(t *testing.T) {
 		req := httptest.NewRequest("GET", "https://other.test/relay/x", nil)
 		req.Host = "other.test"
 		rec := httptest.NewRecorder()
-		handled := proxyDispatch([]*proxyRoute{pathRoute}, func(*http.Request) bool { return false }, rec, req)
+		handled := proxyDispatch([]*proxyRoute{pathRoute}, nil, nil, func(*http.Request) bool { return false }, rec, req)
 		if !handled || rec.Body.String() != "path" {
 			t.Fatalf("handled=%v body=%q, want path", handled, rec.Body.String())
 		}
@@ -169,7 +169,7 @@ func TestProxyDispatchPrecedence(t *testing.T) {
 		req := httptest.NewRequest("GET", "https://nope.test/other", nil)
 		req.Host = "nope.test"
 		rec := httptest.NewRecorder()
-		if proxyDispatch([]*proxyRoute{domainRoute, pathRoute}, func(*http.Request) bool { return false }, rec, req) {
+		if proxyDispatch([]*proxyRoute{domainRoute, pathRoute}, nil, nil, func(*http.Request) bool { return false }, rec, req) {
 			t.Fatal("expected no route to match")
 		}
 	})
@@ -188,14 +188,14 @@ func TestProxyDispatchLongestPrefix(t *testing.T) {
 	for _, order := range [][]*proxyRoute{{short, long}, {long, short}} {
 		req := httptest.NewRequest("GET", "https://x.test/relay/v1/push", nil)
 		rec := httptest.NewRecorder()
-		if proxyDispatch(order, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "long" {
+		if proxyDispatch(order, nil, nil, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "long" {
 			t.Fatalf("order %v: got %q, want long (most specific prefix)", order, rec.Body.String())
 		}
 	}
 	// A path under only the short prefix still routes there.
 	req := httptest.NewRequest("GET", "https://x.test/relay/other", nil)
 	rec := httptest.NewRecorder()
-	if proxyDispatch([]*proxyRoute{long, short}, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "short" {
+	if proxyDispatch([]*proxyRoute{long, short}, nil, nil, func(*http.Request) bool { return false }, rec, req); rec.Body.String() != "short" {
 		t.Fatalf("got %q, want short", rec.Body.String())
 	}
 }
@@ -212,14 +212,14 @@ func TestProxyDispatchReservesServicePaths(t *testing.T) {
 	for _, reserved := range []string{"/api/health", "/scripts/x.js", "/analytics", "/v/foo"} {
 		req := httptest.NewRequest("GET", "https://hula.example.com"+reserved, nil)
 		rec := httptest.NewRecorder()
-		if proxyDispatch(catchAll, never, rec, req) {
+		if proxyDispatch(catchAll, nil, nil, never, rec, req) {
 			t.Errorf("%s: by_path proxy must defer to hula's reserved service path", reserved)
 		}
 	}
 	// A non-reserved path is still proxied.
 	req := httptest.NewRequest("GET", "https://hula.example.com/custom/thing", nil)
 	rec := httptest.NewRecorder()
-	if !proxyDispatch(catchAll, never, rec, req) || rec.Body.String() != "proxy" {
+	if !proxyDispatch(catchAll, nil, nil, never, rec, req) || rec.Body.String() != "proxy" {
 		t.Errorf("non-reserved path should be proxied, got body=%q", rec.Body.String())
 	}
 }

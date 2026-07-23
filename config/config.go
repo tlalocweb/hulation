@@ -538,6 +538,21 @@ type Server struct {
 	// even a consented cookie".
 	TrackingMode string `yaml:"tracking_mode,omitempty" default:"cookie"`
 	Backends      []*backend.BackendConfig `yaml:"backends,omitempty"`
+
+	// --- reverse-proxy parity: proxy_only virtual hosts ---
+	// When ProxyOnly is true this server is a PURE reverse proxy: every
+	// request for its Host (and Aliases) is forwarded verbatim to ProxyPass,
+	// bypassing ALL of hula's own serving handlers (/api, /v/*, /analytics,
+	// /hulastatus, gRPC, static roots, backends). Hula's cross-cutting
+	// security (bad-actor monitoring) still runs, and the vhost still gets its
+	// per-host TLS cert (static / Cloudflare Origin CA / ACME) like any other.
+	//
+	// ProxyOnly and ProxyPass must be set together (validated at load).
+	// ProxyPass is the upstream base URL, e.g. http://127.0.0.1:8080 — an
+	// absolute http:// or https:// URL with a host and no path/query.
+	ProxyOnly bool   `yaml:"proxy_only,omitempty"`
+	ProxyPass string `yaml:"proxy_pass,omitempty"`
+
 	GitAutoDeploy *GitAutoDeployConfig    `yaml:"root_git_autodeploy,omitempty"`
 	externalUrl      string
 	externalHostPort string
@@ -1115,6 +1130,35 @@ func (cfg *Config) GetServerByID(id string) *Server {
 	return nil
 }
 
+// validateProxyServer enforces the proxy_only / proxy_pass invariants for one
+// server: the two fields must be set together, and when proxy_only is enabled
+// proxy_pass must be an absolute http(s):// URL that carries a host. Returns nil
+// when the server is not a proxy_only vhost (neither field set). Called from
+// LoadConfig's per-server validation loop; kept standalone so the rules are
+// unit-testable without standing up a full config file.
+func validateProxyServer(s *Server) error {
+	if s == nil {
+		return nil
+	}
+	pass := strings.TrimSpace(s.ProxyPass)
+	switch {
+	case !s.ProxyOnly && pass == "":
+		return nil // ordinary vhost — nothing to validate
+	case s.ProxyOnly && pass == "":
+		return fmt.Errorf("server %s: proxy_only is true but proxy_pass is empty; set proxy_pass to an absolute upstream URL (e.g. http://127.0.0.1:8080)", s.Host)
+	case !s.ProxyOnly && pass != "":
+		return fmt.Errorf("server %s: proxy_pass is set but proxy_only is false; set proxy_only: true to enable reverse-proxy mode", s.Host)
+	}
+	u, err := url.Parse(pass)
+	if err != nil {
+		return fmt.Errorf("server %s: proxy_pass %q is not a valid URL: %w", s.Host, s.ProxyPass, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("server %s: proxy_pass %q must be an absolute http:// or https:// URL with a host", s.Host, s.ProxyPass)
+	}
+	return nil
+}
+
 func LoadConfig(filename string) (*Config, error) {
 	var cfg Config
 
@@ -1294,6 +1338,15 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 		s.Host = SubstConfVarsLogErrorf(s.Host, map[string]string{"confdir": confDir}, fmt.Sprintf("server.host[%s]", s.Host))
 		s.CaptchaSecret = SubstConfVarsLogErrorf(s.CaptchaSecret, map[string]string{"confdir": confDir}, fmt.Sprintf("server.host[%s]", s.CaptchaSecret))
+		// proxy_only virtual hosts: substitute confvars in proxy_pass, then
+		// validate the proxy_only/proxy_pass pair (both required together;
+		// proxy_pass must be an absolute http(s):// URL). See validateProxyServer.
+		if s.ProxyPass != "" {
+			s.ProxyPass = SubstConfVarsLogErrorf(s.ProxyPass, map[string]string{"confdir": confDir}, fmt.Sprintf("server[%s].proxy_pass", s.Host))
+		}
+		if err := validateProxyServer(s); err != nil {
+			return nil, err
+		}
 		// look for server directories for config files
 		var formdir = filepath.Join(confDir, s.Host, "forms")
 		if len(s.FormSchemaFolder) > 0 {
