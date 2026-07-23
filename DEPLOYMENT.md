@@ -76,16 +76,24 @@ servers:
           - www.example.com
 ```
 
-**Hula admin identity:**
+**Hula admin identity (unified `:443` listener):**
 
 ```yaml
 hula_host: hula.example.com
 hula_ssl:
     acme:
         email: admin@example.com
+        domains:                     # required to activate ACME on the unified listener
+          - hula.example.com
+        cache_dir: certs             # default: certs
 ```
 
-Requires `hula_host` to be set to an actual hostname (not `localhost`). Port 80 must be reachable for HTTP-01 challenges.
+Requires `hula_host` to be set to an actual hostname (not `localhost`), and at
+least one entry under `domains` — ACME is only wired on the unified listener when
+`hula_ssl.acme.domains` is non-empty. The unified server issues and renews via
+the **TLS-ALPN-01** challenge on the same `:443` listener (it advertises the
+`acme-tls/1` ALPN protocol), so **no `:80` / HTTP-01 listener is needed** and
+`http_port` is unused for `hula_ssl.acme`.
 
 ### Cloudflare Origin CA
 
@@ -182,6 +190,31 @@ ssl:
     ...
 ```
 
+### Local development TLS (dev CA)
+
+For local / dev hosts, hula can act as its own certificate authority
+(Caddy `tls internal` / `mkcert` style) instead of falling back to a bare
+self-signed cert that no client trusts:
+
+```yaml
+hula_ssl:
+  dev_ca:
+    enabled: true            # opt-in; off by default
+    dir: .hula-devca         # where the root cert+key are cached (default: .hula-devca)
+    install_trust: false     # opt-in; installs the root into the OS trust store
+```
+
+When `enabled: true` (and no static cert / ACME / Cloudflare Origin CA applies),
+hula mints a **local root CA**, caches it in `dir` so restarts reuse the same
+root (stable trust), and signs a **per-host leaf on demand** — every leaf chains
+to that one root. At boot the server logs the root path and a ready-to-run trust
+command so you can trust it manually and remove browser warnings.
+
+`install_trust: true` is a separate opt-in that ALSO installs the root into the
+OS trust store at boot (Linux / macOS). It is off by default because installing a
+CA is invasive and hard to reverse; a failed install warns and continues rather
+than aborting boot.
+
 ### TLS Version Controls
 
 Any SSL block can include TLS version constraints:
@@ -194,16 +227,88 @@ ssl:
     max_version: "1.3"   # default: no limit
 ```
 
-### Phase-0 TLS note
+### Unified-listener TLS note
 
 Starting with the Phase-0 gRPC migration, hula uses a single unified HTTPS
 listener for **every** web service (gRPC, REST gateway, WebDAV, visitor
 tracking, static scripts, `/hulastatus`, and per-host site routing).
-The unified server requires a static `hula_ssl.cert` + `hula_ssl.key`
-on disk; the legacy ACME / Cloudflare-origin-CA / per-host SNI flows are
-a planned follow-up on the unified listener. For the immediate Phase-0
-cutover, configure a static cert pair or continue using `mkcert` for
-dev / self-signed deployments.
+
+All of the TLS modes above work on this unified listener — cert selection is
+per-host via SNI, independent of the routing layer:
+
+- **Static** `hula_ssl.cert` + `hula_ssl.key` on disk.
+- **ACME (Let's Encrypt)** via `hula_ssl.acme` (`email` + `domains`). Issuance
+  and renewal run over the **TLS-ALPN-01** challenge on the same `:443` listener
+  (the server advertises the `acme-tls/1` ALPN protocol), so **no `:80` /
+  HTTP-01 listener is required**. This supersedes the earlier note that ACME was
+  a planned follow-up requiring a static cert in the interim.
+- **Cloudflare Origin CA** via `hula_ssl.cloudflare_origin_ca`.
+- **Local dev CA** via `hula_ssl.dev_ca` (see below).
+
+If none of these is configured, the server falls back to an in-memory
+self-signed cert for the admin listener (dev / test convenience). Production
+deployments should configure static, ACME, or Cloudflare Origin CA.
+
+## Reverse proxy (proxy_only virtual hosts)
+
+A virtual host marked `proxy_only: true` is a **pure reverse proxy**: every
+request for its `host` (and any `aliases`) is forwarded verbatim to `proxy_pass`,
+bypassing ALL of hula's own serving handlers — `/api`, `/v/*`, `/analytics`,
+`/hulastatus`, gRPC, static roots, and backends. Path, method, and query are
+preserved; the proxy sets `X-Forwarded-Host` / `-Proto` / `-For` and `X-Real-IP`
+authoritatively. WebSocket upgrades pass through cleanly (bidirectional).
+
+```yaml
+servers:
+  - host: app.example.com
+    proxy_only: true
+    proxy_pass: http://127.0.0.1:8080   # absolute http(s)://host[:port], no path/query/creds
+    ssl:
+      cloudflare_origin_ca: {}          # or cert/key, acme, or dev_ca — any normal TLS option
+```
+
+- **`proxy_pass` must be an absolute `http://` or `https://` URL** with a host
+  and **no path, query, or credentials** (userinfo). These are rejected at config
+  load; a path/query would be silently ignored (the request path is forwarded
+  as-is) and userinfo is never turned into an `Authorization` header.
+- **Bad-actor security monitoring still applies.** A blocked / rate-limited /
+  flagged client IP is stopped before the upstream is ever contacted — the same
+  cross-cutting gate hula applies to its own hosts.
+- **Server-side analytics are recorded** for proxy_only hosts with **no client
+  JS** (page navigations only), with honest limitations: a **cookieless,
+  daily-rotating** visitor identity (derived from IP + User-Agent), only the
+  **initial navigation URL** is captured (no client-side route changes), **no
+  bounce or engagement** signals, and geography limited to what
+  **`CF-IPCountry`** provides. Assets, XHR/JSON, non-GET, and WebSocket upgrades
+  are not counted as pageviews.
+- **TLS works with every normal option.** Cert selection is per-host via SNI and
+  is independent of proxy routing, so a proxy_only host can use static
+  `cert`/`key`, **Cloudflare Origin CA**, **ACME (TLS-ALPN-01)**, or the **dev
+  CA** exactly like any other vhost.
+
+**Alternative form — top-level `proxies:` with `by_domain`.** The per-vhost
+`proxy_only` above is the host-scoped form. The top-level `proxies:` block is the
+equivalent when you'd rather define the route outside a `servers:` entry; a
+`by_domain` proxy likewise owns the whole host and bypasses hula's reserved
+paths:
+
+```yaml
+proxies:
+  - target: http://127.0.0.1:8080
+    by_domain: app.example.com        # whole host → upstream (bypasses reserved paths)
+  # by_path is the other option — a path prefix that shares hula's host and
+  # therefore DEFERS to hula's own routes + reserved service prefixes:
+  - target: http://127.0.0.1:9000
+    by_path: /relay
+```
+
+**Reserved paths and path matching.** A host-scoped proxy (`proxy_only` or a
+`by_domain` proxy) forwards **all** paths to the upstream, so hula's own
+segment-bounded path matching (the `verify-email` / reserved-prefix logic) is
+irrelevant for it — the upstream owns the entire host. The segment-boundary
+vs. loose-glob distinction only matters when you scope a proxy by **`by_path`**,
+which shares hula's host and must defer to hula's routes and reserved service
+prefixes (`/api/*`, `/v/*`, `/scripts/*`, `/analytics`, `/hulastatus`, …).
 
 ## Authentication (Phase 0)
 
