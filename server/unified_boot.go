@@ -84,6 +84,10 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	//   3. Both (static as fallback, ACME for covered hostnames).
 	// At least one must be configured or the boot fails.
 	var getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	// acmeTLSALPN is set true only on the ACME path so the unified server
+	// advertises "acme-tls/1" and routes TLS-ALPN-01 challenges to the
+	// autocert manager. Static-cert and self-signed paths leave it false.
+	var acmeTLSALPN bool
 
 	// After config.Load*, HulaSSL.Cert/Key hold PEM CONTENT (not paths),
 	// so we can't pass them to unified.NewServer as TLSCertFile/Key —
@@ -106,6 +110,7 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 				HostPolicy: autocert.HostWhitelist(acfg.Domains...),
 			}
 			getCert = mgr.GetCertificate
+			acmeTLSALPN = true
 			unifiedLog.Infof("ACME enabled: cache=%q email=%q domains=%v", acfg.CacheDir, acfg.Email, acfg.Domains)
 		}
 	}
@@ -175,6 +180,7 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 	srv, err = unified.NewServer(&unified.Config{
 		Address:        addr,
 		GetCertificate: getCert,
+		ACMETLSALPN:    acmeTLSALPN,
 		ClientCAs:      clientCAs,
 		GRPCServerOptions: []grpc.ServerOption{
 			grpc.UnaryInterceptor(AdminBearerInterceptor(deviceKeyStore)),

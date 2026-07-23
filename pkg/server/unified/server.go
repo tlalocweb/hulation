@@ -69,6 +69,13 @@ type Server struct {
 	// use: ACME autocert.Manager.GetCertificate.
 	dynamicGetCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
+	// acmeTLSALPN mirrors Config.ACMETLSALPN. When true, "acme-tls/1" is
+	// advertised in NextProtos and TLS-ALPN-01 challenge ClientHellos are
+	// routed straight to dynamicGetCert (the ACME manager) ahead of the
+	// per-host SNI lookup, so a host with its own static cert can't shadow
+	// its own ACME challenge.
+	acmeTLSALPN bool
+
 	// incidents holds an *incidentBox or nil. Settable at any time
 	// via SetIncidentRecorder; the protocol-detecting listener and
 	// TLS handshake error hook load it on each invocation.
@@ -251,6 +258,15 @@ type Config struct {
 	// for hostnames the provided function rejects (useful for localhost
 	// probes during ACME issuance).
 	GetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+	// ACMETLSALPN, when true, advertises the "acme-tls/1" ALPN protocol
+	// and routes TLS-ALPN-01 challenge ClientHellos to the dynamic (ACME)
+	// cert getter supplied in GetCertificate. Set this only when an ACME
+	// manager (e.g. autocert.Manager) is wired into GetCertificate;
+	// leave it false for static-cert or self-signed setups. Without it,
+	// the acme-tls/1 protocol is not offered and a TLS-ALPN-01 challenge
+	// cannot complete on the :443 listener.
+	ACMETLSALPN bool
 }
 
 // NewServer creates a new unified HTTPS server
@@ -308,25 +324,34 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	// Create server instance first (needed for selectCertificate method reference)
 	server := &Server{
-		grpcServer:       grpcServer,
-		gatewayMux:       gatewayMux,
-		address:          cfg.Address,
-		tlsCertFile:      cfg.TLSCertFile,
-		tlsKeyFile:       cfg.TLSKeyFile,
-		logger:           unifiedLogger,
-		internalCert:     internalCert,
-		hostCerts:        make(map[string]*tls.Certificate),
-		customHandlers:   make(map[string]http.HandlerFunc),
-		customMux:        http.NewServeMux(),
-		dynamicGetCert:   cfg.GetCertificate,
+		grpcServer:     grpcServer,
+		gatewayMux:     gatewayMux,
+		address:        cfg.Address,
+		tlsCertFile:    cfg.TLSCertFile,
+		tlsKeyFile:     cfg.TLSKeyFile,
+		logger:         unifiedLogger,
+		internalCert:   internalCert,
+		hostCerts:      make(map[string]*tls.Certificate),
+		customHandlers: make(map[string]http.HandlerFunc),
+		customMux:      http.NewServeMux(),
+		dynamicGetCert: cfg.GetCertificate,
+		acmeTLSALPN:    cfg.ACMETLSALPN,
 	}
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
 		server.externalCert = &externalCert
 	}
 
 	// Create TLS config with dynamic certificate selection
+	nextProtos := []string{"h2", "http/1.1"} // Support HTTP/2 for gRPC
+	if cfg.ACMETLSALPN {
+		// Advertise the ACME TLS-ALPN-01 protocol so the CA can complete a
+		// challenge on this same :443 listener. Only offered when an ACME
+		// manager is wired in; a normal browser/Cloudflare ClientHello never
+		// negotiates it, so this is inert for ordinary traffic.
+		nextProtos = append(nextProtos, acmeTLSALPNProto)
+	}
 	tlsConfig := &tls.Config{
-		NextProtos: []string{"h2", "http/1.1"}, // Support HTTP/2 for gRPC
+		NextProtos: nextProtos,
 	}
 
 	// Always use the dynamic selector. selectCertificate handles the
@@ -733,6 +758,22 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 	serverName := clientHello.ServerName
 	s.logger.VDebugf(2, "Certificate selection for ServerName: '%s' (length: %d)", serverName, len(serverName))
 
+	// TLS-ALPN-01 challenge: if ACME is enabled and the peer negotiated the
+	// "acme-tls/1" protocol, this handshake is the CA validating a domain,
+	// NOT ordinary traffic. Route it straight to the dynamic (ACME) getter,
+	// which returns the special challenge certificate. This MUST run before
+	// the per-host SNI lookup below: a domain that also has a static /
+	// Cloudflare Origin CA cert registered would otherwise shadow its own
+	// challenge and issuance would stall. A normal ClientHello never carries
+	// "acme-tls/1", so non-challenge traffic falls straight through.
+	if s.acmeTLSALPN && containsACMETLSALPN(clientHello.SupportedProtos) {
+		if s.dynamicGetCert == nil {
+			return nil, fmt.Errorf("acme-tls/1 challenge for ServerName %q but no ACME certificate getter configured", serverName)
+		}
+		s.logger.Infof("Serving TLS-ALPN-01 challenge for ServerName: %s", serverName)
+		return s.dynamicGetCert(clientHello)
+	}
+
 	// Check for per-host certificate (static sites)
 	if cert, ok := s.hostCerts[serverName]; ok {
 		s.logger.VDebugf(2, "Using per-host certificate for ServerName: %s", serverName)
@@ -780,6 +821,22 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 		return s.externalCert, nil
 	}
 	return nil, fmt.Errorf("no certificate available for ServerName %q", serverName)
+}
+
+// acmeTLSALPNProto is the ALPN protocol name a CA negotiates for a
+// TLS-ALPN-01 challenge (RFC 8737). Matches golang.org/x/crypto/acme's
+// ALPNProto so the autocert.Manager recognises and answers the handshake.
+const acmeTLSALPNProto = "acme-tls/1"
+
+// containsACMETLSALPN reports whether the ClientHello's advertised ALPN
+// protocols include the TLS-ALPN-01 challenge protocol.
+func containsACMETLSALPN(protos []string) bool {
+	for _, p := range protos {
+		if p == acmeTLSALPNProto {
+			return true
+		}
+	}
+	return false
 }
 
 // protocolDetectingListener wraps a net.Listener to detect HTTP vs TLS connections
