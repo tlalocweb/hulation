@@ -113,6 +113,20 @@ servers:
             event_map:
                 page_view: "page_view"
 
+    # --- PR-6 reverse-proxy parity: proxy_only vhost (used by suite 41) ---
+    # A pure reverse proxy: every request for proxy.test.local (including
+    # reserved paths like /api/v1/*) is forwarded verbatim to the http-echo
+    # sidecar, bypassing hula's own handlers. proxy_only hosts still record a
+    # server-side pageview at the proxyDispatch seam (method="serverside"),
+    # which suite 41 asserts lands in ClickHouse.
+    - host: proxy.test.local
+      id: testsite-proxy
+      ssl:
+          cert: /var/hula/certs/cert.pem
+          key: /var/hula/certs/key.pem
+      proxy_only: true
+      proxy_pass: http://http-echo:8080
+
     # --- Phase 4c.3 cookieless probe target (used by suite 37) ---
     # Same server with a different host alias and tracking_mode
     # set to cookieless. Suite 37 verifies no Set-Cookie header is

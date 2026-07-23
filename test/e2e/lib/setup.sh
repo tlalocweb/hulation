@@ -150,6 +150,9 @@ gen_certs() {
         "$STAGING_HOST"
         "hugo-min.test.local"
         "mkdocs-min.test.local"
+        # PR-6 — proxy_only vhost served by the SHARED hula (suite 41). Uses the
+        # static hula_ssl.cert, so its host must be in this cert's SAN list.
+        "proxy.test.local"
     )
     # Prefer the repo-local mkcert at .bin/mkcert (matches the Go-
     # binary pattern in this file). Without a real CA+leaf chain
@@ -218,7 +221,11 @@ start_stack() {
     # forwarder-recorder is the http-recorder sidecar used by suite 36
     # (Phase 4c.2 forwarder e2e). Tiny python service; bringing it up
     # unconditionally keeps the suite from pass-skipping silently.
-    dc up -d hula-clickhouse hula forwarder-recorder
+    # http-echo is the PR-6 proxy_only upstream used by suite 41 (same
+    # rationale — start it up-front so the suite exercises real forwarding
+    # instead of silently skipping). hula-devca is NOT started here; it has
+    # its own compose profile and suite 42 brings it up on demand.
+    dc up -d hula-clickhouse hula forwarder-recorder http-echo
 
     echo "--- Waiting for /hulastatus ---"
     # Use the test-runner profile to hit hulastatus with the self-signed cert trusted
