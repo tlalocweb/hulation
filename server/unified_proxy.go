@@ -212,9 +212,20 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 	// blocked/rate-limited/flagged actor is stopped short of the upstream.
 	blockCheck := badactorBlockCheck
 
+	// recordStats records a server-side pageview for a proxy_only navigation
+	// (PR-3). Only wired when there are proxy_only hosts — the seam only fires
+	// for them. It runs off the reverse-proxy hot path (cheap inline filter,
+	// then a non-blocking enqueue to a bounded async pipeline) and has no side
+	// effect on the forwarded response. nil in tests / when no proxy_only host
+	// exists. See unified_proxy_stats.go.
+	var recordStats func(*http.Request)
+	if len(proxyOnly) > 0 {
+		recordStats = newProxyStatsRecorder()
+	}
+
 	srv.AttachHTTPMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if proxyDispatch(routes, proxyOnly, blockCheck, srv.HasRoute, w, r) {
+			if proxyDispatch(routes, proxyOnly, blockCheck, recordStats, srv.HasRoute, w, r) {
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -321,10 +332,16 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 // bad-actor middleware (only connection-level incident scoring at Accept, which
 // already runs for every host); invoking blockCheck inline here is what keeps
 // proxy_only hosts under bad-actor enforcement — see registerProxies.
+//
+// recordStats records a server-side pageview for a proxy_only navigation (PR-3),
+// invoked at the seam just before the upstream is contacted. It reads the
+// pristine request only, never writes to w, and enqueues off the hot path
+// (bounded async pipeline). nil in tests and when no proxy_only host exists.
 func proxyDispatch(
 	routes []*proxyRoute,
 	proxyOnly map[string]http.Handler,
 	blockCheck func(*http.Request) bool,
+	recordStats func(*http.Request),
 	hasRoute func(*http.Request) bool,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -337,10 +354,14 @@ func proxyDispatch(
 			if blockCheck != nil && blockCheck(r) {
 				panic(http.ErrAbortHandler)
 			}
-			// PR-3: server-side stats hook — record a server-side pageview
-			// for this proxied request (host, path, peer IP, status) HERE,
-			// just before forwarding. Intentionally NOT implemented in this
-			// PR; this is the documented seam the analytics PR plugs into.
+			// PR-3: record a server-side pageview for this proxied navigation
+			// HERE, just before forwarding, from the pristine request. Cheap
+			// inline page-nav filter + a non-blocking enqueue to a bounded
+			// async pipeline; NO side effect on the response (never touches w).
+			// See unified_proxy_stats.go.
+			if recordStats != nil {
+				recordStats(r)
+			}
 			h.ServeHTTP(w, r)
 			return true
 		}
