@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -189,5 +190,46 @@ func TestDevCA_TrustInstructions_NonDestructive(t *testing.T) {
 		if !strings.Contains(hint, "add-trusted-cert") {
 			t.Errorf("darwin hint missing add-trusted-cert: %q", hint)
 		}
+	}
+}
+
+// TestDevCA_MismatchedCachedPairRegenerates: a cached root.crt/root.key that
+// don't match (e.g. cert from one run, key from another) is treated as cache
+// corruption — the dev CA regenerates a consistent root instead of signing
+// leaves whose chain would be unverifiable.
+func TestDevCA_MismatchedCachedPairRegenerates(t *testing.T) {
+	dirA := t.TempDir()
+	caA, err := NewDevCA(dirA)
+	if err != nil {
+		t.Fatalf("NewDevCA A: %v", err)
+	}
+	dirB := t.TempDir()
+	caB, err := NewDevCA(dirB)
+	if err != nil {
+		t.Fatalf("NewDevCA B: %v", err)
+	}
+
+	// Corrupt dirA: keep A's cert but overwrite A's key with B's (mismatch).
+	keyB, err := os.ReadFile(caB.keyPath)
+	if err != nil {
+		t.Fatalf("read B key: %v", err)
+	}
+	if err := os.WriteFile(caA.keyPath, keyB, 0o600); err != nil {
+		t.Fatalf("corrupt A key: %v", err)
+	}
+
+	// Reload dirA: the mismatch must be detected and a fresh, consistent root
+	// generated, so a leaf verifies against the (regenerated) root.
+	caA2, err := NewDevCA(dirA)
+	if err != nil {
+		t.Fatalf("NewDevCA A reload: %v", err)
+	}
+	cert, err := caA2.GetCertificate(&tls.ClientHelloInfo{ServerName: "x.test"})
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	verifyLeafAgainstRoot(t, cert, caA2.rootCert, "x.test")
+	if bytes.Equal(caA2.rootCert.Raw, caA.rootCert.Raw) {
+		t.Fatal("expected a regenerated root after cert/key mismatch, got the original")
 	}
 }

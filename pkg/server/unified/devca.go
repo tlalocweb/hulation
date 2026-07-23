@@ -82,6 +82,11 @@ func NewDevCA(dir string) (*DevCA, error) {
 	if strings.TrimSpace(dir) == "" {
 		dir = ".hula-devca"
 	}
+	// Resolve to an absolute path so the logged root path + trust command are
+	// stable regardless of the operator's working directory when they run them.
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	ca := &DevCA{
 		dir:      dir,
 		rootPath: filepath.Join(dir, devCARootCertFile),
@@ -188,6 +193,14 @@ func parseDevCARoot(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKe
 	key, err := x509.ParseECPrivateKey(kBlock.Bytes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse root key: %w", err)
+	}
+	// The cached cert and key must be a matching pair — e.g. root.crt from one
+	// run and root.key from another would parse fine yet produce leaves whose
+	// chain is unverifiable (issuer public key != signing key). Treat a
+	// mismatch as cache corruption so loadOrGenerateRoot regenerates.
+	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok || !pub.Equal(&key.PublicKey) {
+		return nil, nil, fmt.Errorf("cached root cert and key do not match")
 	}
 	return cert, key, nil
 }

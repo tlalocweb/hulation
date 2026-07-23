@@ -794,7 +794,7 @@ func (cfg *SSLConfig) DevCAInstallTrust() bool {
 // This checks struct presence (non-nil pointers from YAML parsing), not whether
 // fields like ZoneID are populated — those may be resolved from env vars later.
 func (cfg *SSLConfig) NoConfig() bool {
-	return !cfg.hasStaticCert() && !cfg.hasACMEConfig() && cfg.CloudflareOriginCA == nil
+	return !cfg.hasStaticCert() && !cfg.hasACMEConfig() && cfg.CloudflareOriginCA == nil && !cfg.hasDevCA()
 }
 
 func (cfg *SSLConfig) hasStaticCert() bool {
