@@ -286,6 +286,13 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("TLS certificate and key files are required (or supply GetCertificate)")
 	}
 
+	// A TLS-ALPN-01 challenge is answered by routing the handshake to the
+	// dynamic (ACME) getter; advertising acme-tls/1 without one would offer a
+	// protocol we can't satisfy. Fail fast rather than at handshake time.
+	if cfg.ACMETLSALPN && cfg.GetCertificate == nil {
+		return nil, fmt.Errorf("ACMETLSALPN enabled but no GetCertificate (ACME) getter configured")
+	}
+
 	// Load the static external cert if files were supplied. Otherwise
 	// externalCert stays at its zero value — the GetCertificate callback
 	// is the sole source of truth.
@@ -758,15 +765,17 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 	serverName := clientHello.ServerName
 	s.logger.VDebugf(2, "Certificate selection for ServerName: '%s' (length: %d)", serverName, len(serverName))
 
-	// TLS-ALPN-01 challenge: if ACME is enabled and the peer negotiated the
-	// "acme-tls/1" protocol, this handshake is the CA validating a domain,
-	// NOT ordinary traffic. Route it straight to the dynamic (ACME) getter,
-	// which returns the special challenge certificate. This MUST run before
-	// the per-host SNI lookup below: a domain that also has a static /
+	// TLS-ALPN-01 challenge: per RFC 8737 the validating client offers ONLY
+	// "acme-tls/1" and nothing else, so this handshake is the CA validating a
+	// domain, NOT ordinary traffic. Route it straight to the dynamic (ACME)
+	// getter, which returns the special challenge certificate. This MUST run
+	// before the per-host SNI lookup below: a domain that also has a static /
 	// Cloudflare Origin CA cert registered would otherwise shadow its own
-	// challenge and issuance would stall. A normal ClientHello never carries
-	// "acme-tls/1", so non-challenge traffic falls straight through.
-	if s.acmeTLSALPN && containsACMETLSALPN(clientHello.SupportedProtos) {
+	// challenge and issuance would stall. The strict single-protocol test
+	// (see isACMETLSALPNChallenge) mirrors autocert's own detection, so an
+	// ordinary client that merely lists acme-tls/1 alongside h2/http-1.1 is
+	// not misclassified and falls straight through to normal selection.
+	if s.acmeTLSALPN && isACMETLSALPNChallenge(clientHello.SupportedProtos) {
 		if s.dynamicGetCert == nil {
 			return nil, fmt.Errorf("acme-tls/1 challenge for ServerName %q but no ACME certificate getter configured", serverName)
 		}
@@ -828,15 +837,16 @@ func (s *Server) selectCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certi
 // ALPNProto so the autocert.Manager recognises and answers the handshake.
 const acmeTLSALPNProto = "acme-tls/1"
 
-// containsACMETLSALPN reports whether the ClientHello's advertised ALPN
-// protocols include the TLS-ALPN-01 challenge protocol.
-func containsACMETLSALPN(protos []string) bool {
-	for _, p := range protos {
-		if p == acmeTLSALPNProto {
-			return true
-		}
-	}
-	return false
+// isACMETLSALPNChallenge reports whether a ClientHello is a TLS-ALPN-01
+// challenge handshake. Per RFC 8737 the validating client offers ONLY the
+// "acme-tls/1" protocol, so the test is strict single-protocol equality —
+// the exact check golang.org/x/crypto/acme/autocert applies internally
+// (autocert.go: len == 1 && == ALPNProto). Matching it means an ordinary
+// client that lists acme-tls/1 alongside h2/http-1.1 is NOT treated as a
+// challenge (which would route it into the ACME getter and bypass its
+// per-host static / Cloudflare Origin CA cert).
+func isACMETLSALPNChallenge(protos []string) bool {
+	return len(protos) == 1 && protos[0] == acmeTLSALPNProto
 }
 
 // protocolDetectingListener wraps a net.Listener to detect HTTP vs TLS connections

@@ -39,7 +39,7 @@ func TestNewServer_ACMETLSALPN_NextProtos(t *testing.T) {
 				t.Fatalf("NewServer: %v", err)
 			}
 			protos := srv.httpServer.TLSConfig.NextProtos
-			if got := containsACMETLSALPN(protos); got != c.wantACMEALP {
+			if got := containsProto(protos, acmeTLSALPNProto); got != c.wantACMEALP {
 				t.Errorf("NextProtos %v: contains acme-tls/1 = %v, want %v", protos, got, c.wantACMEALP)
 			}
 			// h2 + http/1.1 must always be advertised for gRPC/HTTP.
@@ -47,6 +47,20 @@ func TestNewServer_ACMETLSALPN_NextProtos(t *testing.T) {
 				t.Errorf("NextProtos %v missing baseline h2/http-1.1 protocols", protos)
 			}
 		})
+	}
+}
+
+// TestNewServer_ACMETLSALPN_RequiresGetter proves the flag fails fast at
+// construction when no ACME getter is supplied, rather than advertising a
+// protocol it can't satisfy and erroring only at handshake time.
+func TestNewServer_ACMETLSALPN_RequiresGetter(t *testing.T) {
+	_, err := NewServer(&Config{
+		Address:     "127.0.0.1:0",
+		ACMETLSALPN: true,
+		// GetCertificate intentionally nil
+	})
+	if err == nil {
+		t.Fatal("expected NewServer to fail when ACMETLSALPN is set without GetCertificate")
 	}
 }
 
@@ -103,6 +117,10 @@ func TestSelectCertificate_NormalTraffic_UsesHostCert(t *testing.T) {
 	}{
 		{"browser/cloudflare alpn", []string{"h2", "http/1.1"}},
 		{"no alpn", nil},
+		// A client that merely LISTS acme-tls/1 alongside real protocols is
+		// not a challenge (RFC 8737 requires acme-tls/1 to be the sole ALPN);
+		// it must not be routed into the ACME getter and shadow the host cert.
+		{"multi-alpn including acme-tls/1", []string{"h2", acmeTLSALPNProto}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
