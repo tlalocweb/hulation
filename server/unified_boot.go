@@ -122,10 +122,43 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 			return staticCert, nil
 		}
 	}
+	if staticCert == nil && getCert == nil && cfg.HulaSSL != nil && cfg.HulaSSL.DevCA != nil && cfg.HulaSSL.DevCA.Enabled {
+		// Opt-in local dev CA (Caddy "tls internal" style). Instead of a
+		// bare self-signed cert no client trusts, cache a local root CA
+		// and sign a per-host leaf on demand — every leaf chains to ONE
+		// root the developer can trust. This getter occupies the SAME
+		// catch-all slot the self-signed cert used, so per-host static /
+		// Cloudflare Origin CA certs attached via AddHostCertificate below
+		// still win SNI before this fallback runs. No ACME here, so
+		// acmeTLSALPN stays false.
+		devCA, dcerr := unified.NewDevCA(cfg.HulaSSL.DevCADir())
+		if dcerr != nil {
+			return nil, fmt.Errorf("init dev CA: %w", dcerr)
+		}
+		getCert = devCA.GetCertificate
+		// Emit the root path + trust instructions by DEFAULT so the
+		// operator can remove browser warnings. Auto-install is a separate
+		// opt-in below.
+		unifiedLog.Infof("dev CA enabled: local root at %s — trust this root to remove browser warnings", devCA.RootPath())
+		unifiedLog.Infof("dev CA trust command: %s", devCA.TrustInstructions())
+		if cfg.HulaSSL.DevCAInstallTrust() {
+			// OPT-IN: install the root into the OS trust store. InstallTrust
+			// logs a manual-install hint + returns the error on failure; we
+			// warn and continue (a failed trust install must not abort boot —
+			// handshakes still succeed, browsers just warn).
+			if ierr := devCA.InstallTrust(); ierr != nil {
+				unifiedLog.Warnf("dev CA install_trust requested but failed: %v", ierr)
+			} else {
+				unifiedLog.Infof("dev CA root installed into the OS trust store")
+			}
+		} else {
+			unifiedLog.Infof("dev CA install_trust is off (opt-in) — the root was NOT added to the OS trust store; run the command above to trust it")
+		}
+	}
 	if staticCert == nil && getCert == nil {
-		// Fallback: no static cert AND no ACME manager. Generate an
-		// in-memory self-signed cert for the admin listener. Matches
-		// the legacy Fiber behaviour and keeps local / dev / test
+		// Fallback: no static cert AND no ACME manager AND no dev CA.
+		// Generate an in-memory self-signed cert for the admin listener.
+		// Matches the legacy Fiber behaviour and keeps local / dev / test
 		// harnesses working without explicit cert config. Production
 		// deployments should configure hula_ssl.cert/key or ACME.
 		unifiedLog.Warnf("hula_ssl not configured; generating self-signed certificate for admin listener")
