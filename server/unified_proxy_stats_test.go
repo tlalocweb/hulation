@@ -43,6 +43,7 @@ func TestEvalPageViewFilter(t *testing.T) {
 		wantPath   string
 	}{
 		{"page nav with html accept", "GET", "https://proxy.example.com/about", html, true, "/about"},
+		{"mixed-case Accept (headers are case-insensitive)", "GET", "https://proxy.example.com/about", map[string]string{"Accept": "Text/HTML"}, true, "/about"},
 		{"page nav empty accept non-asset", "GET", "https://proxy.example.com/docs/guide", nil, true, "/docs/guide"},
 		{"root path", "GET", "https://proxy.example.com/", html, true, "/"},
 		{"asset .js beats accept", "GET", "https://proxy.example.com/static/app.js", html, false, ""},

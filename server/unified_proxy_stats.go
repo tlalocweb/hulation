@@ -162,12 +162,40 @@ func hasAssetExtension(path string) bool {
 }
 
 // acceptsHTML implements the Accept rule: an explicit text/html, or an empty
-// Accept (the caller has already excluded asset paths).
+// Accept (the caller has already excluded asset paths). HTTP header values are
+// case-insensitive, so the match is fold-insensitive (and allocation-free — no
+// strings.ToLower on the hot path).
 func acceptsHTML(accept string) bool {
 	if accept == "" {
 		return true
 	}
-	return strings.Contains(accept, "text/html")
+	return containsFold(accept, "text/html")
+}
+
+// containsFold reports whether the lowercase needle occurs in s, comparing
+// ASCII letters case-insensitively without allocating. needle MUST be lowercase.
+func containsFold(s, needle string) bool {
+	n, m := len(s), len(needle)
+	if m == 0 {
+		return true
+	}
+	for i := 0; i+m <= n; i++ {
+		ok := true
+		for j := 0; j < m; j++ {
+			c := s[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != needle[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 // requestScheme derives the client-facing scheme, honouring an upstream
@@ -196,6 +224,12 @@ func extractCFCountry(r *http.Request) string {
 	}
 	cfRanges := app.GetConfig().GetCloudflareIPs()
 	if cfRanges == nil || !cfRanges.ContainsString(r.RemoteAddr) {
+		return ""
+	}
+	// Cloudflare uses "XX" (unknown) and "T1" (Tor) as sentinels; mirror
+	// handler.NetHTTPCtx.Country and treat them as "no country" so we leave the
+	// field empty (for a geo-IP backfill) instead of writing a synthetic code.
+	if cc == "XX" || cc == "T1" {
 		return ""
 	}
 	return cc
