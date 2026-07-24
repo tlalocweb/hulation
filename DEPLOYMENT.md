@@ -311,6 +311,14 @@ vs. loose-glob distinction only matters when you scope a proxy by **`by_path`**,
 which shares hula's host and must defer to hula's routes and reserved service
 prefixes (`/api/*`, `/v/*`, `/scripts/*`, `/analytics`, `/hulastatus`, …).
 
+**Test coverage.** Go tests exercise the routing, bad-actor gate, server-side
+stats recorder, ACME TLS-ALPN-01 cert selection, dev CA, and WebSocket
+passthrough (`server/unified_proxy*_test.go`, `pkg/server/unified/*_test.go`).
+End-to-end, the `test/e2e` suites **`41-proxy-only`** (forwarding + reserved-path
+bypass + a `serverside` pageview landing in ClickHouse) and **`42-tls-devca`**
+(dev-CA leaf presented + chained over a real TLS handshake) run the full stack
+in CI.
+
 ## Authentication (Phase 0)
 
 ### Built-in admin
