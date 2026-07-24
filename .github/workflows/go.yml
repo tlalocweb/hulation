@@ -3,7 +3,12 @@ name: Go
 on:
   push:
     branches: [ "main" ]
-  pull_request_target:
+  # pull_request (not pull_request_target): this workflow only builds/tests and
+  # needs no secrets, so it should check out and exercise the PR's own code with
+  # a read-only token. Under pull_request_target, checkout defaults to the base
+  # branch (main), so the jobs would test main instead of the PR — and adding an
+  # explicit head ref there would run untrusted PR code with the elevated token.
+  pull_request:
     branches: [ "main" ]
 
 permissions:
@@ -31,5 +36,61 @@ jobs:
     - name: Build
       run: cd hulation && go build -v .
 
-#    - name: Test
-#      run: cd hulation && go test ./utils/... ./hooks/... -v
+    # `go test` now runs in the dedicated `unit-tests` job below (it needs a
+    # ClickHouse container for the `model` package, so it can't run inline here).
+
+  # Runs the full Go test suite (`make test` == `go test ./... -count=1`).
+  # Only the `model` package needs infrastructure — its TestMain talks to a
+  # ClickHouse on localhost:9010 (see model/testmodel.yaml). Every other
+  # package (server/, pkg/server/unified/, config/, ...) is infra-free, so a
+  # single ClickHouse is all we provision here.
+  #
+  # Modeled on e2e.yml's checkout structure: hulation + the tlalocweb/clickhouse
+  # fork are checked out as siblings so the `replace gorm.io/driver/clickhouse
+  # => ../clickhouse` directive in go.mod resolves.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: hulation
+
+    # The clickhouse fork is a sibling-checkout per the
+    # `replace gorm.io/driver/clickhouse => ../clickhouse` directive in
+    # hulation/go.mod — same convention build/e2e use.
+    - uses: actions/checkout@v4
+      with:
+        repository: tlalocweb/clickhouse
+        path: clickhouse
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        # Track the module's declared Go version (go.mod says go 1.26) instead
+        # of a hard-pinned toolchain, so `go test` never trips "go.mod requires
+        # go >= 1.26" and no auto-toolchain download is needed.
+        go-version-file: hulation/go.mod
+        cache-dependency-path: hulation/go.sum
+
+    # Starts ClickHouse on localhost:9010 (HTTP on 8133) and mounts
+    # test/clickhouse-config/users.d so the `default` user accepts the
+    # host→container TCP hop, then waits for it to answer before testing.
+    - name: Start ClickHouse for tests
+      run: |
+        cd hulation && bash start-clickhouse-for-test.sh
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:8133/ping >/dev/null 2>&1; then
+            echo "ClickHouse ready after ${i} attempt(s)"; break
+          fi
+          echo "waiting for ClickHouse... (${i}/30)"; sleep 2
+        done
+        # start-clickhouse-for-test.sh bind-mounts ./test_ch_data (a repo
+        # subdir) into the container; ClickHouse writes it as its own uid with
+        # 0750 perms (e.g. test_ch_data/access), which the runner user can't
+        # traverse — so `go test ./...`'s package walk fails with
+        # "permission denied". Make the data/log dirs traversable (read+exec
+        # only, no write) so the walk succeeds. Harmless to the running server.
+        sudo chmod -R a+rX test_ch_data test_ch_logs 2>/dev/null || true
+
+    - name: Test
+      run: cd hulation && go test ./... -count=1
