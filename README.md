@@ -43,10 +43,12 @@ servers:
     id: mysite
     aliases: [www.example.com]
     root: /var/hula/public
-    ssl:
-      acme:
-        email: you@example.com
-        cache_dir: /var/hula/certs
+
+hula_ssl:
+  acme:
+    email: you@example.com
+    domains: [example.com, www.example.com]   # required to activate ACME on the unified listener
+    cache_dir: /var/hula/certs
 
 dbconfig:
   host: hula-clickhouse
@@ -70,7 +72,7 @@ servers:
     proxy_only: true
     proxy_pass: http://127.0.0.1:8080
     ssl:
-      cloudflare_origin_ca: {}      # or acme, cert/key, or dev_ca
+      cloudflare_origin_ca: {}      # per-host cert (or cert/key). ACME + dev CA are set once under hula_ssl — see Automatic HTTPS.
 ```
 
 Or define routes outside the `servers:` block with the top-level `proxies:` list:
@@ -94,7 +96,7 @@ Hula issues and renews TLS certificates for you, Caddy-style. Certificate select
 
 | Mode | Config | Notes |
 |---|---|---|
-| **ACME / Let's Encrypt** | `ssl.acme` | Issued and renewed automatically. On the unified `:443` listener, uses the **TLS-ALPN-01** challenge — **no port 80 needed**. Per-site certs can also use the **HTTP-01** challenge on `:80` (`http_port`, default 80). |
+| **ACME / Let's Encrypt** | `hula_ssl.acme` | Set `email` + a `domains` allowlist (required to activate). Issued and renewed automatically over the **TLS-ALPN-01** challenge on the `:443` listener — **no port 80 needed**. |
 | **Cloudflare Origin CA** | `ssl.cloudflare_origin_ca` | Certificates trusted only by Cloudflare's edge; see [Cloudflare](#cloudflare). |
 | **Static cert/key** | `ssl.cert` / `ssl.key` | File paths or inline PEM. |
 | **Local dev CA** | `hula_ssl.dev_ca` | A built-in CA (mkcert / `tls internal` style) for local hosts. Mints a stable local root and signs a per-host leaf on demand; optional OS trust-store install. Opt-in, off by default. |
@@ -117,7 +119,7 @@ Hula runs a **single unified TLS listener on `:443`** and detects the protocol p
 - **gRPC** (over HTTP/2) for the management API, alongside a REST gateway on the same port.
 - **WebSocket** upgrades, both for hula's own chat and for proxied backends.
 - **TLS-ALPN-01** ACME challenges (`acme-tls/1`) answered inline on the same listener.
-- Plain **HTTP on `:80`** is answered only to serve HTTP-01 ACME challenges and to **301-redirect** everything else to HTTPS.
+- A plain-**HTTP** connection to the TLS port is **301-redirected** to HTTPS. There is no separate `:80` listener — ACME uses TLS-ALPN-01 on `:443`, so port 80 is not required.
 - **HSTS** (`Strict-Transport-Security`) is emitted by default, with per-vhost overrides (`max_age`, `include_subdomains`, `preload`, or hard-disable).
 
 ## Cloudflare
