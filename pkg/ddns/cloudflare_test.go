@@ -1,0 +1,282 @@
+package ddns
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// cfMock is a minimal in-memory Cloudflare v4 API for tests. It records every
+// request (method + path) and the Authorization header, and serves canned zones
+// and DNS records.
+type cfMock struct {
+	t        *testing.T
+	mu       sync.Mutex
+	calls    []string // "METHOD path"
+	authSeen []string
+	zones     []cfZone
+	zonePages [][]cfZone    // when set, GET /zones is served by ?page= (for pagination tests)
+	records   []cfDNSRecord // existing records returned by GET
+	created  []cfDNSRecordPayload
+	patched  []cfDNSRecordPayload
+	server   *httptest.Server
+}
+
+func newCFMock(t *testing.T) *cfMock {
+	m := &cfMock{t: t}
+	m.server = httptest.NewServer(http.HandlerFunc(m.handle))
+	t.Cleanup(m.server.Close)
+	return m
+}
+
+func (m *cfMock) ok(w http.ResponseWriter, result interface{}) {
+	raw, _ := json.Marshal(result)
+	env := cfAPIResponse{Success: true, Result: raw}
+	_ = json.NewEncoder(w).Encode(env)
+}
+
+func (m *cfMock) handle(w http.ResponseWriter, r *http.Request) {
+	m.mu.Lock()
+	m.calls = append(m.calls, r.Method+" "+r.URL.Path)
+	m.authSeen = append(m.authSeen, r.Header.Get("Authorization"))
+	m.mu.Unlock()
+
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/zones":
+		if len(m.zonePages) > 0 {
+			page := 1
+			if pg := r.URL.Query().Get("page"); pg != "" {
+				if n, err := strconv.Atoi(pg); err == nil {
+					page = n
+				}
+			}
+			var out []cfZone
+			if page >= 1 && page <= len(m.zonePages) {
+				out = m.zonePages[page-1]
+			}
+			m.ok(w, out)
+		} else {
+			m.ok(w, m.zones)
+		}
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/dns_records"):
+		m.ok(w, m.records)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dns_records"):
+		var p cfDNSRecordPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		m.mu.Lock()
+		m.created = append(m.created, p)
+		m.mu.Unlock()
+		m.ok(w, cfDNSRecord{ID: "new1", Type: p.Type, Name: p.Name, Content: p.Content, Proxied: p.Proxied, TTL: p.TTL})
+	case r.Method == http.MethodPatch:
+		var p cfDNSRecordPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		m.mu.Lock()
+		m.patched = append(m.patched, p)
+		m.mu.Unlock()
+		m.ok(w, cfDNSRecord{ID: "patched", Type: p.Type, Name: p.Name, Content: p.Content, Proxied: p.Proxied, TTL: p.TTL})
+	default:
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+func (m *cfMock) provider() *CloudflareProvider {
+	return NewCloudflareProvider(WithAPIBase(m.server.URL), WithHTTPClient(m.server.Client()))
+}
+
+func (m *cfMock) hasCall(method, pathContains string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.calls {
+		if strings.HasPrefix(c, method+" ") && strings.Contains(c, pathContains) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExactCall matches the full "METHOD path" (r.URL.Path, no query) exactly, so
+// the zone-LIST endpoint "/zones" is distinguishable from "/zones/{id}/dns_records".
+func (m *cfMock) hasExactCall(method, path string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.calls {
+		if c == method+" "+path {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCloudflare_ZoneAutoResolve: with no ZoneID on the record, the provider
+// lists zones and picks the longest-suffix match (example.com over com).
+func TestCloudflare_ZoneAutoResolve(t *testing.T) {
+	m := newCFMock(t)
+	m.zones = []cfZone{{ID: "zc", Name: "com"}, {ID: "zexample", Name: "example.com"}}
+	m.records = nil // create path
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.5", Proxied: true, TTL: 1, APIToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if !m.hasCall(http.MethodGet, "/zones") {
+		t.Fatal("expected a GET /zones for auto-resolve")
+	}
+	// The dns_records call must target the longest-suffix zone id.
+	if !m.hasCall(http.MethodGet, "/zones/zexample/dns_records") {
+		t.Fatalf("expected dns_records under zexample; calls=%v", m.calls)
+	}
+	if len(m.created) != 1 || m.created[0].Content != "203.0.113.5" {
+		t.Fatalf("expected create with content 203.0.113.5, got %+v", m.created)
+	}
+}
+
+// TestCloudflare_ZoneAutoResolve_Paginates: the matching zone is only on page 2,
+// so resolution must page past a full first page (a token with >50 zones).
+func TestCloudflare_ZoneAutoResolve_Paginates(t *testing.T) {
+	m := newCFMock(t)
+	page1 := make([]cfZone, 50) // a full page → forces a page-2 fetch
+	for i := range page1 {
+		page1[i] = cfZone{ID: fmt.Sprintf("z%d", i), Name: fmt.Sprintf("filler%d.net", i)}
+	}
+	m.zonePages = [][]cfZone{page1, {{ID: "target", Name: "example.com"}}}
+	m.records = nil
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.5", Proxied: true, TTL: 1, APIToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if !m.hasCall(http.MethodGet, "/zones/target/dns_records") {
+		t.Fatalf("expected dns_records under the page-2 zone 'target'; calls=%v", m.calls)
+	}
+}
+
+// TestCloudflare_MultipleRecords_Skips: several A records for one name
+// (round-robin) ⇒ DDNS refuses to modify any of them rather than clobbering one.
+func TestCloudflare_MultipleRecords_Skips(t *testing.T) {
+	m := newCFMock(t)
+	m.records = []cfDNSRecord{
+		{ID: "r1", Type: "A", Name: "app.example.com", Content: "203.0.113.1", Proxied: true, TTL: 1},
+		{ID: "r2", Type: "A", Name: "app.example.com", Content: "203.0.113.2", Proxied: true, TTL: 1},
+	}
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.9", Proxied: true, TTL: 1, ZoneID: "z1", APIToken: "t",
+	})
+	if err == nil {
+		t.Fatal("expected an error refusing to modify a multi-value record set")
+	}
+	if len(m.created) != 0 || len(m.patched) != 0 {
+		t.Fatalf("must not write to a multi-value set; created=%v patched=%v", m.created, m.patched)
+	}
+}
+
+// TestCloudflare_CreateWhenMissing: no existing record ⇒ POST with proxied+ttl,
+// and the Bearer token is sent.
+func TestCloudflare_CreateWhenMissing(t *testing.T) {
+	m := newCFMock(t)
+	m.records = nil
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "AAAA", Content: "2001:db8::9", Proxied: false, TTL: 300, ZoneID: "z1", APIToken: "tok-abc",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if len(m.created) != 1 {
+		t.Fatalf("expected 1 create, got %d", len(m.created))
+	}
+	c := m.created[0]
+	if c.Type != "AAAA" || c.Content != "2001:db8::9" || c.Proxied != false || c.TTL != 300 {
+		t.Fatalf("create payload wrong: %+v", c)
+	}
+	// ZoneID supplied ⇒ no zone-list lookup. The dns_records call is under
+	// "/zones/{id}/dns_records", so assert the exact zone-list path "/zones"
+	// was never hit (a Contains check would false-match the dns_records path).
+	if m.hasExactCall(http.MethodGet, "/zones") {
+		t.Fatalf("should not list zones when ZoneID is supplied; calls=%v", m.calls)
+	}
+	// Bearer header on every call.
+	for _, a := range m.authSeen {
+		if a != "Bearer tok-abc" {
+			t.Fatalf("expected Bearer tok-abc, got %q", a)
+		}
+	}
+}
+
+// TestCloudflare_PatchWhenContentDiffers: existing record with a stale IP ⇒ PATCH.
+func TestCloudflare_PatchWhenContentDiffers(t *testing.T) {
+	m := newCFMock(t)
+	m.records = []cfDNSRecord{{ID: "rec1", Type: "A", Name: "app.example.com", Content: "203.0.113.1", Proxied: true, TTL: 1}}
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.99", Proxied: true, TTL: 1, ZoneID: "z1", APIToken: "t",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if len(m.patched) != 1 || m.patched[0].Content != "203.0.113.99" {
+		t.Fatalf("expected PATCH to 203.0.113.99, got %+v", m.patched)
+	}
+	if !m.hasCall(http.MethodPatch, "/dns_records/rec1") {
+		t.Fatalf("expected PATCH on rec1; calls=%v", m.calls)
+	}
+	if len(m.created) != 0 {
+		t.Fatal("should not create when a record exists")
+	}
+}
+
+// TestCloudflare_NoPatchWhenUnchanged: existing record already matches ⇒ GET
+// only, no POST, no PATCH (the key efficiency guarantee).
+func TestCloudflare_NoPatchWhenUnchanged(t *testing.T) {
+	m := newCFMock(t)
+	m.records = []cfDNSRecord{{ID: "rec1", Type: "A", Name: "app.example.com", Content: "203.0.113.5", Proxied: true, TTL: 1}}
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.5", Proxied: true, TTL: 1, ZoneID: "z1", APIToken: "t",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if len(m.patched) != 0 || len(m.created) != 0 {
+		t.Fatalf("expected no write when unchanged; created=%v patched=%v", m.created, m.patched)
+	}
+}
+
+// TestPickZone unit-tests the longest-suffix matcher directly.
+func TestPickZone(t *testing.T) {
+	zones := []cfZone{{ID: "a", Name: "com"}, {ID: "b", Name: "example.com"}, {ID: "c", Name: "other.net"}}
+	got, ok := pickZone("app.example.com", zones)
+	if !ok || got.ID != "b" {
+		t.Fatalf("got %+v ok=%v, want example.com (b)", got, ok)
+	}
+	if _, ok := pickZone("nope.invalid", zones); ok {
+		t.Fatal("expected no match for nope.invalid")
+	}
+	// exact match on the zone apex.
+	got, ok = pickZone("example.com", zones)
+	if !ok || got.ID != "b" {
+		t.Fatalf("apex: got %+v ok=%v", got, ok)
+	}
+}
+
+// TestNewProvider covers provider selection.
+func TestNewProvider(t *testing.T) {
+	if _, err := NewProvider(""); err != nil {
+		t.Fatalf("empty ⇒ cloudflare, got %v", err)
+	}
+	if _, err := NewProvider("cloudflare"); err != nil {
+		t.Fatalf("cloudflare, got %v", err)
+	}
+	if _, err := NewProvider("route53"); err == nil {
+		t.Fatal("unknown provider should error")
+	}
+}

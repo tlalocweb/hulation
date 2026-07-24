@@ -442,6 +442,12 @@ func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncident
 			go buildMgr.StartupBuildAll(conf.Servers)
 		}
 	}
+
+	// Dynamic DNS updater. Detects the public IP(s) and upserts A/AAAA records
+	// at the DNS provider (Cloudflare). Runs once on boot, then every interval
+	// (default 4h) and on SIGHUP. startDDNS returns immediately; the loop runs
+	// in its own ctx-bound goroutine and every operation is non-fatal.
+	startDDNS(ctx, conf)
 }
 
 // buildPushRelayClient turns the operator-supplied config into a relayclient.Client.

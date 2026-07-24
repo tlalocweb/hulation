@@ -1,0 +1,33 @@
+# DDNS load round-trip fixture. Exercises: global ddns block with defaults
+# left implicit (provider/interval/ttl come from conftagz default tags because
+# the block is present), a DDNS-enabled server, a server WITHOUT ddns (must stay
+# nil thanks to conf:"skipnil"), and a DDNS-enabled proxy. See TestLoadConfig_DDNS.
+admin:
+    username: admin
+    hash: "x"
+jwt_key: "ddns-fixture-test-jwt-key-32bytes-long!!"
+jwt_expiration: "72h"
+port: 8443
+hula_host: ddns.test.local
+dbconfig:
+    host: localhost
+    port: 9010
+    user: default
+    dbname: dbtest
+ddns:
+    cf_api_token: "global-token"
+    cf_zone_id: "global-zone"
+servers:
+    - host: app.ddns.test.local
+      id: app
+      ddns:
+          cf_proxied: false
+          records:
+              - app.ddns.test.local
+              - www.ddns.test.local
+    - host: bare.ddns.test.local
+      id: bare
+proxies:
+    - by_domain: cdn.ddns.test.local
+      target: http://127.0.0.1:9000
+      ddns: {}
