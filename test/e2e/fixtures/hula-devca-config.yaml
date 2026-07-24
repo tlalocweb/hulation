@@ -1,0 +1,54 @@
+# E2E test hula config — SECOND, self-contained instance for the dev-CA
+# suite (42). Unlike hula-config.yaml.tmpl this file needs NO env
+# substitution (fixed jwt_key + dummy admin hash), so it is committed
+# verbatim and mounted straight into the hula-devca compose service.
+#
+# The point of a separate instance: the shared hula has a static
+# hula_ssl.cert, which always wins over the dev CA in server/unified_boot.go,
+# so the dev CA never wires there. This instance has NO static cert — instead
+# it enables hula_ssl.dev_ca, so hula boots the Caddy-style local dev CA and
+# serves dev-CA-signed leaves for every SNI (see pkg/server/unified/devca.go,
+# which caches the root at <dir>/root.crt).
+
+admin:
+    username: admin
+    # Dummy argon2id hash — this instance never performs auth (only a TLS
+    # handshake is exercised). admin.hash just has to be a non-empty string
+    # for config to load (conftagz tag `test:"~.+"`).
+    hash: $argon2id$v=19$m=16384,t=12,p=4$VGwF/Y2gKhe/aEDvbdChcg$GSuno4CHVOS5hnWbZObovnYrtIGKRzMB/gqUd/7jQwl2AoCaK7J0W8t8CTBfsmm1
+
+# Fixed key so the instance boots deterministically (no env substitution).
+jwt_key: ZTJlLWRldmNhLXRlc3Qtaml3dC1rZXktZml4ZWQtMzJieXRl
+jwt_expiration: "72h"
+port: 443
+
+hula_host: devca.test.local
+hula_ssl:
+    # No static cert/key here: with neither set (and no ACME / Cloudflare
+    # Origin CA), the opt-in local dev CA becomes the catch-all
+    # GetCertificate getter and signs a per-host leaf chained to a cached
+    # local root. install_trust stays off (default) — the suite trusts the
+    # root explicitly via --cacert instead of touching the OS trust store.
+    dev_ca:
+        enabled: true
+        dir: /var/hula/.hula-devca
+
+# Bad actor detection disabled (same reason as the main e2e config — the
+# test network IPs would otherwise get blocked mid-run).
+bad_actors:
+    disable: true
+
+dbconfig:
+    host: hula-clickhouse
+    port: 9000
+    user: hula
+    pass: hula
+    dbname: hula
+    retries: 5
+    delay_retry: 5
+
+servers:
+    # A single plain vhost. No `ssl:` block → no per-host cert is registered,
+    # so the dev CA fallback getter mints this host's leaf on demand.
+    - host: devca.test.local
+      id: devca-site
