@@ -84,6 +84,13 @@ jobs:
           fi
           echo "waiting for ClickHouse... (${i}/30)"; sleep 2
         done
+        # start-clickhouse-for-test.sh bind-mounts ./test_ch_data (a repo
+        # subdir) into the container; ClickHouse writes it as its own uid with
+        # 0750 perms (e.g. test_ch_data/access), which the runner user can't
+        # traverse — so `go test ./...`'s package walk fails with
+        # "permission denied". Make the data/log dirs traversable (read+exec
+        # only, no write) so the walk succeeds. Harmless to the running server.
+        sudo chmod -R a+rX test_ch_data test_ch_logs 2>/dev/null || true
 
     - name: Test
       run: cd hulation && go test ./... -count=1
