@@ -31,5 +31,47 @@ jobs:
     - name: Build
       run: cd hulation && go build -v .
 
-#    - name: Test
-#      run: cd hulation && go test ./utils/... ./hooks/... -v
+    # `go test` now runs in the dedicated `unit-tests` job below (it needs a
+    # ClickHouse container for the `model` package, so it can't run inline here).
+
+  # Runs the full Go test suite (`make test` == `go test ./... -count=1`).
+  # Only the `model` package needs infrastructure — its TestMain talks to a
+  # ClickHouse on localhost:9010 (see model/testmodel.yaml). Every other
+  # package (server/, pkg/server/unified/, config/, ...) is infra-free, so a
+  # single ClickHouse is all we provision here.
+  #
+  # Modeled on e2e.yml's checkout structure: hulation + the tlalocweb/clickhouse
+  # fork are checked out as siblings so the `replace gorm.io/driver/clickhouse
+  # => ../clickhouse` directive in go.mod resolves.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: hulation
+
+    # The clickhouse fork is a sibling-checkout per the
+    # `replace gorm.io/driver/clickhouse => ../clickhouse` directive in
+    # hulation/go.mod — same convention build/e2e use.
+    - uses: actions/checkout@v4
+      with:
+        repository: tlalocweb/clickhouse
+        path: clickhouse
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache-dependency-path: hulation/go.sum
+
+    # Starts ClickHouse on localhost:9010 and mounts
+    # test/clickhouse-config/users.d so the `default` user accepts the
+    # host→container TCP hop. The model package's TestMain retries the
+    # connection 5×5s, so a short sleep for the server to bind is enough.
+    - name: Start ClickHouse for tests
+      run: |
+        cd hulation && bash start-clickhouse-for-test.sh
+        sleep 10
+
+    - name: Test
+      run: cd hulation && go test ./... -count=1
