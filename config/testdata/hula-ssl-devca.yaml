@@ -1,0 +1,24 @@
+# Regression fixture: hula_ssl with ONLY the local dev CA (no static cert,
+# no ACME, no Cloudflare Origin CA). conftagz auto-materializes an empty
+# cloudflare_origin_ca struct; LoadConfig must NOT treat that as a real CF
+# config and trip "cloudflare_origin_ca requires api_token". See
+# TestLoadConfig_DevCAWithoutStaticCert.
+admin:
+    username: admin
+    hash: "x"
+jwt_key: "devca-regression-test-jwt-key-32bytes!!"
+jwt_expiration: "72h"
+port: 8443
+hula_host: devca.test.local
+hula_ssl:
+    dev_ca:
+        enabled: true
+        dir: /tmp/hula-devca-regression
+dbconfig:
+    host: localhost
+    port: 9010
+    user: default
+    dbname: dbtest
+servers:
+    - host: devca.test.local
+      id: devca-site
