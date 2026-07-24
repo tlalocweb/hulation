@@ -1,493 +1,180 @@
 # Hula
 
-Hula is a modern web server for static sites, marketing landers, and digital‑marketing / CDP workloads. It's purpose‑built to make Hugo (and similar) site deployments fast, low‑touch, and AI‑friendly: one container fronts your domains with automatic HTTPS, auto‑deploys from Git, and ships a full visitor analytics, lead‑capture, live‑chat, and consent stack out of the box.
+**A single self-hosted binary that terminates TLS, reverse-proxies your apps, and captures first-party analytics and live chat — all on port 443, with no third-party JavaScript.**
 
-## Features
+If you run Caddy or nginx, you already know the shape of hula: automatic HTTPS, virtual hosts, `reverse_proxy` to your backends. Hula does that — and then keeps going. The same process that fronts your domains also records privacy-first visitor analytics, runs a live visitor↔agent chat, and auto-deploys static sites from Git. One port, one config file, no data leaving your box.
 
-**Site delivery**
-- Static site serving with byte‑range, transparent compression, and immutable cache control
-- **Git autodeploy** — pulls and (optionally) builds your repo on boot and on demand; production + staging modes per server
-- **Staging WebDAV** — mount a remote staging site as a local folder, edit live, and trigger rebuilds (`hulactl staging-mount --autobuild`)
-- **Backend containers** — Hula manages and reverse‑proxies Docker containers as per‑server backends, isolated on dedicated networks
+## Why hula
 
-**TLS & networking**
-- Automatic Let's Encrypt certificates (ACME HTTP‑01) with shared listeners across servers
-- Cloudflare Origin CA support and manual cert/key paths
-- Reverse‑proxy aware HTTP/TLS protocol detection on a single listener
+Caddy and nginx are excellent at what they do: terminate TLS and proxy requests. But the moment you want to *know who's visiting*, you bolt on Google Analytics — third-party JavaScript, a cookie banner, and your visitors' data shipped to someone else's servers. Want live chat? Embed another third-party widget with its own tracking.
 
-**Visitor analytics & marketing (Phase 1–4)**
-- ClickHouse‑backed visitor + event analytics with first‑class hello/landing/form/conversion/goal events
-- **Forms & landers** — versioned CRUD with hooks (Risor) for `on_new_form_submission`, `on_lander_visit`, `on_new_visitor`
-- **Goals, reports & scheduled email digests** (Phase 4) with operator alerts
-- **Live chat** (Phase 4b) — visitor → operator chat with WebSocket transport and badactor gating
+Hula collapses that stack into one binary:
 
-**Privacy / GDPR (Phase 4c)**
-- `consent_mode: opt_in | opt_out | off` per server, with `Sec‑GPC` honored as a binding marketing opt‑out
-- **Server‑side forwarders** — Meta CAPI and GA4 Measurement Protocol adapters with per‑purpose consent gating
-- **Cookieless mode** (`tracking_mode: cookieless`) — daily HMAC visitor IDs derived from a per‑server salt; no cookie banner needed
-- `hulactl rotate-cookieless-salt` for emergency wipe
+- **Automatic-HTTPS reverse proxy** — like Caddy's `reverse_proxy` or an nginx `proxy_pass` server block, with ACME certificates issued and renewed for you.
+- **Privacy-first analytics** — first-party or fully server-side (no JS at all), backed by ClickHouse. No third-party scripts, and with cookieless mode, no cookie banner.
+- **Live chat** — visitor-to-agent chat over WebSocket, served from the same origin.
+- **Static-site auto-deployer** — pulls from Git, builds Hugo / Astro / Gatsby / MkDocs in an ephemeral container, and serves the result.
 
-**Auth & accounts**
-- **OPAQUE PAKE** for admin and operator passwords — passwords never travel the wire on login or rotation
-- TOTP 2FA with at‑rest encryption
-- OIDC SSO providers (Auth config) alongside internal password
-- Per‑user, per‑server access roles (viewer / manager) for non‑admin operators
+The differentiator is the combination. Caddy and nginx *only* proxy. Google Analytics *requires* third-party JS and hands your data to a third party. Hula gives you the reverse proxy **and** the analytics **and** the chat, first-party, on infrastructure you control.
 
-**Bot & abuse defense**
-- Radix‑tree IP **badactor** scoring with TTL expiry, allowlist, and CIDR allowlist
-- Scores HTTP probe paths (`/wp-login.php`, `/xmlrpc.php`, …), TCP protocol probes, and TLS handshake failures (no shared cipher, EOF, malformed handshake)
-- ClickHouse audit row per incident; automatic block at threshold
+## Quick start
 
-**Mobile / notifications (Phase 5a)**
-- Push via APNs (iOS) and FCM (Android) for operator alerts
-- Email + push fan‑out with per‑recipient delivery accounting
-
-**HA storage**
-- Stage 1 — Storage interface seam separates ACL / goals / reports state from ClickHouse
-- Stage 2 — **Single‑node Raft is the production storage default**; solo installs auto‑bootstrap with no `team:` block. Multi‑node clustering is configured via `team:` in `config.yaml` (see `HA_PLAN2.md`).
-
-## Quick Start
-
-Get a site running with automatic HTTPS on any Linux machine with Docker:
+Install with Docker on any Linux host:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/install.sh | bash
 ```
 
-This creates a `./hula` directory, pulls the Hula and ClickHouse Docker images, and starts both containers. You can customize with environment variables:
-
-```bash
-HULA_PORT=443 HULA_DIR=/opt/hula curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/install.sh | bash
-```
-
-### Prerequisites
-
-- **Docker Engine 20.10+** — [Install Docker](https://docs.docker.com/engine/install/) or `curl -fsSL https://get.docker.com | sh`
-- **Linux server** with a public IP (for ACME/Let's Encrypt)
-- **Ports 80 and 443** reachable from the internet, either directly or through your proxy / firewall (port 80 is required for ACME HTTP‑01 certificate challenges)
-- **DNS** A records pointing your domain to the server
-
-### Getting Your Site Live with HTTPS
-
-After running the installer, follow these steps to serve your site with automatic Let's Encrypt certificates:
-
-**1. Point your DNS**
-
-Create A records for your domain pointing to your server's public IP:
-
-```
-example.com      → 203.0.113.10
-www.example.com  → 203.0.113.10
-```
-
-**2. Edit the config**
+This creates a `./hula` directory and starts the hula and ClickHouse containers. Point DNS at your server, then set the admin password (OPAQUE PAKE — no plaintext password ever leaves your machine, even during setup):
 
 ```bash
 cd hula
-nano config.yaml
-```
-
-First, set the admin password using OPAQUE PAKE registration (no plaintext password is ever sent to the server, even during setup):
-
-```bash
-# If installed via the quick-start installer:
 HULACTL_NEW_PASSWORD='your-strong-password' ./hulactl set-password
-
-# Or interactively (prompts for current + new password):
-./hulactl set-password
 ```
 
-`set-password` defaults to the `admin` user. The first run on a fresh install accepts an empty current password — pass `HULACTL_CURRENT_PASSWORD=''` to confirm.
-
-> Legacy installs that still use `admin.hash` (argon2) can generate one with `./hulactl generatehash` and paste it into `config.yaml`. New installs should prefer OPAQUE.
-
-Then a minimal `config.yaml` looks like:
+A minimal `config.yaml` that serves a static site with an automatic Let's Encrypt certificate:
 
 ```yaml
 jwt_key: "change-me-to-something-random"
-
 port: 443
-
-ssl:
-  acme:
-    email: you@example.com
-    cache_dir: /var/hula/certs
 
 servers:
   - host: example.com
-    aliases:
-      - www.example.com
     id: mysite
+    aliases: [www.example.com]
     root: /var/hula/public
 
-cors:
-  allow_credentials: true
+hula_ssl:
+  acme:
+    email: you@example.com
+    domains: [example.com, www.example.com]   # required to activate ACME on the unified listener
+    cache_dir: /var/hula/certs
 
 dbconfig:
   host: hula-clickhouse
   port: 9000
   user: hula
-  pass: hula
+  pass: change-me
   dbname: hula
 ```
 
-**3. Add your site content**
+Visit `https://example.com` — hula obtains and caches the certificate on first request and renews it automatically. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for Docker Compose, Kubernetes, backend containers, and the full configuration reference.
 
-Copy your static site (e.g., Hugo output) into the public directory:
+## Reverse proxy & TLS
 
-```bash
-cp -r /path/to/your/site/public/* ./public/
-```
+### Reverse proxy
 
-The `public/` directory maps to `/var/hula/public` inside the container.
-
-**4. Open firewall ports**
-
-Ports 80 and 443 must be reachable from the internet:
-
-```bash
-# Ubuntu/Debian with ufw
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Or with firewalld
-sudo firewall-cmd --permanent --add-service=http --add-service=https
-sudo firewall-cmd --reload
-```
-
-**5. Restart with HTTPS ports exposed**
-
-Stop the default instance and restart with ports 80 and 443:
-
-```bash
-./start-with-docker.sh --stop
-HULA_PORT=443 ./start-with-docker.sh
-```
-
-Note: you also need port 80 exposed for ACME challenges. Edit `start-with-docker.sh` or run manually:
-
-```bash
-docker run -d \
-  --name hula \
-  --network hula-net \
-  -p 443:443 -p 80:80 \
-  -v "$(pwd)/config.yaml":/etc/hula/config.yaml:ro \
-  -v "$(pwd)/hula_certs":/var/hula/certs \
-  -v "$(pwd)/public":/var/hula/public:ro \
-  --restart unless-stopped \
-  ghcr.io/tlalocweb/hula:latest
-```
-
-**6. Visit your site**
-
-Open `https://example.com` — Hula automatically obtains a Let's Encrypt certificate on the first request. The certificate is cached in `hula_certs/` and renews automatically.
-
-### Management
-
-```bash
-cd hula
-
-# View logs
-./start-with-docker.sh --logs
-
-# Stop everything
-./start-with-docker.sh --stop
-
-# Restart after config changes
-./start-with-docker.sh --restart
-
-# Pull and restart with latest image
-./start-with-docker.sh --pull --restart
-
-# Hot reload after editing config.yaml (no container restart)
-./hulactl reload
-```
-
-### Docker Compose
-
-For more control, see [DEPLOYMENT.md](DEPLOYMENT.md) which covers Docker Compose, backend containers, and Kubernetes deployments.
-
-## Install CLI Tools
-
-Install `hulactl` (the Hula management CLI) on Linux or macOS without building from source:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | bash
-```
-
-This downloads the latest pre‑built `hulactl` binary for your platform and installs it to `~/.local/bin/`. You can customize the install location or pin a version:
-
-```bash
-# Install to /usr/local/bin
-INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | sudo bash
-
-# Pin a specific version
-HULA_VERSION=v0.20.0-pre1 curl -fsSL https://raw.githubusercontent.com/tlalocweb/hulation/main/installtools.sh | bash
-```
-
-### `hulactl` command reference
-
-```text
-Authentication & accounts
-  auth [URL]              Authenticate against a hula server and store credentials
-  authok                  Check if hulactl authentication is working
-  logout                  Remove stored credentials from hulactl.yaml
-  set-password            Set / rotate a password via OPAQUE PAKE registration
-  generatehash            Generate an argon2 hash (legacy admin.hash flow)
-  updateadminhash         Generate a hash and write it into the hula config file
-  totp-setup              Set up TOTP for the admin user (interactive)
-  forget-opaque-record    EMERGENCY offline removal of an OPAQUE record from Bolt
-
-Users & access
-  createuser / modifyuser / deleteuser / listusers
-
-Forms & landers
-  createform / modifyform / submitform / deleteform / listforms
-  createlander / modifylander / deletelander / listlanders
-
-Site builds (production)
-  build <server-id>            Trigger a site build and poll until complete
-  build-status <build-id>      Show status of a build
-  builds <server-id>           List recent builds
-
-Staging
-  staging-build <server-id>                  Rebuild in the long-lived staging container
-  staging-update <server-id> <local> <path>  Upload one file via WebDAV
-  staging-mount  <server-id> <folder> [--autobuild] [--dangerous]
-                                              Live-sync a local folder to the staging site
-
-Operations
-  badactors                  List scored IPs with block status
-  initdb / deletedb          Initialize / drop the analytics schema
-  rotate-cookieless-salt     Replace the per-server cookieless visitor-id salt
-  reload                     SIGHUP the running hula process to reload config
-```
-
-Run `hulactl` with no arguments for the full inline help.
-
-### `hula` key/secret commands
-
-Secret generation/rotation lives on the `hula` binary (not hulactl). With no
-`-c` each prints the new value to stdout; with `-c <config.yaml>` it updates only
-that field in place — preserving every comment, blank line, and indentation — and
-refuses to overwrite an existing value unless `--force` (a timestamped `.bak` is
-always written first).
-
-```text
-  jwt-key-update              Generate / rotate jwt_key
-  totp-key-update             Generate / rotate totp_encryption_key
-  noise-static-key-update     Generate / rotate noise_static_key (prints public too)
-  visitor-chat-key-update     Generate / rotate visitor_chat_key (prints public too)
-  opaque-seed-update          Generate / rotate opaque.oprf_seed + opaque.ake_secret
-  genteamcerts --nodes …      Offline Team CA + per-node mTLS bundles + bootstrap token
-```
-
-Example: `hula totp-key-update -c /etc/hula/config.yaml` (then restart hula).
-
-## Mobile app, QR pairing & encrypted push
-
-The Hula mobile app (iOS + Android) talks to your installation over three
-encrypted surfaces. All of them are **optional** — omit the keys and the server
-still runs; the affected feature just degrades gracefully (plaintext / no push).
-
-**1. Generate the keypairs** (one-time, store the private halves in your secrets
-manager):
-
-```bash
-./hula noise-static-key-update     # → noise_static_key  (gRPC chat-stream Noise_IK)
-./hula visitor-chat-key-update     # → visitor_chat_key  (browser widget sealed-box)
-```
-
-Each prints a base64url private key for `config.yaml` plus the matching **public**
-key. The mobile app pins the Noise public during pairing and refuses to open a
-Noise session against any other server identity, so rotating a key requires
-clients to re-fetch the identity (see below).
-
-**2. Add them to `config.yaml`:**
+Mark a virtual host `proxy_only` and every request for its `host` (and `aliases`) is forwarded verbatim to the upstream — path, method, and query preserved, with `X-Forwarded-Host` / `-Proto` / `-For` and `X-Real-IP` set authoritatively:
 
 ```yaml
-# Noise_IK responder static key for the gRPC chat stream. Empty ⇒ plaintext
-# streams still work, but Noise-mode mobile clients get noise_unavailable.
-noise_static_key: "BASE64URL_FROM_hulactl_noise-static-key"
-
-# Sealed-box key the browser chat widget encrypts visitor messages to (app-layer
-# crypto on top of HTTPS). Empty ⇒ widget falls back to plaintext.
-visitor_chat_key: "BASE64URL_FROM_hulactl_visitor-chat-key"
-
-# Per-installation binding to a hula-push-relay (server-blind APNs/FCM fan-out).
-# Omit entirely to disable relayed push (only the legacy direct path fires).
-push_relay:
-  base_url: "https://relay.example.com"
-  installation_id: "inst_..."        # issued by the relay at enrollment
-  signing_key_b64: "..."             # 32-byte ed25519 seed (base64 standard)
+servers:
+  - host: app.example.com
+    proxy_only: true
+    proxy_pass: http://127.0.0.1:8080
+    ssl:
+      cloudflare_origin_ca: {}      # per-host cert (or cert/key). ACME + dev CA are set once under hula_ssl — see Automatic HTTPS.
 ```
 
-These are hot-reloadable — `./hulactl reload` (SIGHUP) picks up rotated keys for
-new chat streams without a restart.
+Or define routes outside the `servers:` block with the top-level `proxies:` list:
 
-**3. Enroll with a push relay** (only if you want push notifications). On the
-relay host:
-
-```bash
-hula-relay admin issue-code --account-id <acct>   # → HULA-ENROLL-XXXX-...
+```yaml
+proxies:
+  - target: http://127.0.0.1:8080
+    by_domain: app.example.com      # whole host → upstream (bypasses hula's reserved paths)
+  - target: http://127.0.0.1:9000
+    by_path: /relay                 # a path prefix that shares hula's host (defers to hula's routes)
 ```
 
-Redeem the code from your install to obtain the `installation_id` +
-`signing_key_b64` for the `push_relay:` block above. Relay operators can also
-self-serve an account at the relay's public `GET /signup` (pending until an
-operator approves). The relay forwards only **sealed** preview ciphertext — it
-never sees plaintext visitor data. See the `hula-push-relay` repo for setup.
+- A **`by_domain`** proxy (or `proxy_only`) owns the entire host and bypasses hula's reserved service paths (`/api/*`, `/v/*`, `/scripts/*`, `/analytics`, `/hulastatus`, …). A **`by_path`** proxy shares hula's host and defers to those routes.
+- **WebSocket upgrades pass through cleanly**, bidirectionally.
+- The **bad-actor security gate applies to proxied hosts too** — a blocked or rate-limited client is stopped before the upstream is ever contacted.
+- **Server-side, no-JS analytics are recorded for proxied hosts** (page navigations only) — see [Analytics](#analytics).
 
-**4. Pair a device.** Issue a single-use QR/text code (admin-gated) and redeem
-it from the app:
+### Automatic HTTPS
 
-```bash
-# Mint a pair code (admin auth required)
-curl -X POST https://example.com/api/v1/pair/issue -H "Authorization: Bearer $TOKEN"
-# → { "code": "HULA-PAIR-XXXX-..." }
-```
+Hula issues and renews TLS certificates for you, Caddy-style. Certificate selection is per-host via SNI, independent of routing, so every mode below works on any virtual host — including `proxy_only` hosts.
 
-The app scans/enters the code, which provisions a device keypair and registers
-its relay channel + Noise/X25519 public keys.
-
-### Mobile-facing endpoints (reference)
-
-| Endpoint | Auth | Purpose |
+| Mode | Config | Notes |
 |---|---|---|
-| `GET /api/v1/installation/identity` | none | Serves `noise_static_public_key_b64` and/or `visitor_chat_public_key_b64` for clients to pin |
-| `POST /api/v1/pair/issue` | admin bearer | Mint a single-use pair code |
-| `POST /api/v1/pair/redeem` | none (code is the secret) | Provision a device from a pair code |
-| `GET /api/v1/pair/devices` | bearer or device sig | List a user's paired devices |
-| `POST /api/v1/pair/devices/revoke` | owner or admin | Revoke a paired device |
+| **ACME / Let's Encrypt** | `hula_ssl.acme` | Set `email` + a `domains` allowlist (required to activate). Issued and renewed automatically over the **TLS-ALPN-01** challenge on the `:443` listener — **no port 80 needed**. |
+| **Cloudflare Origin CA** | `ssl.cloudflare_origin_ca` | Certificates trusted only by Cloudflare's edge; see [Cloudflare](#cloudflare). |
+| **Static cert/key** | `ssl.cert` / `ssl.key` | File paths or inline PEM. |
+| **Local dev CA** | `hula_ssl.dev_ca` | A built-in CA (mkcert / `tls internal` style) for local hosts. Mints a stable local root and signs a per-host leaf on demand; optional OS trust-store install. Opt-in, off by default. |
 
-## Building from Source
-
-```bash
-# Install development tools
-./setup-dev.sh
-source env.sh
-
-# Build
-make            # build hula server
-make all        # build server + CLI tools (hulactl, setupdb)
-make help       # show all targets
-```
-
-## Site Deployment from Git
-
-Hula can pull and build a site directly from a Git repo on boot and on demand. The repo is cloned into a per‑server directory and (when `hula_build: production`) the deployed output is served from `deploy_dir`:
+TLS version bounds apply to any SSL block:
 
 ```yaml
-servers:
-  - host: example.com
-    id: example
-    root_git_autodeploy:
-      repo: https://github.com/myorg/example-site.git
-      creds:
-        username: x-access-token
-        password: ${GITHUB_TOKEN}
-      ref:
-        branch: main
-      hula_build: production         # or 'staging'
-      build_env:
-        - HUGO_ENV=production
+ssl:
+  acme: { email: you@example.com }
+  tls:
+    min_version: "1.2"    # default 1.2
+    max_version: "1.3"    # default: no limit
 ```
 
-`hulabuild` (shipped with the builder image) understands Hugo by default. The `data_dir`, `deploy_dir`, `staging_dir`, and `staging_src_dir` keys default to `/var/hula/sitedeploy/{{serverid}}/...` so you only need to override them in unusual layouts.
+## HTTP versions & protocols
 
-Trigger an out‑of‑band rebuild any time:
+Hula runs a **single unified TLS listener on `:443`** and detects the protocol per connection — there is no separate port per service:
 
-```bash
-hulactl build example
-hulactl build-status <build-id>
-hulactl builds example
-```
+- **HTTP/1.1** and **HTTP/2 (h2)**, negotiated over ALPN.
+- **gRPC** (over HTTP/2) for the management API, alongside a REST gateway on the same port.
+- **WebSocket** upgrades, both for hula's own chat and for proxied backends.
+- **TLS-ALPN-01** ACME challenges (`acme-tls/1`) answered inline on the same listener.
+- A plain-**HTTP** connection to the TLS port is **301-redirected** to HTTPS. There is no separate `:80` listener — ACME uses TLS-ALPN-01 on `:443`, so port 80 is not required.
+- **HSTS** (`Strict-Transport-Security`) is emitted by default, with per-vhost overrides (`max_age`, `include_subdomains`, `preload`, or hard-disable).
 
-### Live staging via WebDAV
+## Cloudflare
 
-When `hula_build: staging`, Hula keeps a long‑lived builder container around so you can edit the site as if it were a local folder:
+Everything hula does with Cloudflare, in one place. Cloudflare-specific settings use the `cf_*` config-key / `CF_*` env-var convention; a per-host token falls back to a global one.
 
-```bash
-# One-shot file upload
-hulactl staging-update example /tmp/about.md content/about.md
-hulactl staging-build example
+- **Origin CA certificates** — hula provisions certs through the Cloudflare Origin CA API (`ssl.cloudflare_origin_ca`). These are trusted only by Cloudflare's edge, so **non-Cloudflare source IPs are dropped at the TCP level before the TLS handshake**. Credentials resolve from `CLOUDFLARE_API_TOKEN_<id>` / `CLOUDFLARE_ZONE_ID_<id>` (server id, dashes → underscores) or inline YAML. Multiple certs are selected by SNI.
+- **Dynamic DNS** — publish A/AAAA records to Cloudflare automatically (see below).
+- **Geo enrichment** — the `CF-IPCountry` header is read into analytics **only when the connection actually arrives from a verified Cloudflare edge IP**, so a direct client can't spoof its country. Cloudflare's `XX` / `T1` sentinels are treated as "no country."
+- **Proxied (orange-cloud) records** — DDNS publishes proxied by default (`cf_proxied: true`); setting it false is a DNS-only downgrade that exposes your origin IP and triggers a startup warning.
+- **IP-range enforcement** — hula keeps Cloudflare's published CIDR ranges current with a 3-tier fallback: live fetch from `cloudflare.com/ips-v4`+`ips-v6`, then a local cache, then embedded defaults. These ranges drive both the Origin-CA connection gate and the trusted-header check above.
 
-# Live sync — runs until Ctrl-C; rebuilds automatically on every change
-hulactl staging-mount example ./local-site --autobuild
-```
+### Dynamic DNS
 
-`staging-mount` syncs both directions, debounces rapid edits, and refuses to upload executables or security‑sensitive files unless `--dangerous` is set.
-
-## Forms & Landers
-
-Forms (lead‑capture endpoints) and landers (campaign landing pages) are first‑class objects with versioned CRUD and Risor hooks. Create one with hulactl:
-
-```bash
-hulactl createform '{
-  "name": "newsletter",
-  "description": "Newsletter signup",
-  "schema": "{\"fields\":[{\"name\":\"email\",\"required\":true}]}"
-}'
-
-hulactl listforms
-hulactl submitform newsletter '{"email":"alice@example.com"}'
-```
-
-Landers follow the same shape (`createlander`, `listlanders`, `modifylander`, `deletelander`). Both fire optional Risor hooks declared in the server config — `on_new_form_submission`, `on_lander_visit`, `on_new_visitor` — so you can trigger custom enrichment, webhook fanout, or email without leaving the config.
-
-## Privacy: Consent, Forwarders, and Cookieless
-
-### Consent gating (Phase 4c.1)
+Hula can detect its own public IPv4/IPv6 and keep Cloudflare DNS pointed at it — useful for home labs and dynamic-IP hosts. Public IP is discovered from a failover list of free detection services; records are updated **on boot, on every interval (default 4h), and on `SIGHUP`**, and only when the IP actually changed.
 
 ```yaml
+ddns:
+  cf_api_token: ${CF_API_TOKEN}
+  cf_zone_id: ${CF_ZONE_ID}
+  interval: 4h            # default
+  cf_proxied: true        # orange cloud (default)
+
 servers:
-  - host: example.com
-    consent_mode: opt_in    # off (default) | opt_in | opt_out
+  - host: home.example.com
+    id: home
+    ddns: {}              # presence of the block enables DDNS for this host
 ```
 
-- `off` — analytics events always written; marketing‑tagged events still respect `Sec-GPC: 1`.
-- `opt_in` — no event row is written until the client supplies affirmative consent. `/v/hello` returns `204` with `Hula-Consent-Required: 1` so an embedding CMP can react.
-- `opt_out` — events always written, consent flags reflect state at write time.
+DDNS can be enabled globally, per virtual host (`servers[].ddns`), or per proxy (`proxies[].ddns`, which requires `by_domain`). Credentials cascade per-record → `CF_*_<id>` env → global `ddns.cf_*` → `CF_*` env → the host's Origin-CA token.
 
-### Server‑side forwarders (Phase 4c.2)
+## Analytics
 
-Forward completed visitor / conversion events server‑to‑server to ad platforms (no client‑side beacons, no third‑party cookies):
+Privacy-first visitor analytics, backed by ClickHouse, that never involve a third-party script or send data off your server.
 
-```yaml
-servers:
-  - host: example.com
-    forwarders:
-      - kind: meta_capi
-        pixel_id: "1234567890"
-        access_token: ${META_CAPI_TOKEN}
-        purpose: marketing
-      - kind: ga4_mp
-        measurement_id: "G-XXXXXXXX"
-        api_secret: ${GA4_API_SECRET}
-        purpose: analytics
-```
+- **First-party or no-JS.** Tracking JavaScript, when used, is served by hula itself from `/scripts/*.js` on your own origin — never a third party. For `proxy_only` hosts, hula records **server-side pageviews with no client JS at all** (initial navigation only; assets, XHR, and WebSocket upgrades are not counted).
+- **Cookieless mode.** Set `tracking_mode: cookieless` and no cookies are set: the visitor ID is derived per request as `HMAC(per-server-salt ‖ YYYYMMDD, IP ‖ UA)`. Same-day visitors stay recognizable; cross-day stitching is impossible by design — analytics with no cookie banner. Rotate the salt any time with `hulactl rotate-cookieless-salt`.
+- **Consent handling.** `consent_mode: off | opt_in | opt_out` per host. In `opt_in`, no event row is written until the client supplies affirmative consent (`/v/hello` returns `204` with `Hula-Consent-Required: 1` so a CMP can react). `Sec-GPC: 1` is always honored as a binding marketing opt-out.
+- **Server-side forwarders.** Forward completed conversion events server-to-server to ad platforms with no client beacons — **GA4 Measurement Protocol** and **Meta CAPI** adapters, each consent-gated by its declared `purpose`:
 
-Each adapter is consent‑gated by its declared `purpose`; events whose consent flag is `false` for that purpose are silently dropped before they leave Hula.
+  ```yaml
+  servers:
+    - host: example.com
+      forwarders:
+        - kind: ga4_mp
+          measurement_id: "G-XXXXXXXX"
+          api_secret: ${GA4_API_SECRET}
+          purpose: analytics
+  ```
 
-### Cookieless mode (Phase 4c.3)
+- **Forms, landers, goals & reports.** Lead-capture forms and campaign landers are first-class objects with versioned CRUD and optional Risor hooks (`on_new_form_submission`, `on_lander_visit`, `on_new_visitor`). Goals, scheduled email digests, and operator alerts round out the marketing stack.
 
-```yaml
-servers:
-  - host: example.com
-    tracking_mode: cookieless
-```
+## Chat
 
-In cookieless mode, no cookies are set. The visitor ID is derived per request via `HMAC(per-server salt || YYYYMMDD, IP || UA)`. Same‑day visitors remain recognisable; cross‑day stitching is impossible by design — the documented answer to "I want analytics without a cookie banner."
-
-Rotate the per‑server salt at any time (Hula must be stopped first; Bolt is single‑writer):
-
-```bash
-hulactl --bolt /var/hula/data/hula.db rotate-cookieless-salt example
-```
-
-## Live Chat (Phase 4b)
-
-When `chat:` is omitted from `config.yaml`, visitor chat is still enabled with default retention, captcha, and email‑verifier knobs. Operators connect through the admin UI; visitors connect through the public `/chat/start` endpoint over WebSocket. Bad‑actor scoring applies at chat start (rate‑limit + abuse signals share the radix tree with HTTP probes).
+Live visitor-to-agent chat, served from the same origin over **WebSocket** — no third-party widget. Visitors connect through the public `/chat/start` endpoint; agents connect through the admin UI. Sessions move through queued → assigned → open states with agent routing, and are **closable and terminal** (a closed or expired session can't be reopened). The [bad-actor](#security) scorer gates chat start, sharing its rate-limit and abuse signals with HTTP-probe detection.
 
 ```yaml
 chat:
@@ -495,18 +182,17 @@ chat:
   captcha_provider: turnstile     # or 'recaptcha' | 'none'
 ```
 
-## Mobile Push & Operator Alerts (Phase 5a)
+Chat is enabled with sensible defaults even when the `chat:` block is omitted. Optional application-layer encryption (Noise for the mobile gRPC stream, sealed-box for the browser widget) can be layered on top of TLS.
 
-Operator alert and report dispatch fans out across email + APNs + FCM. Push is optional — when creds are missing, those channels degrade silently:
+## Mobile
+
+Hula has companion **iOS and Android** apps for operators.
+
+- **Sessions & auth.** Login issues a JWT with a server-enforced expiry and a proactive refresh flow (`POST /api/v1/auth/refresh`); tokens carry their `ExpiresAt` so the app can refresh ahead of time. TOTP two-factor is enforced when configured — a `totp_pending` token can't reach admin-gated RPCs.
+- **Push notifications.** Operator alerts and reports fan out over email plus **APNs (iOS)** and **FCM (Android)**. Push is optional — when credentials are absent, those channels degrade silently. An optional server-blind push relay forwards only sealed ciphertext, never plaintext visitor data.
+- **Pairing.** Devices are provisioned with a single-use, admin-gated QR/text pair code that registers the device's keys and (optionally) its relay channel.
 
 ```yaml
-mailer:
-  smtp_host: smtp.example.com
-  smtp_port: 587
-  smtp_user: ${SMTP_USER}
-  smtp_pass: ${SMTP_PASS}
-  from: alerts@example.com
-
 apns:
   team_id: ABCDE12345
   key_id:  KEY1234567
@@ -517,118 +203,46 @@ fcm:
   service_account_json: /etc/hula/fcm.json
 ```
 
-## Bot & Abuse Defense
+## Sites & deployment
 
-Hula scores suspicious activity into a radix‑tree of IPs (TTL‑expired entries fall off automatically). The default scorer covers:
+- **Static serving** with byte-range requests, transparent compression, and immutable cache control.
+- **Git autodeploy** — clone (or pull) a repo, build it in an ephemeral Docker builder (Hugo, Astro, Gatsby, or MkDocs), and deploy the output to the site root. Triggered on boot or on demand (`hulactl build <id>`), driven by a `.hula/sitebuild.yaml` in the repo.
+- **Staging + WebDAV** — a long-lived staging container serves a live-editable site; push files with WebDAV `PUT`/`PATCH`, or live-sync a local folder (`hulactl staging-mount <id> ./site --autobuild`).
+- **Backend containers** — hula can manage Docker containers as per-vhost backends, isolated on dedicated networks, and reverse-proxy to them.
 
-- Known WordPress / vuln‑probe paths (`/wp-login.php`, `/xmlrpc.php`, `.env`, `.git/`, …)
-- TCP protocol probes (HTTPS port hit with non‑HTTP/non‑TLS bytes)
-- TLS handshake failures (no shared cipher, EOF, malformed `ClientHello`)
+## Security
+
+- **Bad-actor detection.** Suspicious IPs are scored into a TTL-expiring radix tree and blocked at a configurable threshold. The default scorer flags WordPress / vuln-probe paths (`/wp-login.php`, `/xmlrpc.php`, `.env`, `.git/`, …), non-HTTP/non-TLS TCP probes on `:443`, and TLS handshake failures. IP and CIDR allowlists are supported; every incident is audited to ClickHouse.
+
+  ```yaml
+  badactor:
+    allow_cidrs: [198.51.100.0/24]
+    block_threshold: 50
+  ```
+
+  Inspect scored IPs with `hulactl badactors`.
+- **Authentication.** Admin and operator passwords use **OPAQUE PAKE** — the password never travels the wire, on login or rotation. **TOTP 2FA** (encrypted at rest), **OIDC SSO** (Google / GitHub / Microsoft) alongside internal accounts, and per-user, per-server access roles.
+
+## High availability
+
+Single-node Raft (`hashicorp/raft`) is the production storage default for non-analytics state (ACL, goals, reports, OPAQUE records). Solo installs auto-bootstrap on first boot with no extra configuration. Multi-node clustering is opt-in via a `team:` block; see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Configuration & management
+
+Hula is driven by a single YAML file with `${VAR}` **environment-variable expansion** and sensible defaults throughout. Most changes **hot-reload** without a restart:
 
 ```bash
-hulactl badactors        # list scored IPs with block status
-
-# Allowlist your office in config.yaml:
-badactor:
-  allow_cidrs:
-    - 198.51.100.0/24
-  block_threshold: 50
+hulactl reload            # SIGHUP the running server to reload config
+hulactl auth <url>        # authenticate and store a token
+hulactl badactors         # list scored IPs
+hulactl build <id>        # trigger a site build
 ```
 
-ClickHouse keeps the audit log; the in‑memory scorer is what gates traffic.
-
-## High Availability
-
-- **Stage 1** introduces a `Storage` interface seam — non‑analytics state (ACL, goals, reports, OPAQUE records, etc.) lives behind it.
-- **Stage 2** makes single‑node Raft (`hashicorp/raft` + raft‑boltdb) the production default. Solo installs auto‑bootstrap a `TeamID` + `NodeID` under `data_dir` on first boot — no `team:` block is required.
-- Multi‑node clustering is opt‑in via the `team:` block; see `HA_PLAN2.md` for membership and join workflows.
-
-## TLS / SSL
-
-Hula supports TLS three ways: manual certificates, Cloudflare Origin CA, or automatic Let's Encrypt via ACME.
-
-### Manual Certificates
-
-Provide cert and key as file paths or inline PEM data:
-
-```yaml
-servers:
-  - host: example.com
-    port: 443
-    ssl:
-      cert: /path/to/cert.pem
-      key: /path/to/key.pem
-```
-
-### Automatic Certificates with Let's Encrypt (ACME)
-
-Hula can automatically obtain and renew TLS certificates from Let's Encrypt using the ACME protocol.
-
-```yaml
-servers:
-  - host: example.com
-    port: 443
-    ssl:
-      acme:
-        email: admin@example.com
-        cache_dir: /var/hula/certs
-```
-
-**Configuration options:**
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `email` | Recommended | — | Contact email for the ACME account. Let's Encrypt uses this for expiry notices. |
-| `cache_dir` | No | `certs` | Directory to cache certificates. Supports `{{confdir}}` variable substitution. |
-| `domains` | No | Host + Aliases | Explicit list of domains. If omitted, derived from the server's `host` and `aliases`. |
-| `http_port` | No | `80` | Port for the HTTP‑01 challenge listener. Change this when port 80 is handled by a reverse proxy that forwards to an alternate port. |
-
-**How it works:**
-
-- Certificates are automatically obtained on first request and cached to disk in `cache_dir`.
-- Renewal happens automatically before expiry.
-- An HTTP listener starts on port 80 to handle ACME HTTP‑01 challenges. All other HTTP traffic on port 80 is redirected to HTTPS.
-- Multiple servers sharing the same listener port can each use ACME — their domains are merged into a single ACME manager.
-- ACME and manual certificates can coexist on different servers, even on the same port.
-
-**Requirements:**
-
-- Port 443 must be reachable from the internet (for serving the certificate).
-- Port 80 (or the configured `http_port`) must be reachable from the internet (for HTTP‑01 challenge validation). When behind a reverse proxy like nginx, set `http_port` to the internal port and configure the proxy to forward `/.well-known/acme-challenge/` traffic to it.
-- DNS for all configured domains must point to the server.
-- The `cache_dir` must be writable and should be on persistent storage (so certs survive restarts).
-
-## Backend Containers
-
-Hula can manage Docker containers as backend services and reverse‑proxy requests to them. Each virtual server can have one or more backends:
-
-```yaml
-servers:
-  - host: example.com
-    port: 443
-    ssl:
-      acme:
-        email: admin@example.com
-        cache_dir: /var/hula/certs
-    backends:
-      - container_name: myapi
-        image: registry.example.com/myapi:latest
-        virtual_path: "/api"
-        container_path: "/api/v2"
-        expose:
-          - "8002"
-        restart: always
-        environment:
-          - API_KEY=secret
-        command: /app/server --port 8002
-```
-
-Backends on different virtual servers are isolated on separate Docker networks. Backends on the same server can reach each other. When running Hula in Docker, mount the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
+Secret generation and rotation (`jwt_key`, TOTP key, Noise / visitor-chat keys, OPAQUE seeds, team CA bundles) live on the `hula` binary and can update a single field in place while preserving comments and formatting. Run `hulactl` or `hula` with no arguments for full inline help, and see **[DEPLOYMENT.md](DEPLOYMENT.md)** for the complete configuration and deployment reference.
 
 ## API
 
 Postman examples [here](https://www.getpostman.com/collections/0e83876e0f2a0c8ecd70).
-
 
 ## License and Terms of Use
 
