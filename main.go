@@ -64,10 +64,17 @@ func main() {
 			model.SetDebugDBLogging(debuglevel)
 		}
 	}
-	_, _, _, err = model.SetupAppDB(app.GetConfig())
-	if err != nil {
-		log.Fatalf("Error setting up database: %s", err.Error())
-		utils.CleanShutdown(1)
+	// No-DB mode (`dbconfig: disabled`): skip database setup entirely.
+	// model.GetDB()/GetSQLDB() stay nil; every DB-backed subsystem is gated
+	// off during boot (see server/unified_boot.go + server/run_unified.go).
+	if app.GetConfig().DBDisabled() {
+		log.Warnf("database disabled (dbconfig: disabled) — running in no-DB mode; analytics/stats, chat, forms, landers, alerts, reports, goals, bad-actor and DB-backed users are unavailable; proxy, virtual hosts, ACME, dynamic DNS, and Cloudflare Origin CA remain active.")
+	} else {
+		_, _, _, err = model.SetupAppDB(app.GetConfig())
+		if err != nil {
+			log.Fatalf("Error setting up database: %s", err.Error())
+			utils.CleanShutdown(1)
+		}
 	}
 
 	utils.CleanShutdown(server.RunUnified(context.Background(), app.GetConfig()))

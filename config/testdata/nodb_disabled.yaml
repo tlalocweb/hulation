@@ -1,0 +1,22 @@
+# No-DB mode fixture. Exercises `dbconfig: disabled` (the scalar sentinel):
+# LoadConfig must accept it (no "mandatory" error), DBDisabled() must be true,
+# and conftagz must NOT flip the disabled flag while filling struct defaults.
+# See TestLoadConfig_DBDisabled.
+admin:
+    username: admin
+    hash: "x"
+jwt_key: "nodb-fixture-test-jwt-key-32bytes-long!!"
+jwt_expiration: "72h"
+port: 8443
+hula_host: nodb.test.local
+dbconfig: disabled
+servers:
+    - host: static.nodb.test.local
+      id: static
+    - host: proxyonly.nodb.test.local
+      id: proxyonly
+      proxy_only: true
+      proxy_pass: http://127.0.0.1:8081
+proxies:
+    - by_domain: cdn.nodb.test.local
+      target: http://127.0.0.1:9000

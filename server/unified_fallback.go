@@ -64,35 +64,42 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 	// instead of masquerading as 200.
 	srv.RegisterCustomHandler("/readyz", readyz.Handler(currentReadyzState(cfg)).ServeHTTP)
 
-	// Visitor tracking endpoints.
-	srv.RegisterCustomHandler(visitorPrefix+"/hello", handler.WrapForNetHTTP(handler.Hello))
+	// Visitor tracking + tracking scripts. The beacon handlers commit
+	// visitor/event rows to ClickHouse (handler.Hello → Visitor.Commit /
+	// Event.CommitTo), so in no-DB mode (dbconfig: disabled) they are NOT
+	// registered — a stray beacon hit gets a clean 404 instead of
+	// nil-dereferencing model.GetDB().
+	if !cfg.DBDisabled() {
+		// Visitor tracking endpoints.
+		srv.RegisterCustomHandler(visitorPrefix+"/hello", handler.WrapForNetHTTP(handler.Hello))
 
-	if name := cfg.PublishedIFrameHelloFileName; name != "" {
-		srv.RegisterCustomHandler(visitorPrefix+"/"+name, handler.WrapForNetHTTP(handler.HelloIframe))
-	}
-	if name := cfg.PublishedIFrameNoScriptFilename; name != "" {
-		srv.RegisterCustomHandler(visitorPrefix+"/"+name, handler.WrapForNetHTTP(handler.HelloNoScript))
-	}
+		if name := cfg.PublishedIFrameHelloFileName; name != "" {
+			srv.RegisterCustomHandler(visitorPrefix+"/"+name, handler.WrapForNetHTTP(handler.HelloIframe))
+		}
+		if name := cfg.PublishedIFrameNoScriptFilename; name != "" {
+			srv.RegisterCustomHandler(visitorPrefix+"/"+name, handler.WrapForNetHTTP(handler.HelloNoScript))
+		}
 
-	// Form submission — uses Go 1.22+ pattern syntax for the formid
-	// path parameter. The param is resolved inside the handler via
-	// NetHTTPCtx.Param("formid").
-	srv.RegisterCustomHandler(fmt.Sprintf("POST %s/sub/{formid}", visitorPrefix),
-		handler.WrapForNetHTTP(handler.FormSubmit))
+		// Form submission — uses Go 1.22+ pattern syntax for the formid
+		// path parameter. The param is resolved inside the handler via
+		// NetHTTPCtx.Param("formid").
+		srv.RegisterCustomHandler(fmt.Sprintf("POST %s/sub/{formid}", visitorPrefix),
+			handler.WrapForNetHTTP(handler.FormSubmit))
 
-	// Lander redirect.
-	if landerPath := cfg.LanderPath; landerPath != "" {
-		srv.RegisterCustomHandler(fmt.Sprintf("GET %s%s/{landerid}", visitorPrefix, landerPath),
-			handler.WrapForNetHTTP(handler.DoLanding))
-	}
+		// Lander redirect.
+		if landerPath := cfg.LanderPath; landerPath != "" {
+			srv.RegisterCustomHandler(fmt.Sprintf("GET %s%s/{landerid}", visitorPrefix, landerPath),
+				handler.WrapForNetHTTP(handler.DoLanding))
+		}
 
-	// Tracking scripts.
-	if name := cfg.PublishedHelloScriptFilename; name != "" {
-		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.HelloScriptFile))
-	}
-	if name := cfg.PublishedFormsScriptFilename; name != "" {
-		srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
-	}
+		// Tracking scripts.
+		if name := cfg.PublishedHelloScriptFilename; name != "" {
+			srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.HelloScriptFile))
+		}
+		if name := cfg.PublishedFormsScriptFilename; name != "" {
+			srv.RegisterCustomHandler("/scripts/"+name, handler.WrapForNetHTTP(handler.FormsScriptFile))
+		}
+	} // end visitor-tracking gate (skipped when cfg.DBDisabled())
 
 	// Built-in chat widget (JS + CSS). Each handler first checks the
 	// per-host static root for a customer overlay at the same URL
@@ -127,7 +134,15 @@ func RegisterFallbackRoutes(srv *unified.Server) {
 	// is also available via gRPC or the REST gateway at /api/v1/*.
 	// Once Stage 0.8 ships and the e2e harness confirms hulactl uses
 	// /api/v1, this block can be deleted.
-	registerLegacyAPIRoutes(srv)
+	//
+	// Legacy admin routes are DB-backed (auth/users/TOTP, forms, landers,
+	// site/staging build, badactor). The noauth ones (login/logout/
+	// totp-validate) would nil-deref model.GetDB(); the admin-gated ones
+	// fail closed anyway once JWT verification reports db-unavailable. Skip
+	// the whole block in no-DB mode.
+	if !cfg.DBDisabled() {
+		registerLegacyAPIRoutes(srv)
+	}
 
 	// WebDAV staging endpoints. Supports PUT, PATCH with X-Update-Range,
 	// PATCH with X-Patch-Format: diff, and the rest of the emersion
@@ -258,4 +273,3 @@ func verifyJWTAdmin(token string) (valid bool, isAdmin bool, err error) {
 	}
 	return true, perms.HasCap("admin"), nil
 }
-
