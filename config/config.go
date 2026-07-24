@@ -449,6 +449,11 @@ type Server struct {
 	HelloCookieMaxAge int         `yaml:"hello_cookie_max_age,omitempty" test:">0" default:"30"`
 	CORS              *CORSConfig `yaml:"cors,omitempty"`
 	SSL               *SSLConfig  `yaml:"ssl,omitempty"`
+	// DDNS opts this vhost into dynamic DNS (presence = enabled). By default it
+	// publishes the vhost Host only (aliases are NOT auto-published); a records:
+	// list overrides. conf:"skipnil" preserves the opt-in semantics against
+	// conftagz auto-materialisation.
+	DDNS              *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
 	CSP               CSP         `yaml:"csp,omitempty"`
 	// HSTS lets the operator override the global tunables.hsts_*
 	// defaults for this specific virtual host. nil = inherit
@@ -973,7 +978,11 @@ type Config struct {
 	// Comma-separated list of log tags to exclude from logging
 	NoLogTags string `yaml:"no_log_tags,omitempty"`
 	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
-	JWTKey         string     `yaml:"jwt_key,omitempty"`
+	// DDNS is the top-level dynamic-DNS block: global defaults + a Cloudflare
+	// credential fallback. conf:"skipnil" keeps conftagz from materialising an
+	// empty struct when the operator omits it (presence enables the subsystem).
+	DDNS   *DDNSConfig `yaml:"ddns,omitempty" conf:"skipnil"`
+	JWTKey string      `yaml:"jwt_key,omitempty"`
 	// Base64url-encoded 32-byte key for encrypting TOTP secrets at rest.
 	// Generate with: hula totp-key-update
 	TotpEncryptionKey string `yaml:"totp_encryption_key,omitempty" env:"HULA_TOTP_ENCRYPTION_KEY"`
@@ -1142,6 +1151,11 @@ type Proxy struct {
 	// a by_domain+by_path proxy CAN shadow those routes; point by_domain at a
 	// dedicated host to avoid that. The prefix is NOT stripped.
 	ByPath string `yaml:"by_path,omitempty"`
+	// DDNS opts this proxy into dynamic DNS (presence = enabled). The published
+	// record name is by_domain (required — a by_path-only proxy + ddns is a load
+	// error). Credentials cascade per-config → global. conf:"skipnil" preserves
+	// the opt-in against conftagz auto-materialisation.
+	DDNS *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
 }
 
 const (
@@ -1283,6 +1297,13 @@ func LoadConfig(filename string) (*Config, error) {
 	err = conftagz.Process(nil, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("bad config: %s,", err.Error())
+	}
+
+	// DDNS load-time invariants (unknown provider, by_path-only proxy + ddns).
+	// Missing credentials are NOT validated here — they resolve (and warn) at
+	// boot so a bad token never blocks serving.
+	if err := validateDDNS(&cfg); err != nil {
+		return nil, err
 	}
 
 	// conftagz may create empty pointer structs from default tags.
