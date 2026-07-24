@@ -3,7 +3,12 @@ name: Go
 on:
   push:
     branches: [ "main" ]
-  pull_request_target:
+  # pull_request (not pull_request_target): this workflow only builds/tests and
+  # needs no secrets, so it should check out and exercise the PR's own code with
+  # a read-only token. Under pull_request_target, checkout defaults to the base
+  # branch (main), so the jobs would test main instead of the PR — and adding an
+  # explicit head ref there would run untrusted PR code with the elevated token.
+  pull_request:
     branches: [ "main" ]
 
 permissions:
@@ -61,17 +66,24 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        # Track the module's declared Go version (go.mod says go 1.26) instead
+        # of a hard-pinned toolchain, so `go test` never trips "go.mod requires
+        # go >= 1.26" and no auto-toolchain download is needed.
+        go-version-file: hulation/go.mod
         cache-dependency-path: hulation/go.sum
 
-    # Starts ClickHouse on localhost:9010 and mounts
+    # Starts ClickHouse on localhost:9010 (HTTP on 8133) and mounts
     # test/clickhouse-config/users.d so the `default` user accepts the
-    # host→container TCP hop. The model package's TestMain retries the
-    # connection 5×5s, so a short sleep for the server to bind is enough.
+    # host→container TCP hop, then waits for it to answer before testing.
     - name: Start ClickHouse for tests
       run: |
         cd hulation && bash start-clickhouse-for-test.sh
-        sleep 10
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:8133/ping >/dev/null 2>&1; then
+            echo "ClickHouse ready after ${i} attempt(s)"; break
+          fi
+          echo "waiting for ClickHouse... (${i}/30)"; sleep 2
+        done
 
     - name: Test
       run: cd hulation && go test ./... -count=1
