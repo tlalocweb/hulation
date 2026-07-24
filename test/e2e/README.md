@@ -63,10 +63,11 @@ on a single suite while the stack is already up):
    - `11-webdav-patch` — PATCH X-Update-Range and X-Patch-Format: diff
    - `12-db-lifecycle` — initdb/deletedb (destructive)
    - … (13–40: analytics, chat, mobile, forwarders, cookieless, consent, HA, …)
-   - `41-proxy-only` — `proxy_only` reverse proxy: forwards all paths (incl.
-     reserved `/api/*`, `/v/*`) to an upstream, bypassing hula's handlers, and a
-     page navigation is recorded as a `method='serverside'` pageview in
-     ClickHouse. Starts an `http-echo` sidecar. Skip-safe.
+   - `41-proxy-only` — `proxy_only` reverse proxy: forwards requests to an
+     upstream, asserting a reserved `/api/v1/*` path also reaches it (bypassing
+     hula's handlers, not answered by hula), and that a page navigation is
+     recorded as a `method='serverside'` pageview in ClickHouse. Starts an
+     `http-echo` sidecar. Skip-safe.
    - `42-tls-devca` — local dev CA (`hula_ssl.dev_ca`): boots a self-contained
      `hula-devca` instance and asserts the presented leaf is issued by the dev CA
      and chains to its root over a real TLS handshake (`openssl s_client` +
