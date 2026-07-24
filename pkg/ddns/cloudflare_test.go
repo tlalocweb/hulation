@@ -3,8 +3,10 @@ package ddns
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,8 +20,9 @@ type cfMock struct {
 	mu       sync.Mutex
 	calls    []string // "METHOD path"
 	authSeen []string
-	zones    []cfZone
-	records  []cfDNSRecord // existing records returned by GET
+	zones     []cfZone
+	zonePages [][]cfZone    // when set, GET /zones is served by ?page= (for pagination tests)
+	records   []cfDNSRecord // existing records returned by GET
 	created  []cfDNSRecordPayload
 	patched  []cfDNSRecordPayload
 	server   *httptest.Server
@@ -46,7 +49,21 @@ func (m *cfMock) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/zones":
-		m.ok(w, m.zones)
+		if len(m.zonePages) > 0 {
+			page := 1
+			if pg := r.URL.Query().Get("page"); pg != "" {
+				if n, err := strconv.Atoi(pg); err == nil {
+					page = n
+				}
+			}
+			var out []cfZone
+			if page >= 1 && page <= len(m.zonePages) {
+				out = m.zonePages[page-1]
+			}
+			m.ok(w, out)
+		} else {
+			m.ok(w, m.zones)
+		}
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/dns_records"):
 		m.ok(w, m.records)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dns_records"):
@@ -83,6 +100,19 @@ func (m *cfMock) hasCall(method, pathContains string) bool {
 	return false
 }
 
+// hasExactCall matches the full "METHOD path" (r.URL.Path, no query) exactly, so
+// the zone-LIST endpoint "/zones" is distinguishable from "/zones/{id}/dns_records".
+func (m *cfMock) hasExactCall(method, path string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.calls {
+		if c == method+" "+path {
+			return true
+		}
+	}
+	return false
+}
+
 // TestCloudflare_ZoneAutoResolve: with no ZoneID on the record, the provider
 // lists zones and picks the longest-suffix match (example.com over com).
 func TestCloudflare_ZoneAutoResolve(t *testing.T) {
@@ -108,6 +138,47 @@ func TestCloudflare_ZoneAutoResolve(t *testing.T) {
 	}
 }
 
+// TestCloudflare_ZoneAutoResolve_Paginates: the matching zone is only on page 2,
+// so resolution must page past a full first page (a token with >50 zones).
+func TestCloudflare_ZoneAutoResolve_Paginates(t *testing.T) {
+	m := newCFMock(t)
+	page1 := make([]cfZone, 50) // a full page → forces a page-2 fetch
+	for i := range page1 {
+		page1[i] = cfZone{ID: fmt.Sprintf("z%d", i), Name: fmt.Sprintf("filler%d.net", i)}
+	}
+	m.zonePages = [][]cfZone{page1, {{ID: "target", Name: "example.com"}}}
+	m.records = nil
+
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.5", Proxied: true, TTL: 1, APIToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
+	}
+	if !m.hasCall(http.MethodGet, "/zones/target/dns_records") {
+		t.Fatalf("expected dns_records under the page-2 zone 'target'; calls=%v", m.calls)
+	}
+}
+
+// TestCloudflare_MultipleRecords_Skips: several A records for one name
+// (round-robin) ⇒ DDNS refuses to modify any of them rather than clobbering one.
+func TestCloudflare_MultipleRecords_Skips(t *testing.T) {
+	m := newCFMock(t)
+	m.records = []cfDNSRecord{
+		{ID: "r1", Type: "A", Name: "app.example.com", Content: "203.0.113.1", Proxied: true, TTL: 1},
+		{ID: "r2", Type: "A", Name: "app.example.com", Content: "203.0.113.2", Proxied: true, TTL: 1},
+	}
+	err := m.provider().EnsureRecord(context.Background(), Record{
+		Name: "app.example.com", Type: "A", Content: "203.0.113.9", Proxied: true, TTL: 1, ZoneID: "z1", APIToken: "t",
+	})
+	if err == nil {
+		t.Fatal("expected an error refusing to modify a multi-value record set")
+	}
+	if len(m.created) != 0 || len(m.patched) != 0 {
+		t.Fatalf("must not write to a multi-value set; created=%v patched=%v", m.created, m.patched)
+	}
+}
+
 // TestCloudflare_CreateWhenMissing: no existing record ⇒ POST with proxied+ttl,
 // and the Bearer token is sent.
 func TestCloudflare_CreateWhenMissing(t *testing.T) {
@@ -127,9 +198,11 @@ func TestCloudflare_CreateWhenMissing(t *testing.T) {
 	if c.Type != "AAAA" || c.Content != "2001:db8::9" || c.Proxied != false || c.TTL != 300 {
 		t.Fatalf("create payload wrong: %+v", c)
 	}
-	// ZoneID supplied ⇒ no /zones lookup.
-	if m.hasCall(http.MethodGet, "/zones\n") || m.hasCall(http.MethodGet, "/zones?") {
-		t.Fatal("should not list zones when ZoneID is supplied")
+	// ZoneID supplied ⇒ no zone-list lookup. The dns_records call is under
+	// "/zones/{id}/dns_records", so assert the exact zone-list path "/zones"
+	// was never hit (a Contains check would false-match the dns_records path).
+	if m.hasExactCall(http.MethodGet, "/zones") {
+		t.Fatalf("should not list zones when ZoneID is supplied; calls=%v", m.calls)
 	}
 	// Bearer header on every call.
 	for _, a := range m.authSeen {

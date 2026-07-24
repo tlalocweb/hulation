@@ -113,18 +113,27 @@ func (p *CloudflareProvider) EnsureRecord(ctx context.Context, rec Record) error
 		zoneID = z
 	}
 
-	existing, err := p.getRecord(ctx, rec.APIToken, zoneID, rec.Type, rec.Name)
+	records, err := p.getRecords(ctx, rec.APIToken, zoneID, rec.Type, rec.Name)
 	if err != nil {
 		return err
 	}
-	if existing == nil {
+	switch len(records) {
+	case 0:
 		return p.createRecord(ctx, rec.APIToken, zoneID, rec)
+	case 1:
+		existing := records[0]
+		// No-op when nothing changed — keeps a steady IP from generating churn.
+		if existing.Content == rec.Content && existing.Proxied == rec.Proxied && existing.TTL == rec.TTL {
+			return nil
+		}
+		return p.updateRecord(ctx, rec.APIToken, zoneID, existing.ID, rec)
+	default:
+		// Cloudflare permits multiple A/AAAA records per name (round-robin /
+		// multi-value). DDNS manages a single record, so refuse to modify an
+		// arbitrary one and silently leave the others stale — surface it
+		// instead (non-fatal; the updater logs it and retries next cycle).
+		return fmt.Errorf("cloudflare: %d %s records exist for %s — refusing to modify a multi-value set (remove the extras or point DDNS at a dedicated name)", len(records), rec.Type, rec.Name)
 	}
-	// No-op when nothing changed — this keeps a steady IP from generating churn.
-	if existing.Content == rec.Content && existing.Proxied == rec.Proxied && existing.TTL == rec.TTL {
-		return nil
-	}
-	return p.updateRecord(ctx, rec.APIToken, zoneID, existing.ID, rec)
 }
 
 // resolveZone finds the zone whose name is the longest suffix of recordName,
@@ -138,9 +147,20 @@ func (p *CloudflareProvider) resolveZone(ctx context.Context, token, recordName 
 	}
 	p.mu.Unlock()
 
+	// Page through ALL zones the token can see — a token with >50 zones would
+	// otherwise miss the matching zone if it's not on the first page. Stop at the
+	// first short page; the 100-page cap (5000 zones) is a runaway guard.
 	var zones []cfZone
-	if err := p.do(ctx, token, http.MethodGet, "/zones?per_page=50", nil, &zones); err != nil {
-		return "", fmt.Errorf("cloudflare: list zones for %s: %w", recordName, err)
+	for page := 1; page <= 100; page++ {
+		var pageZones []cfZone
+		path := fmt.Sprintf("/zones?per_page=50&page=%d", page)
+		if err := p.do(ctx, token, http.MethodGet, path, nil, &pageZones); err != nil {
+			return "", fmt.Errorf("cloudflare: list zones for %s: %w", recordName, err)
+		}
+		zones = append(zones, pageZones...)
+		if len(pageZones) < 50 {
+			break
+		}
 	}
 	best, ok := pickZone(recordName, zones)
 	if !ok {
@@ -170,18 +190,16 @@ func pickZone(recordName string, zones []cfZone) (cfZone, bool) {
 	return best, found
 }
 
-// getRecord returns the existing record matching type+name, or nil if none.
-func (p *CloudflareProvider) getRecord(ctx context.Context, token, zoneID, typ, name string) (*cfDNSRecord, error) {
+// getRecords returns ALL records matching type+name. Cloudflare permits several
+// (round-robin / multi-value), so EnsureRecord decides what to do with the set
+// rather than assuming exactly one.
+func (p *CloudflareProvider) getRecords(ctx context.Context, token, zoneID, typ, name string) ([]cfDNSRecord, error) {
 	path := fmt.Sprintf("/zones/%s/dns_records?type=%s&name=%s", url.PathEscape(zoneID), url.QueryEscape(typ), url.QueryEscape(name))
 	var recs []cfDNSRecord
 	if err := p.do(ctx, token, http.MethodGet, path, nil, &recs); err != nil {
 		return nil, fmt.Errorf("cloudflare: get %s %s: %w", typ, name, err)
 	}
-	if len(recs) == 0 {
-		return nil, nil
-	}
-	r := recs[0]
-	return &r, nil
+	return recs, nil
 }
 
 func (p *CloudflareProvider) createRecord(ctx context.Context, token, zoneID string, rec Record) error {
