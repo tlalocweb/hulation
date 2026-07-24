@@ -45,6 +45,83 @@ type DBConfig struct {
 	Retries int `yaml:"retries,omitempty" test:">=0" default:"5"`
 	// the amount of seconds to wait between retries
 	DelayRetry int64 `yaml:"delay_retry,omitempty" test:">=0" default:"5"`
+
+	// Disabled is set (only) when the `dbconfig:` key is the scalar sentinel
+	// `disabled` — hula's no-DB mode. It is NOT a YAML field of its own
+	// (yaml:"-"): the sole way to set it is the custom UnmarshalYAML below.
+	// When true, hula boots without any database and every DB-backed
+	// subsystem (analytics/stats, chat, forms, landers, alerts, goals,
+	// reports, bad-actor, DB-backed users) stays off; the reverse proxy,
+	// virtual hosts, ACME, dynamic DNS, and Cloudflare Origin CA remain
+	// active. See DBDisabled / IsDisabled and the boot gating in
+	// server/unified_boot.go + server/run_unified.go.
+	Disabled bool `yaml:"-"`
+}
+
+// UnmarshalYAML lets the `dbconfig:` key accept EITHER of two shapes:
+//
+//   - the scalar sentinel `disabled` (case-insensitive) → no-DB mode
+//     (DBConfig{Disabled: true}); or
+//   - a normal mapping of connection fields (host/port/user/…), decoded
+//     into the fields above.
+//
+// It is implemented against the gopkg.in/yaml.v2 Unmarshaler contract
+// because config.go decodes the top-level config with yaml.v2
+// (yaml.UnmarshalStrict). The mapping form decodes through an alias type
+// that shares DBConfig's layout + yaml tags but NOT this method, so the
+// unmarshaler does not recurse into itself.
+//
+// Assumptions (see the no-DB mode design notes in DBDisabled):
+//   - `dbconfig: disabled` is THE scalar sentinel for no-DB mode; any other
+//     bare scalar is a config error (loud failure beats a silent misconfig).
+//   - A genuinely absent `dbconfig:` key never reaches here (yaml leaves the
+//     *DBConfig pointer nil) — LoadConfig treats nil as the fatal
+//     "mandatory" error, distinct from this explicit opt-out.
+func (c *DBConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Scalar form first: `dbconfig: disabled`. A mapping fails to decode
+	// into a string, so err != nil sends us to the mapping branch below.
+	var scalar string
+	if err := unmarshal(&scalar); err == nil {
+		s := strings.TrimSpace(scalar)
+		switch {
+		case strings.EqualFold(s, "disabled"):
+			*c = DBConfig{Disabled: true}
+			return nil
+		case s == "":
+			// `dbconfig:` with a null/empty scalar — behave exactly as
+			// before this unmarshaler existed: a zero DBConfig that the
+			// mandatory-DB check + conftagz defaults treat as a normal
+			// (local) DB. Not no-DB mode.
+			*c = DBConfig{}
+			return nil
+		default:
+			return fmt.Errorf("dbconfig: unrecognized scalar %q (use a mapping of connection fields, or the sentinel `disabled` to run without a database)", scalar)
+		}
+	}
+	// Mapping form: decode the connection fields via an alias type to avoid
+	// re-entering this method.
+	type dbConfigAlias DBConfig
+	var alias dbConfigAlias
+	if err := unmarshal(&alias); err != nil {
+		return err
+	}
+	*c = DBConfig(alias)
+	return nil
+}
+
+// IsDisabled reports whether the database is explicitly disabled via
+// `dbconfig: disabled` (no-DB mode). Nil-safe: a nil *DBConfig is NOT
+// "disabled" — a genuinely missing dbconfig is a fatal config error handled
+// in LoadConfig, which is a different condition from this explicit opt-out.
+func (c *DBConfig) IsDisabled() bool {
+	return c != nil && c.Disabled
+}
+
+// DBDisabled reports whether this config opted out of the database via
+// `dbconfig: disabled`. Nil-safe on both the *Config and its *DBConfig, so
+// callers can write cfg.DBDisabled() without pre-checking either pointer.
+func (cfg *Config) DBDisabled() bool {
+	return cfg != nil && cfg.DBConfig.IsDisabled()
 }
 
 type CookieOpts struct {
@@ -1270,17 +1347,25 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("yaml parse: %s,", err.Error())
 	}
 
+	// A genuinely-missing dbconfig stays a fatal error. `dbconfig: disabled`
+	// is a VALID, explicit opt-out (no-DB mode): cfg.DBConfig is non-nil with
+	// Disabled=true, so it passes this check and skips the connection-field
+	// substitution below (there are no host/user/pass fields to resolve).
 	if cfg.DBConfig == nil {
-		log.Errorf("no db config found in config file. this is mandatory.")
+		log.Errorf("no db config found in config file. this is mandatory (use `dbconfig: disabled` to run without a database).")
 		return nil, fmt.Errorf("no db config found in config file")
 	}
 
-	cfg.DBConfig.DBName = SubstConfVarsLogErrorf(cfg.DBConfig.DBName, map[string]string{"confdir": confDir}, "dbconfig.dbname")
-	cfg.DBConfig.Username = SubstConfVarsLogErrorf(cfg.DBConfig.Username, map[string]string{"confdir": confDir}, "dbconfig.user")
-	cfg.DBConfig.Password = SubstConfVarsLogErrorf(cfg.DBConfig.Password, map[string]string{"confdir": confDir}, "dbconfig.pass")
-	cfg.DBConfig.Host = SubstConfVarsLogErrorf(cfg.DBConfig.Host, map[string]string{"confdir": confDir}, "dbconfig.host")
+	if cfg.DBConfig.Disabled {
+		log.Warnf("dbconfig: disabled — running in no-DB mode; DB-backed features (analytics/stats, chat, forms, landers, alerts, reports, goals, bad-actor, DB-backed users) are unavailable")
+	} else {
+		cfg.DBConfig.DBName = SubstConfVarsLogErrorf(cfg.DBConfig.DBName, map[string]string{"confdir": confDir}, "dbconfig.dbname")
+		cfg.DBConfig.Username = SubstConfVarsLogErrorf(cfg.DBConfig.Username, map[string]string{"confdir": confDir}, "dbconfig.user")
+		cfg.DBConfig.Password = SubstConfVarsLogErrorf(cfg.DBConfig.Password, map[string]string{"confdir": confDir}, "dbconfig.pass")
+		cfg.DBConfig.Host = SubstConfVarsLogErrorf(cfg.DBConfig.Host, map[string]string{"confdir": confDir}, "dbconfig.host")
 
-	log.Debugf("config: db %+v", *cfg.DBConfig)
+		log.Debugf("config: db %+v", *cfg.DBConfig)
+	}
 
 	// Registry credential substitution
 	for name, reg := range cfg.Registries {

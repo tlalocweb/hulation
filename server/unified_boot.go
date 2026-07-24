@@ -264,165 +264,184 @@ func BootUnifiedServer(ctx context.Context, cfg *config.Config) (srv *unified.Se
 		return nil, fmt.Errorf("register status handler: %w", err)
 	}
 
-	// Forms
-	formsSvc := formsimpl.New()
-	formsspec.RegisterFormsServiceServer(grpcSrv, formsSvc)
-	if err := formsspec.RegisterFormsServiceHandlerServer(ctx, gwMux, formsSvc); err != nil {
-		return nil, fmt.Errorf("register forms handler: %w", err)
-	}
-
-	// Landers
-	landersSvc := landersimpl.New()
-	landersspec.RegisterLandersServiceServer(grpcSrv, landersSvc)
-	if err := landersspec.RegisterLandersServiceHandlerServer(ctx, gwMux, landersSvc); err != nil {
-		return nil, fmt.Errorf("register landers handler: %w", err)
-	}
-
-	// BadActor
-	badactorSvc := badactorimpl.New()
-	badactorspec.RegisterBadActorServiceServer(grpcSrv, badactorSvc)
-	if err := badactorspec.RegisterBadActorServiceHandlerServer(ctx, gwMux, badactorSvc); err != nil {
-		return nil, fmt.Errorf("register badactor handler: %w", err)
-	}
-
-	// Site (production build triggers)
-	siteSvc := siteimpl.New()
-	sitespec.RegisterSiteServiceServer(grpcSrv, siteSvc)
-	if err := sitespec.RegisterSiteServiceHandlerServer(ctx, gwMux, siteSvc); err != nil {
-		return nil, fmt.Errorf("register site handler: %w", err)
-	}
-
-	// Staging build (WebDAV remains on the ServeMux fallback).
-	stagingSvc := stagingimpl.New()
-	stagingspec.RegisterStagingServiceServer(grpcSrv, stagingSvc)
-	if err := stagingspec.RegisterStagingServiceHandlerServer(ctx, gwMux, stagingSvc); err != nil {
-		return nil, fmt.Errorf("register staging handler: %w", err)
-	}
-
-	// Auth — skeleton impl. WhoAmI, GetMyPermissions, and
-	// ListAuthProviders are live; the rest (LoginAdmin, LoginOIDC, user
-	// CRUD, TOTP, invite, RefreshToken, GrantServerAccess family)
-	// return Unimplemented pending the Bolt user-store wiring.
-	authSvc := authimpl.New()
-	authspec.RegisterAuthServiceServer(grpcSrv, authSvc)
-	if err := authspec.RegisterAuthServiceHandlerServer(ctx, gwMux, authSvc); err != nil {
-		return nil, fmt.Errorf("register auth handler: %w", err)
-	}
-
-	// Analytics — Phase-1 read endpoints backed by ClickHouse. The ACL
-	// lookup grants admin callers every configured server id; non-admin
-	// callers fall back to the authware/access helpers (stub until the
-	// Bolt user store ships — admin-only flows continue to work).
-	analyticsSvc := analyticsimpl.New(analyticsACLLookup(cfg), analyticsimpl.DefaultDB)
-	analyticsspec.RegisterAnalyticsServiceServer(grpcSrv, analyticsSvc)
-	if err := analyticsspec.RegisterAnalyticsServiceHandlerServer(ctx, gwMux, analyticsSvc); err != nil {
-		return nil, fmt.Errorf("register analytics handler: %w", err)
-	}
-
-	// Goals — Phase 3.3. CRUD only for now; ListConversions + TestGoal
-	// inherit Unimplemented until the query-builder goal-rule evaluator
-	// lands in 3.3b.
-	goalsSvc := goalsimpl.New()
-	goalsspec.RegisterGoalsServiceServer(grpcSrv, goalsSvc)
-	if err := goalsspec.RegisterGoalsServiceHandlerServer(ctx, gwMux, goalsSvc); err != nil {
-		return nil, fmt.Errorf("register goals handler: %w", err)
-	}
-
-	// Reports — Phase 3.4. CRUD + Preview live; SendNow + ListRuns
-	// land with the dispatcher in stage 3.5.
-	reportsSvc := reportsimpl.New()
-	reportsspec.RegisterReportsServiceServer(grpcSrv, reportsSvc)
-	if err := reportsspec.RegisterReportsServiceHandlerServer(ctx, gwMux, reportsSvc); err != nil {
-		return nil, fmt.Errorf("register reports handler: %w", err)
-	}
-
-	// Alerts — Phase 4.6. CRUD + ListAlertEvents. The evaluator
-	// goroutine that actually fires rules lands in stage 4.7.
-	alertsSvc := alertsimpl.New()
-	alertsspec.RegisterAlertsServiceServer(grpcSrv, alertsSvc)
-	if err := alertsspec.RegisterAlertsServiceHandlerServer(ctx, gwMux, alertsSvc); err != nil {
-		return nil, fmt.Errorf("register alerts handler: %w", err)
-	}
-
-	// Chat — Phase 4b. Admin REST surface for chat history,
-	// take/release, queue, search. The visitor-facing /chat/start
-	// HTTP handler + the visitor / agent WebSockets land in
-	// stages 4b.3 / 4b.4 / 4b.5 alongside hub + router; the live
-	// view passed in here is nil until then (the impl substitutes
-	// a noop view that reports no agents / visitor offline).
-	chatStore := chatpkg.NewStore(model.GetSQLDB())
-	// LiveSessionsView is wired to the per-process hub once
-	// registerChatPublic creates it (later in this same boot).
-	// Until then, chatHubSingleton is nil and chatimpl falls back
-	// to its noop view; we hand a closure here that re-resolves
-	// each call so /chat/admin/live-sessions returns real data
-	// the moment the WS endpoint is up.
-	chatSvc := chatimpl.New(chatStore, chatLiveLazy{}, chatACLLookup(cfg))
-	// Wire the lazy hub accessor so the REST CloseSession RPC can
-	// broadcast session_closed to the connected visitor once the
-	// per-process hub is up (registerChatPublic, later in boot).
-	chatSvc.SetHub(ChatHub)
-	chatspec.RegisterChatServiceServer(grpcSrv, chatSvc)
-	if err := chatspec.RegisterChatServiceHandlerServer(ctx, gwMux, chatSvc); err != nil {
-		return nil, fmt.Errorf("register chat handler: %w", err)
-	}
-
-	// ChatStreamService — bidirectional agent stream + per-server control stream
-	// that replace the two WebSocket endpoints (chat_ws_agent.go,
-	// chat_ws_control.go). Hub + router are constructed lazily by
-	// registerChatPublic() later in boot; the closures here re-resolve each call so
-	// the gRPC path comes online the moment the singletons land.
+	// DB-backed gRPC services. In no-DB mode (dbconfig: disabled) NONE of
+	// these register, so their /api/v1 routes are simply absent (the
+	// grpc-gateway returns 404 / Unimplemented) rather than being
+	// constructed against a nil DB. Everything OUTSIDE this gate — the
+	// status + notify services, the reverse-proxy / static-site / backend
+	// layers, ACME/TLS wiring, the per-host cert loop, and the fallback
+	// routes — still boots in no-DB mode.
 	//
-	// The Noise static secret is optional — when set, gRPC clients can opt into a
-	// Noise_IK session-wrap around the per-session stream. Missing / malformed keys
-	// degrade the chat stream to plaintext-only mode (mobile clients that demand
-	// Noise will see noise_unavailable).
-	//
-	// Resolved through a getter (re-reading config each handshake) rather than
-	// captured once, so a config reload / key rotation takes effect for new
-	// streams without a restart — and stays consistent with what
-	// /api/v1/installation/identity serves, which also re-reads per request.
-	noiseStaticFn := func() []byte {
-		c := hulaapp.GetConfig()
-		if c == nil || c.NoiseStaticKey == "" {
-			return nil
+	// Note auth is DB-backed too: its user / TOTP / session RPCs go through
+	// model.GetDB() (the "most methods are Unimplemented" header comment in
+	// authimpl.go is stale), so it is gated here to avoid nil-DB derefs.
+	// The bearer middleware that reads tokens stays attached below and is
+	// independently nil-safe (model.VerifyJWTClaimsDetailed guards db==nil).
+	if cfg.DBDisabled() {
+		unifiedLog.Warnf("no-DB mode (dbconfig: disabled): DB-backed gRPC services not registered — forms, landers, badactor, site, staging, auth, analytics, goals, reports, alerts, chat, mobile /api/v1 routes are absent (404)")
+	} else {
+		// Forms
+		formsSvc := formsimpl.New()
+		formsspec.RegisterFormsServiceServer(grpcSrv, formsSvc)
+		if err := formsspec.RegisterFormsServiceHandlerServer(ctx, gwMux, formsSvc); err != nil {
+			return nil, fmt.Errorf("register forms handler: %w", err)
 		}
-		k, err := utils.DecodeNoiseStaticKey(c.NoiseStaticKey)
-		if err != nil {
-			log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
-			return nil
-		}
-		return k
-	}
-	chatStreamSvc := chatimpl.NewStreamServer(
-		chatStore,
-		ChatHub,
-		ChatRouter,
-		chatACLLookup(cfg),
-		noiseStaticFn,
-	)
-	chatspec.RegisterChatStreamServiceServer(grpcSrv, chatStreamSvc)
 
-	// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
-	// device registration. Delegates the analytics math to the
-	// already-registered analyticsSvc; device storage rides on Bolt
-	// via pkg/mobile/tokenbox for token sealing.
-	mobileSvc := mobileimpl.New(
-		analyticsSvc.Summary,
-		analyticsSvc.Timeseries,
-		analyticsSvc.Pages,
-		chatStore,
-		cfg,
-		func() ([]byte, error) {
-			return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
-		},
-	)
-	mobilespec.RegisterMobileServiceServer(grpcSrv, mobileSvc)
-	if err := mobilespec.RegisterMobileServiceHandlerServer(ctx, gwMux, mobileSvc); err != nil {
-		return nil, fmt.Errorf("register mobile handler: %w", err)
-	}
+		// Landers
+		landersSvc := landersimpl.New()
+		landersspec.RegisterLandersServiceServer(grpcSrv, landersSvc)
+		if err := landersspec.RegisterLandersServiceHandlerServer(ctx, gwMux, landersSvc); err != nil {
+			return nil, fmt.Errorf("register landers handler: %w", err)
+		}
+
+		// BadActor
+		badactorSvc := badactorimpl.New()
+		badactorspec.RegisterBadActorServiceServer(grpcSrv, badactorSvc)
+		if err := badactorspec.RegisterBadActorServiceHandlerServer(ctx, gwMux, badactorSvc); err != nil {
+			return nil, fmt.Errorf("register badactor handler: %w", err)
+		}
+
+		// Site (production build triggers)
+		siteSvc := siteimpl.New()
+		sitespec.RegisterSiteServiceServer(grpcSrv, siteSvc)
+		if err := sitespec.RegisterSiteServiceHandlerServer(ctx, gwMux, siteSvc); err != nil {
+			return nil, fmt.Errorf("register site handler: %w", err)
+		}
+
+		// Staging build (WebDAV remains on the ServeMux fallback).
+		stagingSvc := stagingimpl.New()
+		stagingspec.RegisterStagingServiceServer(grpcSrv, stagingSvc)
+		if err := stagingspec.RegisterStagingServiceHandlerServer(ctx, gwMux, stagingSvc); err != nil {
+			return nil, fmt.Errorf("register staging handler: %w", err)
+		}
+
+		// Auth — skeleton impl. WhoAmI, GetMyPermissions, and
+		// ListAuthProviders are live; the rest (LoginAdmin, LoginOIDC, user
+		// CRUD, TOTP, invite, RefreshToken, GrantServerAccess family)
+		// return Unimplemented pending the Bolt user-store wiring.
+		authSvc := authimpl.New()
+		authspec.RegisterAuthServiceServer(grpcSrv, authSvc)
+		if err := authspec.RegisterAuthServiceHandlerServer(ctx, gwMux, authSvc); err != nil {
+			return nil, fmt.Errorf("register auth handler: %w", err)
+		}
+
+		// Analytics — Phase-1 read endpoints backed by ClickHouse. The ACL
+		// lookup grants admin callers every configured server id; non-admin
+		// callers fall back to the authware/access helpers (stub until the
+		// Bolt user store ships — admin-only flows continue to work).
+		analyticsSvc := analyticsimpl.New(analyticsACLLookup(cfg), analyticsimpl.DefaultDB)
+		analyticsspec.RegisterAnalyticsServiceServer(grpcSrv, analyticsSvc)
+		if err := analyticsspec.RegisterAnalyticsServiceHandlerServer(ctx, gwMux, analyticsSvc); err != nil {
+			return nil, fmt.Errorf("register analytics handler: %w", err)
+		}
+
+		// Goals — Phase 3.3. CRUD only for now; ListConversions + TestGoal
+		// inherit Unimplemented until the query-builder goal-rule evaluator
+		// lands in 3.3b.
+		goalsSvc := goalsimpl.New()
+		goalsspec.RegisterGoalsServiceServer(grpcSrv, goalsSvc)
+		if err := goalsspec.RegisterGoalsServiceHandlerServer(ctx, gwMux, goalsSvc); err != nil {
+			return nil, fmt.Errorf("register goals handler: %w", err)
+		}
+
+		// Reports — Phase 3.4. CRUD + Preview live; SendNow + ListRuns
+		// land with the dispatcher in stage 3.5.
+		reportsSvc := reportsimpl.New()
+		reportsspec.RegisterReportsServiceServer(grpcSrv, reportsSvc)
+		if err := reportsspec.RegisterReportsServiceHandlerServer(ctx, gwMux, reportsSvc); err != nil {
+			return nil, fmt.Errorf("register reports handler: %w", err)
+		}
+
+		// Alerts — Phase 4.6. CRUD + ListAlertEvents. The evaluator
+		// goroutine that actually fires rules lands in stage 4.7.
+		alertsSvc := alertsimpl.New()
+		alertsspec.RegisterAlertsServiceServer(grpcSrv, alertsSvc)
+		if err := alertsspec.RegisterAlertsServiceHandlerServer(ctx, gwMux, alertsSvc); err != nil {
+			return nil, fmt.Errorf("register alerts handler: %w", err)
+		}
+
+		// Chat — Phase 4b. Admin REST surface for chat history,
+		// take/release, queue, search. The visitor-facing /chat/start
+		// HTTP handler + the visitor / agent WebSockets land in
+		// stages 4b.3 / 4b.4 / 4b.5 alongside hub + router; the live
+		// view passed in here is nil until then (the impl substitutes
+		// a noop view that reports no agents / visitor offline).
+		chatStore := chatpkg.NewStore(model.GetSQLDB())
+		// LiveSessionsView is wired to the per-process hub once
+		// registerChatPublic creates it (later in this same boot).
+		// Until then, chatHubSingleton is nil and chatimpl falls back
+		// to its noop view; we hand a closure here that re-resolves
+		// each call so /chat/admin/live-sessions returns real data
+		// the moment the WS endpoint is up.
+		chatSvc := chatimpl.New(chatStore, chatLiveLazy{}, chatACLLookup(cfg))
+		// Wire the lazy hub accessor so the REST CloseSession RPC can
+		// broadcast session_closed to the connected visitor once the
+		// per-process hub is up (registerChatPublic, later in boot).
+		chatSvc.SetHub(ChatHub)
+		chatspec.RegisterChatServiceServer(grpcSrv, chatSvc)
+		if err := chatspec.RegisterChatServiceHandlerServer(ctx, gwMux, chatSvc); err != nil {
+			return nil, fmt.Errorf("register chat handler: %w", err)
+		}
+
+		// ChatStreamService — bidirectional agent stream + per-server control stream
+		// that replace the two WebSocket endpoints (chat_ws_agent.go,
+		// chat_ws_control.go). Hub + router are constructed lazily by
+		// registerChatPublic() later in boot; the closures here re-resolve each call so
+		// the gRPC path comes online the moment the singletons land.
+		//
+		// The Noise static secret is optional — when set, gRPC clients can opt into a
+		// Noise_IK session-wrap around the per-session stream. Missing / malformed keys
+		// degrade the chat stream to plaintext-only mode (mobile clients that demand
+		// Noise will see noise_unavailable).
+		//
+		// Resolved through a getter (re-reading config each handshake) rather than
+		// captured once, so a config reload / key rotation takes effect for new
+		// streams without a restart — and stays consistent with what
+		// /api/v1/installation/identity serves, which also re-reads per request.
+		noiseStaticFn := func() []byte {
+			c := hulaapp.GetConfig()
+			if c == nil || c.NoiseStaticKey == "" {
+				return nil
+			}
+			k, err := utils.DecodeNoiseStaticKey(c.NoiseStaticKey)
+			if err != nil {
+				log.Warnf("chat stream: noise_static_key decode: %s (Noise mode disabled)", err)
+				return nil
+			}
+			return k
+		}
+		chatStreamSvc := chatimpl.NewStreamServer(
+			chatStore,
+			ChatHub,
+			ChatRouter,
+			chatACLLookup(cfg),
+			noiseStaticFn,
+		)
+		chatspec.RegisterChatStreamServiceServer(grpcSrv, chatStreamSvc)
+
+		// Mobile — Phase 5a.5. Compact Summary/Timeseries projections +
+		// device registration. Delegates the analytics math to the
+		// already-registered analyticsSvc; device storage rides on Bolt
+		// via pkg/mobile/tokenbox for token sealing.
+		mobileSvc := mobileimpl.New(
+			analyticsSvc.Summary,
+			analyticsSvc.Timeseries,
+			analyticsSvc.Pages,
+			chatStore,
+			cfg,
+			func() ([]byte, error) {
+				return utils.GetTOTPEncryptionKey(cfg.TotpEncryptionKey)
+			},
+		)
+		mobilespec.RegisterMobileServiceServer(grpcSrv, mobileSvc)
+		if err := mobilespec.RegisterMobileServiceHandlerServer(ctx, gwMux, mobileSvc); err != nil {
+			return nil, fmt.Errorf("register mobile handler: %w", err)
+		}
+	} // end DB-backed gRPC services gate (skipped when cfg.DBDisabled())
 
 	// Notify — Phase 5a.7. NotificationPrefs CRUD + TestNotification.
+	// Notification prefs live in Bolt (storage.Global()), not ClickHouse, so
+	// this stays available in no-DB mode.
 	notifySvc := notifyimpl.New()
 	notifyspec.RegisterNotifyServiceServer(grpcSrv, notifySvc)
 	if err := notifyspec.RegisterNotifyServiceHandlerServer(ctx, gwMux, notifySvc); err != nil {

@@ -1,0 +1,13 @@
+# Genuinely-missing dbconfig. LoadConfig must still reject this with the
+# mandatory-DB error (the `dbconfig:` key is absent entirely — distinct from
+# the explicit `dbconfig: disabled` opt-out). See TestLoadConfig_DBMissing.
+admin:
+    username: admin
+    hash: "x"
+jwt_key: "nodb-fixture-test-jwt-key-32bytes-long!!"
+jwt_expiration: "72h"
+port: 8443
+hula_host: nomissing.test.local
+servers:
+    - host: static.nomissing.test.local
+      id: static

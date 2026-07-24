@@ -156,11 +156,17 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 	// keep the routing tables warm so the first request finds them
 	// without a cold-cache lookup. main.SetupAppDB has already opened
 	// the connection synchronously, so this is fast.
-	if err := model.PreloadDefinedLanders(model.GetDB()); err != nil {
-		return fmt.Errorf("preload landers: %w", err)
-	}
-	if err := model.PreloadDefinedForms(model.GetDB()); err != nil {
-		return fmt.Errorf("preload forms: %w", err)
+	//
+	// No-DB mode (dbconfig: disabled): skipped — landers/forms are
+	// DB-backed features and model.GetDB() is nil, so a preload would
+	// nil-deref the gorm handle.
+	if !conf.DBDisabled() {
+		if err := model.PreloadDefinedLanders(model.GetDB()); err != nil {
+			return fmt.Errorf("preload landers: %w", err)
+		}
+		if err := model.PreloadDefinedForms(model.GetDB()); err != nil {
+			return fmt.Errorf("preload forms: %w", err)
+		}
 	}
 
 	// Persistent store — identity/ACL/goals/reports data that
@@ -306,7 +312,12 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 	// Alert rule evaluator. The 1-minute ticker + queue are cheap to
 	// spin up; only firings touch ClickHouse, and those are tolerant
 	// of transient unavailability.
-	if db := model.GetSQLDB(); db != nil {
+	//
+	// No-DB mode (dbconfig: disabled): alerts are a DB-backed feature —
+	// don't start the evaluator at all.
+	if conf.DBDisabled() {
+		log.Infof("alerts evaluator: disabled (dbconfig: disabled — no-DB mode)")
+	} else if db := model.GetSQLDB(); db != nil {
 		alertsevaluator.Start(ctx, m, db)
 	} else {
 		log.Warnf("alerts evaluator: ClickHouse not available; alert rules will not fire until DB is reachable")
@@ -333,6 +344,14 @@ func preloadFastSubsystems(ctx context.Context, conf *config.Config) error {
 // pkg/server/unified.Server, and we want preloadSlowSubsystems to
 // stay easy to test without standing up a real listener.
 func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncidentRecorder func(unified.IncidentRecorder)) {
+	// No-DB mode (dbconfig: disabled): every subsystem below is
+	// DB-backed. Bail out early so nothing touches the nil gorm/sql
+	// handles. The DB-free slow subsystems (docker backends, site
+	// deploy, DDNS) are handled after this guard.
+	if conf.DBDisabled() {
+		log.Infof("no-DB mode: skipping ClickHouse migrations, bad-actor detection (analytics/stats stay off)")
+	}
+
 	// Apply ClickHouse migrations — brings up the MV state tables
 	// and materialized views that the analytics query builder reads
 	// from. Non-fatal on failure — analytics endpoints fall back to
@@ -356,7 +375,15 @@ func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncident
 	// Bad-actor detection. Init does its own DDL + loadFromDB; once
 	// it's online we wire the listener's incident recorder so TLS
 	// handshake errors and protocol-peek EOFs contribute to scoring.
-	if conf.BadActors != nil && !conf.BadActors.Disable {
+	//
+	// No-DB mode (dbconfig: disabled): bad-actor requires the DB
+	// (badactor.Init takes model.GetDB() and does DDL + loadFromDB), so
+	// it stays OFF. badactor.IsEnabled() is then false, and the
+	// proxy_only bad-actor gate (badactorBlockCheck) no-ops — a
+	// proxy_only host still proxies, just without the bad-actor gate.
+	if conf.DBDisabled() {
+		// intentionally not initialized — see comment above
+	} else if conf.BadActors != nil && !conf.BadActors.Disable {
 		var cfCIDRs []*net.IPNet
 		if conf.IsCloudflareMode() {
 			cfCIDRs = conf.GetCloudflareIPs().Ranges()
