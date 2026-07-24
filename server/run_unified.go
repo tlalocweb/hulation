@@ -355,8 +355,11 @@ func preloadSlowSubsystems(ctx context.Context, conf *config.Config, setIncident
 	// Apply ClickHouse migrations — brings up the MV state tables
 	// and materialized views that the analytics query builder reads
 	// from. Non-fatal on failure — analytics endpoints fall back to
-	// raw events when the MVs aren't present.
-	if db := model.GetSQLDB(); db != nil {
+	// raw events when the MVs aren't present. Explicitly gated on
+	// !DBDisabled() (not just the nil SQL handle) so no-DB mode can't
+	// accidentally re-enable migrations if some future path sets the
+	// handle.
+	if db := model.GetSQLDB(); !conf.DBDisabled() && db != nil {
 		ttl := 0
 		if conf.Analytics != nil {
 			ttl = conf.Analytics.EventsTTLDays
