@@ -7,8 +7,9 @@ import "testing"
 // load cleanly. conftagz auto-materializes an empty cloudflare_origin_ca
 // struct, and the CF validation used to run whenever no static cert was
 // present — which tripped "cloudflare_origin_ca requires api_token" and made
-// dev_ca unusable outside a static-cert setup. The load path is now guarded by
-// hasDevCA().
+// dev_ca unusable outside a static-cert setup. The load path now validates
+// Cloudflare Origin CA only when it is genuinely configured (api_token/zone_id
+// in YAML or env), so the empty materialized struct is ignored.
 func TestLoadConfig_DevCAWithoutStaticCert(t *testing.T) {
 	cfg, err := LoadConfig("testdata/hula-ssl-devca.yaml")
 	if err != nil {
