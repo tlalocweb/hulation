@@ -801,6 +801,24 @@ func (cfg *SSLConfig) hasStaticCert() bool {
 	return len(cfg.Cert) > 0 || len(cfg.Key) > 0
 }
 
+// cloudflareOriginCAConfigured reports whether Cloudflare Origin CA is
+// GENUINELY configured (vs. a conftagz-materialized empty struct). True only
+// when the block is present AND at least the api_token or zone_id is supplied —
+// inline in YAML or via the CLOUDFLARE_{API_TOKEN,ZONE_ID}_<envID> env vars the
+// loader resolves. envID is the cert identity ("hula" for hula_ssl, else the
+// server id). This distinguishes a real Cloudflare setup from the empty struct
+// conftagz fills in for a static-cert or dev_ca config.
+func (cfg *SSLConfig) cloudflareOriginCAConfigured(envID string) bool {
+	if cfg == nil || cfg.CloudflareOriginCA == nil {
+		return false
+	}
+	c := cfg.CloudflareOriginCA
+	if c.APIToken != "" || c.ZoneID != "" {
+		return true
+	}
+	return os.Getenv("CLOUDFLARE_API_TOKEN_"+envID) != "" || os.Getenv("CLOUDFLARE_ZONE_ID_"+envID) != ""
+}
+
 // hasACMEConfig returns true if ACME was explicitly configured in the YAML
 // (Email is required and has no default tag, so it distinguishes real config
 // from conftagz auto-filling defaults on nested structs).
@@ -1819,11 +1837,14 @@ func LoadConfig(filename string) (*Config, error) {
 				return nil, fmt.Errorf("bad hula_ssl config: %s", err.Error())
 			}
 		}
-		// Resolve Cloudflare Origin CA env vars for hula_ssl (uses "hula" as the ID).
-		// Skip this whole block if a static cert is configured — conftagz may have
-		// auto-populated an empty CloudflareOriginCA struct from default tags,
-		// and we don't want to validate it when it wasn't the user's intent.
-		if !cfg.HulaSSL.hasStaticCert() && cfg.HulaSSL.CloudflareOriginCA != nil {
+		// Cloudflare Origin CA for hula_ssl (uses "hula" as the ID). conftagz
+		// auto-populates an empty CloudflareOriginCA struct from default tags, so
+		// a non-nil struct does NOT mean the user configured Cloudflare. Validate
+		// and provision only when it's GENUINELY configured — api_token or zone_id
+		// present in YAML or via the CLOUDFLARE_*_hula env vars. That ignores the
+		// empty materialized struct for any other TLS mode (static cert, dev CA)
+		// without disabling a real Cloudflare setup. A static cert still wins.
+		if !cfg.HulaSSL.hasStaticCert() && cfg.HulaSSL.cloudflareOriginCAConfigured("hula") {
 			SubstConfVarsForAllStrings(cfg.HulaSSL.CloudflareOriginCA, map[string]string{"confdir": confDir})
 			cfca := cfg.HulaSSL.CloudflareOriginCA
 			if cfca.APIToken == "" {
