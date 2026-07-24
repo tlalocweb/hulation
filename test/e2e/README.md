@@ -48,7 +48,8 @@ on a single suite while the stack is already up):
    - Renders `hula-config.yaml` from the template
    - Brings up `docker-compose` and waits for `/hulastatus`
 
-2. **Run all suites** in order:
+2. **Run every `suites/NN-*.sh` in lexicographic order.** The full set lives in
+   `suites/` (currently through `42-*`). A representative sample:
    - `01-auth` — hulactl auth flow (multi-server config)
    - `02-admin` — generatehash, totp-key-update, reload
    - `03-users` — user CRUD
@@ -60,7 +61,17 @@ on a single suite while the stack is already up):
    - `09-staging-update` — WebDAV PUT
    - `10-staging-mount` — live mount + autobuild
    - `11-webdav-patch` — PATCH X-Update-Range and X-Patch-Format: diff
-   - `12-db-lifecycle` — initdb/deletedb (destructive, runs last)
+   - `12-db-lifecycle` — initdb/deletedb (destructive)
+   - … (13–40: analytics, chat, mobile, forwarders, cookieless, consent, HA, …)
+   - `41-proxy-only` — `proxy_only` reverse proxy: forwards requests to an
+     upstream, asserting a reserved `/api/v1/*` path also reaches it (bypassing
+     hula's handlers, not answered by hula), and that a page navigation is
+     recorded as a `method='serverside'` pageview in ClickHouse. Starts an
+     `http-echo` sidecar. Skip-safe.
+   - `42-tls-devca` — local dev CA (`hula_ssl.dev_ca`): boots a self-contained
+     `hula-devca` instance and asserts the presented leaf is issued by the dev CA
+     and chains to its root over a real TLS handshake (`openssl s_client` +
+     `curl --cacert`). Skip-safe.
 
 3. **Teardown**: `docker compose down -v`, prune builder containers, clean workdir.
 
