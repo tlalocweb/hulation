@@ -191,7 +191,12 @@ func newGRPCAwareTransport() http.RoundTripper {
 }
 
 func (t *grpcAwareTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if isGRPCRequest(r) {
+	// h2c only for plaintext upstreams. The h2c transport's DialTLSContext
+	// hands back a bare TCP conn, so pointing it at an https:// upstream
+	// would skip the TLS handshake entirely. The default transport already
+	// negotiates HTTP/2 over TLS via ALPN (ForceAttemptHTTP2), so https
+	// gRPC upstreams work through it unchanged.
+	if isGRPCRequest(r) && r.URL.Scheme == "http" {
 		return t.h2c.RoundTrip(r)
 	}
 	return t.h1.RoundTrip(r)
@@ -307,6 +312,9 @@ func registerProxies(srv *unified.Server, cfg *config.Config) {
 // registerProxies so the validation is unit-testable without a live server.
 func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 	var routes []*proxyRoute
+	// by_domain → target of the grpc route that claimed it, for duplicate
+	// detection below.
+	grpcDomains := map[string]string{}
 	for _, p := range proxies {
 		if p == nil {
 			continue
@@ -338,6 +346,22 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 		if p.GRPC && domain == "" {
 			log.Errorf("proxy: grpc: true requires by_domain (it claims the whole gRPC namespace of one host); skipping target %q", targetRaw)
 			continue
+		}
+		// by_path is ignored on a grpc route — the claim is host-wide by
+		// design (gRPC paths are /<proto.package>.<Service>/<Method>). Accepting
+		// it silently would read as a path-scoped claim that isn't one.
+		if p.GRPC && path != "" {
+			log.Errorf("proxy: grpc: true does not support by_path (the gRPC claim is host-wide); skipping target %q", targetRaw)
+			continue
+		}
+		// Only the first grpc route for a host is reachable, so a second one
+		// is dead config. Say so rather than silently ignoring it.
+		if p.GRPC {
+			if prev, dup := grpcDomains[domain]; dup {
+				log.Errorf("proxy: duplicate grpc: true route for by_domain %q (already claimed by %q); skipping target %q", domain, prev, targetRaw)
+				continue
+			}
+			grpcDomains[domain] = targetRaw
 		}
 		if path != "" && !strings.HasPrefix(path, "/") {
 			log.Errorf("proxy: by_path %q must start with '/'; skipping target %q", path, targetRaw)
@@ -385,21 +409,21 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 
 // proxyDispatch routes r to a matching proxy and reports whether it handled the
 // request. Order-independent precedence:
-//   0. proxy_only vhosts (config.Server.ProxyOnly) win first and unconditionally.
-//      A single O(1) map lookup on the port-stripped, lowercased Host decides it,
-//      done as the very first step so a proxy_only host NEVER reaches any of
-//      hula's serving handlers (/api, /v/*, /analytics, /hulastatus, gRPC, static
-//      roots, backends) or its own by_domain/by_path steps below. This is the
-//      Servers[] equivalent of a top-level by_domain proxy — folded in here so
-//      there is ONE coherent "host is a proxy, skip hula's handlers" path.
-//   1. by_domain routes are checked next — a dedicated host is unambiguous, so
-//      a matching by_domain proxy always wins regardless of config order. A
-//      dedicated host fully owns itself, so service-path reservations don't apply.
-//   2. A by_path route shares hula's host, so it must never shadow hula's own
-//      routes: it defers both to a route the core dispatcher claims (hasRoute)
-//      and to the reserved service prefixes (/api/*, /v/*, /scripts/*, /analytics,
-//      /hulastatus, …) via staticPassthrough — covering present and future REST
-//      endpoints the same way the static layer does.
+//  0. proxy_only vhosts (config.Server.ProxyOnly) win first and unconditionally.
+//     A single O(1) map lookup on the port-stripped, lowercased Host decides it,
+//     done as the very first step so a proxy_only host NEVER reaches any of
+//     hula's serving handlers (/api, /v/*, /analytics, /hulastatus, gRPC, static
+//     roots, backends) or its own by_domain/by_path steps below. This is the
+//     Servers[] equivalent of a top-level by_domain proxy — folded in here so
+//     there is ONE coherent "host is a proxy, skip hula's handlers" path.
+//  1. by_domain routes are checked next — a dedicated host is unambiguous, so
+//     a matching by_domain proxy always wins regardless of config order. A
+//     dedicated host fully owns itself, so service-path reservations don't apply.
+//  2. A by_path route shares hula's host, so it must never shadow hula's own
+//     routes: it defers both to a route the core dispatcher claims (hasRoute)
+//     and to the reserved service prefixes (/api/*, /v/*, /scripts/*, /analytics,
+//     /hulastatus, …) via staticPassthrough — covering present and future REST
+//     endpoints the same way the static layer does.
 //
 // blockCheck is hula's cross-cutting bad-actor gate: it runs FIRST for a
 // proxy_only host (before the upstream is contacted) so a blocked / rate-limited

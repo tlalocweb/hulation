@@ -417,8 +417,8 @@ func (s *Server) GetCSPMap() map[string]string {
 // entirely and supplies only `password: "{{env:VAR}}"`. The config
 // loader then infers the username from the repo host:
 //
-//   gitlab.com / *.gitlab.* → "oauth2"   (override: GITLAB_AUTH_TOKEN_USERNAME)
-//   github.com / *.github.* → "x-access-token" (override: GITHUB_AUTH_TOKEN_USERNAME)
+//	gitlab.com / *.gitlab.* → "oauth2"   (override: GITLAB_AUTH_TOKEN_USERNAME)
+//	github.com / *.github.* → "x-access-token" (override: GITHUB_AUTH_TOKEN_USERNAME)
 //
 // Other hosts must set username explicitly.
 type GitCredentials struct {
@@ -530,15 +530,15 @@ type Server struct {
 	// publishes the vhost Host only (aliases are NOT auto-published); a records:
 	// list overrides. conf:"skipnil" preserves the opt-in semantics against
 	// conftagz auto-materialisation.
-	DDNS              *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
-	CSP               CSP         `yaml:"csp,omitempty"`
+	DDNS *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
+	CSP  CSP               `yaml:"csp,omitempty"`
 	// HSTS lets the operator override the global tunables.hsts_*
 	// defaults for this specific virtual host. nil = inherit
 	// tunables wholesale. Useful when one server in the multi-vhost
 	// stack has a special policy (longer max-age before submitting to
 	// the preload list, no includeSubDomains because a subdomain
 	// serves HTTP-only content, etc.).
-	HSTS              *HSTSConfig `yaml:"hsts,omitempty"`
+	HSTS *HSTSConfig `yaml:"hsts,omitempty"`
 	// anything related to hulation functionality uses this prefix (optional)
 	// so if PathPrefix is /hula, then the hula.js script /hula/scripts/hula.js
 	// and APIs would be under /hula/api/...
@@ -573,7 +573,7 @@ type Server struct {
 	// where 'host' is the Host field of the server this config is about
 	FormSchemaFolder string `yaml:"form_schema_folder,omitempty"`
 	// computed string
-	Hooks    *VisitorHooks `yaml:"hooks,omitempty"`
+	Hooks *VisitorHooks `yaml:"hooks,omitempty"`
 
 	// --- Phase 4c.1 consent surface ---
 	// ConsentMode controls how the visitor-tracking endpoints treat
@@ -618,8 +618,8 @@ type Server struct {
 	// to cookieless is the documented answer to "I want analytics
 	// without a cookie banner in jurisdictions that won't accept
 	// even a consented cookie".
-	TrackingMode string `yaml:"tracking_mode,omitempty" default:"cookie"`
-	Backends      []*backend.BackendConfig `yaml:"backends,omitempty"`
+	TrackingMode string                   `yaml:"tracking_mode,omitempty" default:"cookie"`
+	Backends     []*backend.BackendConfig `yaml:"backends,omitempty"`
 
 	// --- reverse-proxy parity: proxy_only virtual hosts ---
 	// When ProxyOnly is true this server is a PURE reverse proxy: every
@@ -635,7 +635,7 @@ type Server struct {
 	ProxyOnly bool   `yaml:"proxy_only,omitempty"`
 	ProxyPass string `yaml:"proxy_pass,omitempty"`
 
-	GitAutoDeploy *GitAutoDeployConfig    `yaml:"root_git_autodeploy,omitempty"`
+	GitAutoDeploy    *GitAutoDeployConfig `yaml:"root_git_autodeploy,omitempty"`
 	externalUrl      string
 	externalHostPort string
 	// the string used for the server setup for fiber, etc. computed from Port and ListenOn
@@ -1042,7 +1042,7 @@ type Config struct {
 	// TLS certificate for hula's own admin/API endpoints.
 	// Covers localhost, 127.0.0.1, ::1, and hula_host automatically.
 	// Supports cert/key files, ACME, or omit for auto self-signed.
-	HulaSSL        *SSLConfig `yaml:"hula_ssl,omitempty"`
+	HulaSSL    *SSLConfig                         `yaml:"hula_ssl,omitempty"`
 	Registries map[string]*backend.RegistryConfig `yaml:"registries,omitempty"`
 	BadActors  *BadActorConfig                    `yaml:"bad_actors,omitempty"`
 	// BackendLogs controls passthrough of backend container
@@ -1051,10 +1051,10 @@ type Config struct {
 	// Per-backend `logs:` blocks fully override this when set.
 	BackendLogs *backend.LogConfig `yaml:"backend_logs,omitempty"`
 	// Comma-separated list of log tags to enable (only these tags will log)
-	LogTags   string `yaml:"log_tags,omitempty"`
+	LogTags string `yaml:"log_tags,omitempty"`
 	// Comma-separated list of log tags to exclude from logging
-	NoLogTags string `yaml:"no_log_tags,omitempty"`
-	Proxies        []*Proxy   `yaml:"proxies,omitempty"`
+	NoLogTags string   `yaml:"no_log_tags,omitempty"`
+	Proxies   []*Proxy `yaml:"proxies,omitempty"`
 	// DDNS is the top-level dynamic-DNS block: global defaults + a Cloudflare
 	// credential fallback. conf:"skipnil" keeps conftagz from materialising an
 	// empty struct when the operator omits it (presence enables the subsystem).
@@ -1117,8 +1117,8 @@ type Config struct {
 	// Team — Raft cluster identity and membership. Optional;
 	// solo deployments can omit the whole block and hula
 	// auto-bootstraps a single-node cluster. See HA_PLAN2.md.
-	Team *TeamConfig `yaml:"team,omitempty"`
-	JWTExpiration  string     `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
+	Team          *TeamConfig `yaml:"team,omitempty"`
+	JWTExpiration string      `yaml:"jwt_expiration,omitempty" test:"$(validtimeduration)" default:"72h"`
 	// The hostname of the hulation server itself - format: host or host:port
 	// This is used for APIs specifc to hula, visitor tracking, etc.
 	// Hula will still serve the its visitor APIs to any host is published in the 'servers' section
@@ -1176,7 +1176,7 @@ type Config struct {
 	// true if any server has allow_non_cf_ips: true
 	allowNonCFIPs bool
 	// ACME manager for hula's own identity (when hula_ssl uses acme)
-	hulaACMEManager *autocert.Manager
+	hulaACMEManager  *autocert.Manager
 	hulaACMEHTTPPort int
 }
 
@@ -1241,10 +1241,15 @@ type Proxy struct {
 	// mean one entry per service and a config edit every time a service is
 	// added. One flag delegates the whole gRPC namespace of the host instead.
 	//
-	// Requires by_domain (a grpc-only or by_path-only entry is a load error):
-	// claiming every gRPC request on every host is never what an operator
-	// means. The upstream must serve h2c — plaintext HTTP/2 — on its target
-	// port; gRPC cannot survive the HTTP/1.1 hop the default transport uses.
+	// by_domain is required: without it the entry would claim gRPC for every
+	// host hula serves, which is never the intent, so it is a load error.
+	// by_path is also a load error here — the claim is host-wide by design —
+	// as is a second grpc entry for the same by_domain, which would be
+	// unreachable.
+	//
+	// Forwarding is HTTP/2 either way: h2c (plaintext) to an http:// target,
+	// or HTTP/2 over TLS via ALPN to an https:// one. The upstream must serve
+	// HTTP/2 on that port; gRPC cannot survive an HTTP/1.1 hop.
 	GRPC bool `yaml:"grpc,omitempty"`
 }
 

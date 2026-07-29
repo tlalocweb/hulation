@@ -64,6 +64,78 @@ func TestCompileProxyRoutesRejectsGRPCWithoutDomain(t *testing.T) {
 	}
 }
 
+// h2c is for plaintext upstreams only. The h2c transport's dialer returns a
+// bare TCP conn, so sending gRPC bound for an https:// upstream through it
+// would skip the TLS handshake — the default transport must take those (it
+// negotiates HTTP/2 via ALPN).
+func TestGRPCAwareTransportPicksByUpstreamScheme(t *testing.T) {
+	var viaH2C, viaDefault bool
+	tr := &grpcAwareTransport{
+		h1:  roundTripFunc(func(*http.Request) (*http.Response, error) { viaDefault = true; return stubResponse(), nil }),
+		h2c: roundTripFunc(func(*http.Request) (*http.Response, error) { viaH2C = true; return stubResponse(), nil }),
+	}
+
+	cases := []struct {
+		name    string
+		scheme  string
+		grpc    bool
+		wantH2C bool
+	}{
+		{"grpc to http upstream uses h2c", "http", true, true},
+		{"grpc to https upstream uses the default transport", "https", true, false},
+		{"plain http traffic uses the default transport", "http", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			viaH2C, viaDefault = false, false
+			req := httptest.NewRequest("POST", tc.scheme+"://upstream.internal/pkg.Svc/M", nil)
+			req.URL.Scheme = tc.scheme
+			if tc.grpc {
+				req.ProtoMajor = 2
+				req.Header.Set("Content-Type", "application/grpc")
+			}
+			if _, err := tr.RoundTrip(req); err != nil {
+				t.Fatalf("RoundTrip: %v", err)
+			}
+			if viaH2C != tc.wantH2C || viaDefault == tc.wantH2C {
+				t.Fatalf("h2c=%v default=%v, want h2c=%v", viaH2C, viaDefault, tc.wantH2C)
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func stubResponse() *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}
+}
+
+// by_path on a grpc route reads as a path-scoped claim, which it isn't; a
+// second grpc route for a host is unreachable. Both are dead config, so both
+// are refused at load rather than silently ignored.
+func TestCompileProxyRoutesRejectsMisleadingGRPCEntries(t *testing.T) {
+	routes := compileProxyRoutes([]*config.Proxy{
+		{Target: "http://127.0.0.1:9001", ByDomain: "api.example.com", ByPath: "/grpc", GRPC: true}, // by_path: dropped
+		{Target: "http://127.0.0.1:9002", ByDomain: "api.example.com", GRPC: true},                  // kept
+		{Target: "http://127.0.0.1:9003", ByDomain: "api.example.com", GRPC: true},                  // duplicate: dropped
+		{Target: "http://127.0.0.1:9004", ByDomain: "other.example.com", GRPC: true},                // different host: kept
+	})
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 compiled routes, got %d: %+v", len(routes), routes)
+	}
+	for _, rt := range routes {
+		if rt.byPath != "" {
+			t.Fatalf("a grpc route kept a by_path: %+v", rt)
+		}
+	}
+}
+
 // The headline routing property: a gRPC request goes to the gRPC upstream even
 // though a path route for the same host would otherwise match, while non-gRPC
 // traffic on that host still follows the normal path rules. That split is what
