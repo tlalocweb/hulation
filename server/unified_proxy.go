@@ -10,9 +10,14 @@ package server
 // running on localhost behind hulation's TLS via `by_domain: relay.example.com`.
 
 import (
+	"context"
+	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"golang.org/x/net/http2"
 	"strings"
 	"unicode"
 
@@ -25,7 +30,29 @@ import (
 type proxyRoute struct {
 	byDomain string // lowercased host to match; "" matches any host
 	byPath   string // path prefix to match; "" matches any path
+	grpc     bool   // claims this host's HTTP/2 application/grpc traffic
 	handler  http.Handler
+}
+
+// isGRPCRequest reports whether this is gRPC over HTTP/2. Both halves
+// matter: HTTP/1.1 cannot carry gRPC (it needs trailers), and an HTTP/2
+// request that isn't application/grpc is ordinary web traffic that must
+// keep following the normal host/path rules.
+func isGRPCRequest(r *http.Request) bool {
+	return r.ProtoMajor == 2 &&
+		strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc")
+}
+
+// grpcRouteFor finds the route that claimed this host's gRPC namespace,
+// or nil. Host-scoped only by construction — compileProxyRoutes refuses
+// a grpc route without by_domain.
+func grpcRouteFor(routes []*proxyRoute, r *http.Request) *proxyRoute {
+	for _, rt := range routes {
+		if rt.grpc && rt.matchesHost(r) {
+			return rt
+		}
+	}
+	return nil
 }
 
 func (r *proxyRoute) matchesHost(req *http.Request) bool {
@@ -134,6 +161,42 @@ func isNumericPort(p string) bool {
 	return true
 }
 
+// grpcAwareTransport sends gRPC over h2c and everything else over the
+// default transport.
+//
+// One transport per proxy so both pools are reused. The split is
+// necessary because Go's default transport speaks HTTP/1.1 to an
+// `http://` upstream — gRPC needs end-to-end HTTP/2 with trailers, so a
+// gRPC request over the default transport fails at the upstream rather
+// than being downgraded.
+type grpcAwareTransport struct {
+	h1  http.RoundTripper
+	h2c http.RoundTripper
+}
+
+func newGRPCAwareTransport() http.RoundTripper {
+	return &grpcAwareTransport{
+		h1: http.DefaultTransport,
+		h2c: &http2.Transport{
+			// h2c: speak HTTP/2 over a plaintext connection. AllowHTTP
+			// permits the http:// scheme; DialTLSContext then hands back
+			// an ordinary TCP conn instead of doing a TLS handshake.
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
+
+func (t *grpcAwareTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if isGRPCRequest(r) {
+		return t.h2c.RoundTrip(r)
+	}
+	return t.h1.RoundTrip(r)
+}
+
 // newPlainProxy builds a path-PRESERVING reverse proxy to target. Unlike the
 // backend-container proxy it does NOT strip/rewrite the path, so a signed
 // downstream (the hula-push-relay signs over method+path) verifies correctly.
@@ -141,6 +204,11 @@ func isNumericPort(p string) bool {
 // honour its own public_base.
 func newPlainProxy(target *url.URL) http.Handler {
 	return &httputil.ReverseProxy{
+		// Streaming and trailers come for free: ReverseProxy flushes
+		// immediately when the response has no Content-Length (which gRPC
+		// never sets), and re-adds the `Te: trailers` request header it
+		// would otherwise strip as hop-by-hop.
+		Transport: newGRPCAwareTransport(),
 		Director: func(req *http.Request) {
 			origHost := req.Host
 			scheme := "http"
@@ -264,6 +332,13 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			log.Warnf("proxy: target %q has neither by_domain nor by_path; skipping", targetRaw)
 			continue
 		}
+		// A grpc route claims every application/grpc request on its host,
+		// so it must name one. Without by_domain it would swallow gRPC for
+		// every host hula serves — never the intent, and silent if allowed.
+		if p.GRPC && domain == "" {
+			log.Errorf("proxy: grpc: true requires by_domain (it claims the whole gRPC namespace of one host); skipping target %q", targetRaw)
+			continue
+		}
 		if path != "" && !strings.HasPrefix(path, "/") {
 			log.Errorf("proxy: by_path %q must start with '/'; skipping target %q", path, targetRaw)
 			continue
@@ -298,11 +373,12 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 		routes = append(routes, &proxyRoute{
 			byDomain: domain,
 			byPath:   path,
+			grpc:     p.GRPC,
 			handler:  newPlainProxy(target),
 		})
 		// Redacted() is defensive (userinfo is rejected above) — keeps any future
 		// credential-bearing string from reaching the log.
-		log.Infof("Proxy route: by_domain=%q by_path=%q → %s (path preserved)", domain, path, target.Redacted())
+		log.Infof("Proxy route: by_domain=%q by_path=%q grpc=%v → %s (path preserved)", domain, path, p.GRPC, target.Redacted())
 	}
 	return routes
 }
@@ -366,6 +442,21 @@ func proxyDispatch(
 			return true
 		}
 	}
+	// 0.5 gRPC, if a route claimed this host's gRPC namespace. Ahead of
+	// path matching on purpose: gRPC method paths are
+	// /<proto.package>.<Service>/<Method>, so matching them by prefix
+	// would need an entry per service. Non-gRPC traffic on the same host
+	// falls through to the normal rules below, which is what lets one
+	// host serve a web UI and a gRPC API from different upstreams.
+	if isGRPCRequest(r) {
+		if rt := grpcRouteFor(routes, r); rt != nil {
+			if blockCheck != nil && blockCheck(r) {
+				panic(http.ErrAbortHandler)
+			}
+			rt.handler.ServeHTTP(w, r)
+			return true
+		}
+	}
 	// 1. Host-scoped (by_domain) routes win first.
 	if rt := longestMatch(routes, r, true); rt != nil {
 		rt.handler.ServeHTTP(w, r)
@@ -393,6 +484,13 @@ func longestMatch(routes []*proxyRoute, r *http.Request, hostScoped bool) *proxy
 	var best *proxyRoute
 	bestLen := -1
 	for _, rt := range routes {
+		// A grpc route serves ONLY gRPC (claimed earlier, in proxyDispatch).
+		// Without this it would also win ordinary host matching and hijack
+		// the host's web traffic — declaring a gRPC API would silently take
+		// the UI with it.
+		if rt.grpc {
+			continue
+		}
 		if hostScoped != (rt.byDomain != "") {
 			continue
 		}

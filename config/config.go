@@ -1233,6 +1233,19 @@ type Proxy struct {
 	// error). Credentials cascade per-config → global. conf:"skipnil" preserves
 	// the opt-in against conftagz auto-materialisation.
 	DDNS *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
+	// GRPC claims ALL HTTP/2 `application/grpc` traffic for this route's
+	// by_domain, ahead of path matching, and forwards it upstream over h2c.
+	//
+	// Path matching is deliberately bypassed: gRPC method paths are
+	// `/<proto.package>.<Service>/<Method>`, so pinning them with by_path would
+	// mean one entry per service and a config edit every time a service is
+	// added. One flag delegates the whole gRPC namespace of the host instead.
+	//
+	// Requires by_domain (a grpc-only or by_path-only entry is a load error):
+	// claiming every gRPC request on every host is never what an operator
+	// means. The upstream must serve h2c — plaintext HTTP/2 — on its target
+	// port; gRPC cannot survive the HTTP/1.1 hop the default transport uses.
+	GRPC bool `yaml:"grpc,omitempty"`
 }
 
 const (
