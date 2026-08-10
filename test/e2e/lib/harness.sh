@@ -88,14 +88,57 @@ hulactl() {
 # important bits (ca-certificates install + hostname mapping) before the
 # user's command or every test that needs hula.test.local resolution fails.
 runner_shell() {
-    dcq run --rm -T --entrypoint /bin/sh hulactl-runner -c '
-        if ! command -v curl >/dev/null 2>&1; then
-          apk add --no-cache ca-certificates curl jq >/dev/null 2>&1
+    dcq run --rm -T --entrypoint /bin/sh hulactl-runner -c "$(runner_preamble)"'
+        '"$*"
+}
+
+# runner_preamble is the setup every --entrypoint-overriding runner invocation
+# needs: CA trust, the tools the suites shell out to, and the test-hostname
+# mappings. Factored out so runner_shell and runner_shell_bg can't drift —
+# they previously carried separate copies of this, and only one of them knew
+# about each tool.
+#
+# websocat is here (not just in the compose entrypoint) because every WebSocket
+# suite reaches the runner through an --entrypoint override, which skips that
+# entrypoint script entirely.
+runner_preamble() {
+    cat <<'PREAMBLE'
+        if ! command -v curl >/dev/null 2>&1 || ! command -v websocat >/dev/null 2>&1; then
+          apk add --no-cache ca-certificates curl jq websocat >/dev/null 2>&1
         fi
         update-ca-certificates >/dev/null 2>&1
         HULA_IP=$(getent hosts hula | awk "{print \$1}")
-        echo "$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local proxy.test.local" >> /etc/hosts
-        '"$*"
+        echo "$HULA_IP hula.test.local site.test.local staging.test.local seed.test.local seed-cookieless.test.local hugo-min.test.local mkdocs-min.test.local proxy.test.local" >> /etc/hosts
+PREAMBLE
+}
+
+# Run a shell command inside a DETACHED, named runner container — for
+# long-running clients (websocat holding a WebSocket open) whose output a suite
+# collects later with `docker logs <name>`.
+#
+# This exists because the obvious form is silently wrong:
+#
+#   dc run --rm -T -d --name X hulactl-runner sh -c "websocat ..."
+#
+# The compose entrypoint is ["/bin/sh","-c",<script>,"--"] ending in
+# `exec hulactl "$@"`, so a trailing `sh -c "..."` becomes ARGUMENTS TO
+# hulactl and the script never runs. Overriding the entrypoint is the only way
+# to actually execute a shell in this container — and doing so means
+# re-applying the preamble, since the override skips it.
+#
+# Deliberately NOT --rm: callers collect output with `docker logs <name>` after
+# the client exits, and --rm deletes the container the instant it does — so the
+# log read races the teardown and usually loses ("No such container"). The
+# suites remove these explicitly with `docker rm -f` once they've read them.
+#
+# Output goes to stdout, not a file inside the container: a redirect to
+# /tmp/foo.out is unreadable from the host and vanishes with the container.
+#
+# Usage: runner_shell_bg <container-name> '<shell command>'
+runner_shell_bg() {
+    local name="$1" cmd="$2"
+    dcq run -T -d --name "$name" --entrypoint /bin/sh hulactl-runner -c "$(runner_preamble)"'
+        '"$cmd" >/dev/null 2>&1 || true
 }
 
 # Run the `auth` command non-interactively using HULACTL_IDENTITY and

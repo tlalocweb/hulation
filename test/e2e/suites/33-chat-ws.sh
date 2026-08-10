@@ -54,10 +54,10 @@ pass "chat/start issued token + session ${session_id:0:8}…"
 
 # --- 2. Visitor opens WS, sends a message, expects ack -------------
 
-dc run --rm -T -d --name hula-chat-visitor hulactl-runner sh -c "
+runner_shell_bg hula-chat-visitor "
   printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite33 ws msg\"}' \
-    | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4 > /tmp/visitor.out 2>&1
-" >/dev/null 2>&1 || true
+    | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4
+"
 sleep 3
 
 vout=$(docker logs hula-chat-visitor 2>/dev/null || true)
@@ -98,9 +98,9 @@ esac
 
 # --- 5. Agent opens WS, expects presence_snapshot frame ------------
 
-dc run --rm -T -d --name hula-chat-agent hulactl-runner sh -c "
-  websocat -v 'wss://${HULA_HOST}/api/v1/chat/admin/agent-ws?session_id=${session_id}&token=${admin_token}' --max-messages 2 > /tmp/agent.out 2>&1
-" >/dev/null 2>&1 || true
+runner_shell_bg hula-chat-agent "
+  websocat -v 'wss://${HULA_HOST}/api/v1/chat/admin/agent-ws?session_id=${session_id}&token=${admin_token}' --max-messages 2
+"
 sleep 2
 
 aout=$(docker logs hula-chat-agent 2>/dev/null || true)

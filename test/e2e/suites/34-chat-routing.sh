@@ -45,9 +45,9 @@ fi
 
 # --- 2. Agent connects control-WS first --------------------------
 
-dc run --rm -T -d --name hula-chat-control hulactl-runner sh -c "
-  websocat -v 'wss://${HULA_HOST}/api/v1/chat/admin/agent-control-ws?server_id=${SERVER_ID}&token=${admin_token}' --max-messages 5 > /tmp/control.out 2>&1
-" >/dev/null 2>&1 || true
+runner_shell_bg hula-chat-control "
+  websocat -v 'wss://${HULA_HOST}/api/v1/chat/admin/agent-control-ws?server_id=${SERVER_ID}&token=${admin_token}' --max-messages 5
+"
 sleep 2
 
 # Verify queue_snapshot received.
