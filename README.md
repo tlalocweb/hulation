@@ -235,7 +235,7 @@ Single-node Raft (`hashicorp/raft`) is the production storage default for non-an
 
 ## Configuration & management
 
-Hula is driven by a single YAML file with `${VAR}` **environment-variable expansion** and sensible defaults throughout. Most changes **hot-reload** without a restart:
+Hula is driven by a single YAML file with `${VAR}` **environment-variable expansion** and sensible defaults throughout.
 
 ```bash
 hulactl reload            # SIGHUP the running server to reload config
@@ -243,6 +243,10 @@ hulactl auth <url>        # authenticate and store a token
 hulactl badactors         # list scored IPs
 hulactl build <id>        # trigger a site build
 ```
+
+**Config reload (SIGHUP).** `hulactl reload` re-reads the config file in place. The new file is fully parsed and validated *before* anything is swapped, so a typo leaves the running config untouched and is logged rather than taking the server down. Reloading applies log filters, dynamic-DNS records, and every setting read per-use (chat tunables, keys, bad-actor knobs).
+
+What a reload **cannot** change is anything bound once at startup — listener port and address, virtual hosts and proxy routes, TLS material, the database connection, cluster membership, and backend registries. Those are read from the file but only take effect on restart, and hula logs exactly which changed sections need one, so a reload never silently does nothing.
 
 Secret generation and rotation (`jwt_key`, TOTP key, Noise / visitor-chat keys, OPAQUE seeds, team CA bundles) live on the `hula` binary and can update a single field in place while preserving comments and formatting. Run `hulactl` or `hula` with no arguments for full inline help, and see **[DEPLOYMENT.md](DEPLOYMENT.md)** for the complete configuration and deployment reference.
 

@@ -3,10 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/tlalocweb/hulation/config"
@@ -45,36 +42,43 @@ type ddnsUpdater struct {
 }
 
 // startDDNS builds the updater from cfg and, if any records are configured,
-// launches the polling loop plus a SIGHUP → immediate-check bridge. It returns
-// immediately; all work happens in background goroutines bound to ctx. No
-// existing SIGHUP handler was found in the boot path, so this registers its own
-// notify scoped to the DDNS subsystem (SIGINT/SIGTERM shutdown is untouched).
+// launches the polling loop. It returns immediately; all work happens in
+// background goroutines bound to ctx.
+//
+// DDNS used to install its OWN signal.Notify(SIGHUP) here, which meant the
+// process only survived a SIGHUP when DDNS happened to be configured — on
+// every other deployment `hulactl reload` terminated hula. The handler now
+// lives in reload.go and is installed unconditionally; DDNS just registers a
+// hook, which also gets it a genuine benefit: a reload re-reads the config, so
+// records added or edited in the file take effect without a restart.
 func startDDNS(ctx context.Context, cfg *config.Config) {
 	u := buildDDNSUpdater(cfg)
 	if u == nil {
+		// Even with no records configured today, a reload may ADD them. Watch
+		// for that rather than staying dead until the next restart.
+		RegisterReloadHook("ddns", func(_, newCfg *config.Config) {
+			if buildDDNSUpdater(newCfg) != nil {
+				log.Infof("ddns: records appeared in reloaded config — restart hula to activate them")
+			}
+		})
 		return
 	}
 
-	// SIGHUP forces an immediate check. Bridge it to a generic trigger channel
-	// so the loop stays signal-agnostic (and unit-testable with a plain chan).
+	// A generic trigger channel keeps the loop signal-agnostic (and
+	// unit-testable with a plain chan); the reload hook feeds it.
 	trigger := make(chan struct{}, 1)
-	sighupCh := make(chan os.Signal, 1)
-	signal.Notify(sighupCh, syscall.SIGHUP)
-	go func() {
-		defer signal.Stop(sighupCh)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-sighupCh:
-				log.Infof("ddns: SIGHUP received — forcing immediate update")
-				select {
-				case trigger <- struct{}{}:
-				default: // a check is already pending; coalesce
-				}
-			}
+	RegisterReloadHook("ddns", func(_, newCfg *config.Config) {
+		// Re-resolve plans from the new config so edited records take effect,
+		// then force an immediate publish.
+		if next := buildDDNSUpdater(newCfg); next != nil {
+			u.adoptPlans(next)
 		}
-	}()
+		log.Infof("ddns: config reloaded — forcing immediate update")
+		select {
+		case trigger <- struct{}{}:
+		default: // a check is already pending; coalesce
+		}
+	})
 
 	go u.run(ctx, trigger)
 	log.Infof("ddns: updater started (%d record target(s), interval %s)", len(u.plans), u.interval)
@@ -245,23 +249,29 @@ func (u *ddnsUpdater) runOnce(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	// Snapshot the reloadable fields once, under the lock. A SIGHUP reload can
+	// swap them (adoptPlans) while this loop is running, so reading them
+	// directly would be a data race — and a half-swapped view could publish a
+	// removed record or skip a new one.
+	plans, needV4, needV6, v4Services, v6Services := u.snapshot()
+
 	var v4, v6 string
-	if u.needV4 {
-		if ip, err := ddns.DetectPublicIPv4(ctx, u.httpClient, u.v4Services); err != nil {
+	if needV4 {
+		if ip, err := ddns.DetectPublicIPv4(ctx, u.httpClient, v4Services); err != nil {
 			log.Warnf("ddns: IPv4 detection failed: %s", err)
 		} else {
 			v4 = ip
 		}
 	}
-	if u.needV6 {
-		if ip, err := ddns.DetectPublicIPv6(ctx, u.httpClient, u.v6Services); err != nil {
+	if needV6 {
+		if ip, err := ddns.DetectPublicIPv6(ctx, u.httpClient, v6Services); err != nil {
 			log.Warnf("ddns: IPv6 detection failed: %s", err)
 		} else {
 			v6 = ip
 		}
 	}
 
-	for _, pl := range u.plans {
+	for _, pl := range plans {
 		if ctx.Err() != nil {
 			return
 		}
@@ -271,6 +281,37 @@ func (u *ddnsUpdater) runOnce(ctx context.Context) {
 		if pl.publishV6 && v6 != "" {
 			u.ensure(ctx, pl, "AAAA", v6)
 		}
+	}
+}
+
+// snapshot returns the reload-swappable fields under u.mu.
+func (u *ddnsUpdater) snapshot() (plans []ddnsRecordPlan, needV4, needV6 bool, v4Services, v6Services []string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.plans, u.needV4, u.needV6, u.v4Services, u.v6Services
+}
+
+// adoptPlans replaces this updater's record set with the one resolved from a
+// reloaded config, so records added, edited or removed in the file take effect
+// without a restart. Written under the same lock runOnce snapshots with.
+//
+// The polling interval is deliberately NOT adopted: run()'s ticker is created
+// once, so changing it here would have no effect and pretending otherwise
+// would be worse than saying so.
+func (u *ddnsUpdater) adoptPlans(next *ddnsUpdater) {
+	if u == nil || next == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.plans = next.plans
+	u.needV4 = next.needV4
+	u.needV6 = next.needV6
+	u.v4Services = next.v4Services
+	u.v6Services = next.v6Services
+	if next.interval != u.interval {
+		log.Warnf("ddns: interval changed to %s — restart hula for it to take effect (still %s)",
+			next.interval, u.interval)
 	}
 }
 
