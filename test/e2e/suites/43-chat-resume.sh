@@ -68,10 +68,10 @@ pass "suite43 chat started, session ${session_id:0:8}…"
 have_ws=false
 if runner_shell 'command -v websocat' >/dev/null 2>&1; then
     have_ws=true
-    dc run --rm -T -d --name hula-c43-pre hulactl-runner sh -c "
+    runner_shell_bg hula-c43-pre "
       printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite43 pre-refresh msg\"}' \
-        | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4 > /tmp/pre.out 2>&1
-    " >/dev/null 2>&1 || true
+        | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4
+    "
     sleep 3
     docker rm -f hula-c43-pre >/dev/null 2>&1 || true
 fi
@@ -119,9 +119,9 @@ fi
 # --- 4. Reconnect replays the transcript (needs a real socket) ------
 
 if [ "$have_ws" = true ]; then
-    dc run --rm -T -d --name hula-c43-post hulactl-runner sh -c "
-      websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${resumed_token}' --max-messages 3 > /tmp/post.out 2>&1
-    " >/dev/null 2>&1 || true
+    runner_shell_bg hula-c43-post "
+      websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${resumed_token}' --max-messages 3
+    "
     sleep 3
 
     post_out=$(docker logs hula-c43-post 2>/dev/null || true)

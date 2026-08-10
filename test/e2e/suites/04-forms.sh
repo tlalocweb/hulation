@@ -17,7 +17,13 @@ assert_contains "$cf_out" "Form created" "createform succeeds"
 # First get the form ID via direct API (since listforms isn't implemented).
 # We use the test-runner to hit the admin API with the saved JWT token.
 # Get token from hulactl config:
-token=$(dc run --rm -T hulactl-runner sh -c "cat /root/.hula/hulactl.yaml | sed -n 's/.*token: \(.*\)/\1/p' | head -1" | tr -d '"' | tr -d ' ')
+# Must go through runner_shell: `dc run … hulactl-runner sh -c "…"` does NOT
+# run a shell — the compose entrypoint ends in `exec hulactl "$@"`, so the
+# script arrives as arguments to hulactl. Its error output then survived the
+# pipeline as a non-empty string, so the emptiness check below passed while
+# `token` held junk.
+token=$(runner_shell 'cat /root/.hula/hulactl.yaml' 2>/dev/null \
+    | grep -oE 'token: [^ ]+' | head -1 | awk '{print $2}' || true)
 if [ -z "$token" ]; then
     fail "could not read admin token for form ID lookup" "skipping submit test"
 else

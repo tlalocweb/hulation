@@ -44,9 +44,9 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" RETURN 2>/dev/null || true
 
 # Run the WS client in the background inside the runner.
-dc run --rm -T -d --name hula-ws-probe hulactl-runner sh -c "
-  websocat -v -B 4096 --max-messages 1 'wss://${HULA_HOST}/api/mobile/v1/events' -H 'Authorization: Bearer ${admin_token}' > /tmp/ws.out 2>&1
-" >/dev/null 2>&1 || true
+runner_shell_bg hula-ws-probe "
+  websocat -v -B 4096 --max-messages 1 'wss://${HULA_HOST}/api/mobile/v1/events' -H 'Authorization: Bearer ${admin_token}'
+"
 sleep 1
 
 # Publish via debug endpoint.
