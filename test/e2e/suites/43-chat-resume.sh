@@ -7,15 +7,21 @@
 # a duplicate. A refresh is simulated here by throwing away the first socket
 # and re-credentialing through POST /chat/resume, exactly as the widget does.
 #
-# Asserts:
+# Structured so the core invariants run on plain HTTP and are therefore always
+# exercised in CI. Only the transcript-replay assertion needs a real
+# WebSocket, and `websocat` is absent from the CI runner — gating the whole
+# suite on it (suite 33's pattern) would make this file a green no-op exactly
+# where the regression risk lives.
+#
+# Always asserted (curl only):
 #   1. /chat/resume re-issues a token for the SAME session (never a new one)
-#   2. the reconnected socket replays the transcript as a `history` frame
+#   2. the reissued token differs from the original (it really was re-minted)
 #   3. no duplicate session row is created
-#   4. a visitor `{"type":"close"}` frame closes the session
+#   4. POST /chat/close ends the session (the widget's socket-down fallback)
 #   5. resuming a closed session is refused with code=session_closed
 #
-# Needs `websocat` in the test-runner container; pass-skips gracefully
-# matching suite 33's pattern.
+# Additionally when websocat exists:
+#   6. the reconnected socket replays the transcript as a `history` frame
 
 SERVER_ID="testsite-seed"
 
@@ -38,11 +44,6 @@ if [ "$probe" != "200" ] && [ "$probe" != "404" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
-if ! runner_shell 'command -v websocat' >/dev/null 2>&1; then
-    pass "websocat not installed on runner — chat resume round-trip skipped"
-    return 0 2>/dev/null || exit 0
-fi
-
 # --- 1. Start a chat ------------------------------------------------
 
 start_resp=$(curl_test -s \
@@ -60,14 +61,20 @@ if [ -z "$session_id" ] || [ -z "$chat_token" ]; then
 fi
 pass "suite43 chat started, session ${session_id:0:8}…"
 
-# Send one message over the visitor socket, then drop it. This is the
-# "conversation in progress" the refresh must not lose.
-dc run --rm -T -d --name hula-c43-pre hulactl-runner sh -c "
-  printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite43 pre-refresh msg\"}' \
-    | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4 > /tmp/pre.out 2>&1
-" >/dev/null 2>&1 || true
-sleep 3
-docker rm -f hula-c43-pre >/dev/null 2>&1 || true
+# Optional: put a second message on the record over a socket that we then
+# drop, standing in for "the visitor was mid-conversation when they hit
+# reload". Without websocat the opening message alone carries the replay
+# assertion.
+have_ws=false
+if runner_shell 'command -v websocat' >/dev/null 2>&1; then
+    have_ws=true
+    dc run --rm -T -d --name hula-c43-pre hulactl-runner sh -c "
+      printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite43 pre-refresh msg\"}' \
+        | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4 > /tmp/pre.out 2>&1
+    " >/dev/null 2>&1 || true
+    sleep 3
+    docker rm -f hula-c43-pre >/dev/null 2>&1 || true
+fi
 
 # --- 2. Simulate the refresh: resume with the stored token ----------
 
@@ -85,42 +92,23 @@ if [ -z "$resumed_token" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
+# THE core invariant: resume rejoins, never restarts.
 if [ "$resumed_id" = "$session_id" ]; then
     pass "chat/resume returned the SAME session (no new session minted)"
 else
     fail "chat/resume changed session id: ${resumed_id} != ${session_id}"
 fi
 
-# --- 3. Reconnect: the socket must replay the transcript ------------
-
-dc run --rm -T -d --name hula-c43-post hulactl-runner sh -c "
-  websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${resumed_token}' --max-messages 3 > /tmp/post.out 2>&1
-" >/dev/null 2>&1 || true
-sleep 3
-
-post_out=$(docker logs hula-c43-post 2>/dev/null || true)
-docker rm -f hula-c43-post >/dev/null 2>&1 || true
-
-if echo "$post_out" | grep -q '"type":"history"'; then
-    pass "resumed socket received a history frame"
+if [ "$resumed_token" != "$chat_token" ]; then
+    pass "chat/resume minted a fresh token for the existing session"
 else
-    fail "no history frame after resume (tail: $(echo "$post_out" | tail -c 200))"
+    fail "chat/resume echoed the original token — no re-issue happened"
 fi
 
-# The whole point: the pre-refresh conversation is still there.
-if echo "$post_out" | grep -q 'suite43 pre-refresh msg'; then
-    pass "history replayed the pre-refresh message — chat survived the refresh"
-elif echo "$post_out" | grep -q 'suite43 before refresh'; then
-    pass "history replayed the opening message (WS msg may have raced)"
-else
-    fail "history frame missing prior messages (tail: $(echo "$post_out" | tail -c 250))"
-fi
-
-# --- 4. No duplicate session for this visitor -----------------------
+# --- 3. No duplicate session for this visitor -----------------------
 
 sessions_resp=$(curl_test -s -H "$auth_hdr" \
     "https://${HULA_HOST}/api/v1/chat/admin/sessions?server_id=${SERVER_ID}&q=e2e-suite43" || true)
-# Count how many distinct session ids came back for this visitor id.
 dupe_count=$(echo "$sessions_resp" | grep -oE '"id":"[0-9a-f-]{36}"' | sort -u | wc -l | tr -d ' ')
 if [ "${dupe_count:-0}" -le 1 ]; then
     pass "resume created no duplicate session row (found ${dupe_count})"
@@ -128,21 +116,44 @@ else
     fail "resume left ${dupe_count} sessions for one visitor — duplicate-session bug"
 fi
 
-# --- 5. Visitor ends the chat over the socket -----------------------
+# --- 4. Reconnect replays the transcript (needs a real socket) ------
 
-dc run --rm -T -d --name hula-c43-close hulactl-runner sh -c "
-  printf '%s\n' '{\"type\":\"close\"}' \
-    | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${resumed_token}' --max-messages 4 > /tmp/close.out 2>&1
-" >/dev/null 2>&1 || true
-sleep 3
+if [ "$have_ws" = true ]; then
+    dc run --rm -T -d --name hula-c43-post hulactl-runner sh -c "
+      websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${resumed_token}' --max-messages 3 > /tmp/post.out 2>&1
+    " >/dev/null 2>&1 || true
+    sleep 3
 
-close_out=$(docker logs hula-c43-close 2>/dev/null || true)
-docker rm -f hula-c43-close >/dev/null 2>&1 || true
+    post_out=$(docker logs hula-c43-post 2>/dev/null || true)
+    docker rm -f hula-c43-post >/dev/null 2>&1 || true
 
-if echo "$close_out" | grep -q '"type":"session_closed"'; then
-    pass "visitor close frame produced an authoritative session_closed"
+    if echo "$post_out" | grep -q '"type":"history"'; then
+        pass "resumed socket received a history frame"
+    else
+        fail "no history frame after resume (tail: $(echo "$post_out" | tail -c 200))"
+    fi
+
+    if echo "$post_out" | grep -qE 'suite43 pre-refresh msg|suite43 before refresh'; then
+        pass "history replayed the pre-refresh conversation — chat survived the refresh"
+    else
+        fail "history frame missing prior messages (tail: $(echo "$post_out" | tail -c 250))"
+    fi
 else
-    pass "session_closed not observed on the socket (tail: $(echo "$close_out" | tail -c 200))"
+    pass "websocat absent — transcript-replay assertion skipped (HTTP invariants still ran)"
+fi
+
+# --- 5. Visitor ends the chat (REST fallback path) ------------------
+
+close_resp=$(curl_test -s \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    --data "{\"chat_token\":\"${resumed_token}\"}" \
+    "https://${HULA_HOST}/api/v1/chat/close" || true)
+
+if echo "$close_resp" | grep -q '"ok":true'; then
+    pass "visitor close accepted"
+else
+    fail "visitor close failed (resp=$(echo "$close_resp" | head -c 200))"
 fi
 
 # Authoritative check: the stored session really is terminal.
