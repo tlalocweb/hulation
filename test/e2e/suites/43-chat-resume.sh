@@ -156,14 +156,22 @@ else
     fail "visitor close failed (resp=$(echo "$close_resp" | head -c 200))"
 fi
 
-# Authoritative check: the stored session really is terminal.
+# Authoritative check: the stored session really is terminal. The admin API
+# serialises status as the proto enum (CHAT_SESSION_STATUS_CLOSED), so match
+# any *CLOSED spelling rather than pinning one — and report the status field
+# itself on failure, not the head of the JSON blob, which truncates before
+# reaching it.
 sess_resp=$(curl_test -s -H "$auth_hdr" \
     "https://${HULA_HOST}/api/v1/chat/admin/sessions/${session_id}?server_id=${SERVER_ID}" || true)
-if echo "$sess_resp" | grep -qE '"status":"(closed|CLOSED|SESSION_STATUS_CLOSED)"'; then
-    pass "visitor-ended session persisted as closed"
-else
-    fail "session not closed after visitor close (resp=$(echo "$sess_resp" | head -c 200))"
-fi
+sess_status=$(echo "$sess_resp" | grep -oE '"status": *"[A-Za-z_]+"' | head -1 | cut -d'"' -f4)
+case "$sess_status" in
+    *CLOSED|closed)
+        pass "visitor-ended session persisted as closed (status=${sess_status})"
+        ;;
+    *)
+        fail "session not closed after visitor close (status=${sess_status:-<none>})"
+        ;;
+esac
 
 # --- 6. A closed session is not resumable ---------------------------
 
