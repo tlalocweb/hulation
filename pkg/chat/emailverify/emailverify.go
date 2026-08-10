@@ -99,6 +99,14 @@ func (s *Verifier) Verify(ctx context.Context, email string) (Result, error) {
 	if email == "" {
 		return Result{Email: email, Reason: "syntax"}, fmt.Errorf("%w: empty email", ErrInvalid)
 	}
+	// With DNS disabled we must not call the library's Verify at all: it
+	// performs an MX lookup unconditionally and returns a hard error when
+	// resolution fails, so the failure lands before any per-check gate could
+	// consider it. Run the offline primitives directly instead — they are the
+	// same ones Verify composes, minus the network.
+	if !s.opts.DNSCheck {
+		return s.verifyOffline(email)
+	}
 	// AfterShip's API doesn't take a Context. Run in a goroutine
 	// and fight ctx ourselves so the caller can apply a timeout.
 	type out struct {
@@ -140,7 +148,7 @@ func (s *Verifier) Verify(ctx context.Context, email string) (Result, error) {
 			return Result{Email: email, Reason: "role_account"},
 				fmt.Errorf("%w: role-account address", ErrInvalid)
 		}
-		if s.opts.DNSCheck && !r.HasMxRecords {
+		if !r.HasMxRecords {
 			return Result{Email: email, Reason: "dns"},
 				fmt.Errorf("%w: no MX records", ErrInvalid)
 		}
@@ -152,6 +160,37 @@ func (s *Verifier) Verify(ctx context.Context, email string) (Result, error) {
 		}
 		return Result{Email: email, Reason: "ok"}, nil
 	}
+}
+
+// verifyOffline runs every check that needs no network: syntax, misspell
+// suggestion, disposable-domain and role-account lookups. Used when DNSCheck
+// is disabled.
+//
+// It deliberately mirrors the order of the networked path above so the same
+// input yields the same Reason, and only the MX step is missing. SMTPCheck is
+// ignored here — an SMTP probe without DNS is not possible, and DNSCheck=false
+// already declares this environment can't resolve mail domains.
+func (s *Verifier) verifyOffline(email string) (Result, error) {
+	syn := s.v.ParseAddress(email)
+	if !syn.Valid {
+		return Result{Email: email, Reason: "syntax"},
+			fmt.Errorf("%w: bad syntax", ErrInvalid)
+	}
+	if s.opts.MisspellCheck {
+		if sug := s.v.SuggestDomain(syn.Domain); sug != "" && sug != syn.Domain {
+			return Result{Email: email, Reason: "misspell", Suggestion: sug},
+				fmt.Errorf("%w: suggested %s", ErrInvalid, sug)
+		}
+	}
+	if s.opts.DisposableCheck && s.v.IsDisposable(syn.Domain) {
+		return Result{Email: email, Reason: "disposable"},
+			fmt.Errorf("%w: disposable domain", ErrInvalid)
+	}
+	if s.opts.RoleCheck && s.v.IsRoleAccount(syn.Username) {
+		return Result{Email: email, Reason: "role_account"},
+			fmt.Errorf("%w: role-account address", ErrInvalid)
+	}
+	return Result{Email: email, Reason: "ok"}, nil
 }
 
 // Singleton ----------------------------------------------------

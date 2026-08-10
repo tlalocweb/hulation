@@ -26,6 +26,45 @@ func TestDefaultOptionsEnablesDNSCheck(t *testing.T) {
 	}
 }
 
+// With DNSCheck off the verifier must take a fully offline path. The first
+// attempt at this gated on the MX field of the library's result, which never
+// helped: the library's Verify() performs the lookup unconditionally and
+// returns a hard error when it fails, so the failure landed before any gate.
+// This exercises the real target — an address on a domain that cannot resolve
+// (.local is reserved for mDNS and has no public MX) must still be accepted.
+func TestVerifyOfflineWhenDNSCheckDisabled(t *testing.T) {
+	opts := DefaultOptions()
+	opts.DNSCheck = false
+	v := New(opts)
+
+	res, err := v.Verify(context.Background(), "e2e43@test.local")
+	if err != nil {
+		t.Fatalf("unresolvable domain must pass with DNSCheck=false, got %v", err)
+	}
+	if res.Reason != "ok" {
+		t.Errorf("reason = %q, want ok", res.Reason)
+	}
+
+	// The offline path must still enforce everything that needs no network,
+	// or disabling DNS would silently disable all validation.
+	if _, err := v.Verify(context.Background(), "not-an-email"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("bad syntax must still be rejected offline, got %v", err)
+	}
+	if _, err := v.Verify(context.Background(), ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty address must still be rejected offline, got %v", err)
+	}
+}
+
+// The default path must be unchanged: a domain with no MX is still refused.
+func TestVerifyStillRequiresMXByDefault(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs DNS resolution")
+	}
+	if _, err := New(DefaultOptions()).Verify(context.Background(), "e2e43@test.local"); err == nil {
+		t.Error("with DNSCheck on (default), an unresolvable domain must be rejected")
+	}
+}
+
 func TestVerifyEmptyEmail(t *testing.T) {
 	v := New(DefaultOptions())
 	_, err := v.Verify(context.Background(), "")
