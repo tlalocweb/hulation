@@ -21,6 +21,16 @@ hula_ssl:
 bad_actors:
     disable: true
 
+chat:
+    email_verifier:
+        # The suites use @test.local addresses, which have no MX records and
+        # don't resolve inside the compose network. With the DNS check on,
+        # every /chat/start returns email_invalid and the whole chat surface
+        # (suites 32, 33, 34, 43) silently skip-passes without asserting
+        # anything. Captcha is bypassed the same way via
+        # HULA_CHAT_CAPTCHA_TEST_BYPASS in docker-compose.yaml.
+        dns_check: false
+
 dbconfig:
     host: hula-clickhouse
     port: 9000

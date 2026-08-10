@@ -186,6 +186,13 @@ type ChatEmailVerifierConfig struct {
 	// MisspellCheck surfaces "did you mean gmail.com?" failures.
 	// Default true.
 	MisspellCheck *bool `yaml:"misspell_check,omitempty"`
+	// DNSCheck requires the address's domain to publish MX records.
+	// Default true. Set false where outbound DNS isn't available or
+	// resolvable — a sandboxed test environment, or an intranet
+	// deployment whose mail domain has no public MX. Without an opt-out
+	// this check alone makes chat unusable in those environments, since
+	// every address fails before any other rule is consulted.
+	DNSCheck *bool `yaml:"dns_check,omitempty"`
 }
 
 // ChatOpenAIConfig — populated in stage 4b.3.

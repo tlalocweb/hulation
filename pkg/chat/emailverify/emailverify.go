@@ -45,16 +45,23 @@ type Options struct {
 	DisposableCheck bool
 	RoleCheck       bool
 	MisspellCheck   bool
+	// DNSCheck requires the domain to publish MX records. On by default
+	// (it's the cheapest real signal that an address could receive mail),
+	// but it is the one check that needs working outbound DNS — so a
+	// sandboxed or offline environment must be able to turn it off, the
+	// same way SMTPCheck is opt-in for its network dependency.
+	DNSCheck bool
 }
 
 // DefaultOptions matches the documented production defaults from
-// PLAN_4B.md §5.3: SMTP off; disposable + role + misspell on.
+// PLAN_4B.md §5.3: SMTP off; disposable + role + misspell + DNS on.
 func DefaultOptions() Options {
 	return Options{
 		SMTPCheck:       false,
 		DisposableCheck: true,
 		RoleCheck:       true,
 		MisspellCheck:   true,
+		DNSCheck:        true,
 	}
 }
 
@@ -133,7 +140,7 @@ func (s *Verifier) Verify(ctx context.Context, email string) (Result, error) {
 			return Result{Email: email, Reason: "role_account"},
 				fmt.Errorf("%w: role-account address", ErrInvalid)
 		}
-		if !r.HasMxRecords {
+		if s.opts.DNSCheck && !r.HasMxRecords {
 			return Result{Email: email, Reason: "dns"},
 				fmt.Errorf("%w: no MX records", ErrInvalid)
 		}

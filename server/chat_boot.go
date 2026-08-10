@@ -237,6 +237,12 @@ func emailVerifierFromConfig(cfg *config.Config) *emailverify.Verifier {
 		if c.MisspellCheck != nil {
 			opts.MisspellCheck = *c.MisspellCheck
 		}
+		if c.DNSCheck != nil {
+			opts.DNSCheck = *c.DNSCheck
+			if !*c.DNSCheck {
+				log.Warnf("chat: email MX/DNS check is DISABLED — addresses on non-mail domains will be accepted")
+			}
+		}
 	}
 	v := emailverify.New(opts)
 	emailverify.SetSingleton(v)

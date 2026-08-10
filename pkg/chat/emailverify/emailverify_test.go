@@ -15,6 +15,17 @@ import (
 //     (uses the embedded suggestion list, no network)
 //   - context cancellation surfaces as ctx.Err() not ErrInvalid
 
+// The MX/DNS check is opt-OUT: it must stay on unless an operator
+// deliberately disables it (sandboxed test env, intranet mail domain). Pinning
+// the default here means a future edit can't quietly weaken production address
+// validation — the check is the cheapest real signal an address could receive
+// mail, and turning it off accepts anything syntactically valid.
+func TestDefaultOptionsEnablesDNSCheck(t *testing.T) {
+	if !DefaultOptions().DNSCheck {
+		t.Error("DNSCheck must default to true; disabling it accepts addresses on non-mail domains")
+	}
+}
+
 func TestVerifyEmptyEmail(t *testing.T) {
 	v := New(DefaultOptions())
 	_, err := v.Verify(context.Background(), "")
