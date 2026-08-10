@@ -10,6 +10,7 @@ package server
 // + claims wiring lives there.
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -118,11 +119,29 @@ func registerChatPublic(srv *unified.Server, cfg *config.Config) {
 	// Visitor WebSocket — bound to the same Store + JWT key that
 	// signed the chat token at /chat/start.
 	visitorWS := &chatpkg.VisitorWS{
-		Store:  store,
-		Hub:    chatHubSingleton,
-		JWTKey: cfg.JWTKey,
+		Store:        store,
+		Hub:          chatHubSingleton,
+		JWTKey:       cfg.JWTKey,
+		HistoryLimit: cfg.Chat.ResolveHistoryLimit(),
 	}
 	srv.RegisterCustomHandler("GET /api/v1/chat/ws", chatVisitorWSHandler(visitorWS))
+
+	// Visitor REST surface: resume (re-issue a token for a session the
+	// widget persisted across a page refresh) and close (the visitor
+	// explicitly ends their own chat). Both authenticate with the chat
+	// token — no captcha, no admin JWT.
+	visitorAPI := &chatVisitorAPI{
+		Service:      svc,
+		Store:        store,
+		Hub:          chatHubSingleton,
+		JWTKey:       cfg.JWTKey,
+		ResumeWindow: cfg.Chat.ResolveResumeWindow(),
+		// Separate limiter from /chat/start's: these are cheaper and legitimately
+		// called more often (once per page load, plus reconnects).
+		RateLimit: chatpkg.NewRateLimiter(chatVisitorRateWindow, chatVisitorRateMax),
+	}
+	srv.RegisterCustomHandler("POST /api/v1/chat/resume", chatResumeHandler(visitorAPI))
+	srv.RegisterCustomHandler("POST /api/v1/chat/close", chatVisitorCloseHandler(visitorAPI))
 
 	// Agent WebSocket — admin JWT + chat ACL. Same hub as the
 	// visitor side; multiple agents per session are allowed.
@@ -145,8 +164,23 @@ func registerChatPublic(srv *unified.Server, cfg *config.Config) {
 	}
 	srv.RegisterCustomHandler("GET /api/v1/chat/admin/agent-control-ws", chatAgentControlWSHandler(ctlDeps))
 
-	log.Infof("chat: /api/v1/chat/{start,ws,admin/agent-ws,admin/agent-control-ws} registered (captcha=%s, openai=%v, kill_switch=%v)",
-		captchaName(cc), mod != nil, svc.DisableNewSessions)
+	// Idle sweeper. Sessions now outlive their socket by design (a refresh
+	// resumes rather than restarts), so abandoned chats need closing or the
+	// agent's live queue fills with chats nobody is on the other end of.
+	// Disabled when chat.idle_timeout is "0".
+	if sw := chatpkg.NewSweeper(store, chatHubSingleton, chatpkg.SweeperConfig{
+		IdleTimeout: cfg.Chat.ResolveIdleTimeout(),
+		Interval:    cfg.Chat.ResolveSweepInterval(),
+	}); sw != nil {
+		go sw.Run(context.Background())
+	} else {
+		log.Infof("chat: idle sweeper disabled (chat.idle_timeout=0)")
+	}
+
+	log.Infof("chat: /api/v1/chat/{start,ws,resume,close,admin/agent-ws,admin/agent-control-ws} registered "+
+		"(captcha=%s, openai=%v, kill_switch=%v, resume_window=%s, idle_timeout=%s)",
+		captchaName(cc), mod != nil, svc.DisableNewSessions,
+		cfg.Chat.ResolveResumeWindow(), cfg.Chat.ResolveIdleTimeout())
 
 	// Quiet the "imported and not used" check on http when this
 	// file shrinks in future stages (the WS handler in 4b.4 also

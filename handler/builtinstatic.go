@@ -329,6 +329,10 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 		"server_id":             srv.ID,
 		"chat_start_url":        "/api/v1/chat/start",
 		"chat_ws_url":           "/api/v1/chat/ws",
+		// Resume re-credentials a session the widget persisted across a page
+		// refresh; close ends one explicitly. Both are visitor-token authed.
+		"chat_resume_url":       "/api/v1/chat/resume",
+		"chat_close_url":        "/api/v1/chat/close",
 		"css_url":               "/" + prefix + "styles/hula-chat.css",
 		"captcha_provider":      captchaProvider,
 		"captcha_sitekey":       captchaSitekey,

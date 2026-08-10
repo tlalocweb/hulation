@@ -24,6 +24,10 @@
     serverId:         "{{server_id}}",
     chatStartUrl:     "{{chat_start_url}}",
     chatWsUrl:        "{{chat_ws_url}}",
+    // Resume re-issues a chat token for a session persisted across a page
+    // refresh (never mints a new one); close ends the chat explicitly.
+    chatResumeUrl:    "{{chat_resume_url}}",
+    chatCloseUrl:     "{{chat_close_url}}",
     cssUrl:           "{{css_url}}",
     // captchaProvider is "turnstile" | "recaptcha" | "" (none).
     // sitekey is the per-provider public key; default is what we
@@ -49,6 +53,61 @@
     manifestUrl:      "{{widget_manifest_url}}",
     manifestKey:      "{{widget_manifest_public_key_b64}}",
   };
+
+  // --- Session persistence ------------------------------------------
+  //
+  // The chat session outlives the page. Without this the {session_id,
+  // chat_token} pair lived only in a closure variable, so any refresh
+  // stranded the conversation server-side and started a brand-new one —
+  // the visitor lost their chat and the agent saw a duplicate.
+  //
+  // localStorage (not sessionStorage) so the chat also survives closing the
+  // tab and coming back, which is what an explicit "End chat" implies: the
+  // conversation persists until deliberately ended.
+  //
+  // The stored token is a bearer credential, so: it is scoped per server_id
+  // and re-checked on load (a token minted for one site is never replayed at
+  // another), and it is cleared the moment the session goes terminal. How
+  // long it stays useful is the server's call, not ours — chat.resume_window.
+  //
+  // Every access is guarded: localStorage throws in Safari private mode and
+  // when the visitor has site data disabled. On failure the widget silently
+  // degrades to the old in-memory-only behaviour rather than breaking chat.
+
+  var STORAGE_VERSION = 1;
+  var STORAGE_KEY = "hula-chat:" + CFG.serverId;
+
+  function storageSave(sess, panelOpen) {
+    if (!sess || !sess.chat_token || !sess.session_id) return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        v:          STORAGE_VERSION,
+        server_id:  CFG.serverId,
+        session_id: sess.session_id,
+        chat_token: sess.chat_token,
+        chat_url:   sess.chat_url || "",
+        open:       !!panelOpen,
+      }));
+    } catch (_) { /* private mode / storage disabled — in-memory only */ }
+  }
+
+  function storageLoad() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || s.v !== STORAGE_VERSION) return null;
+      if (!s.chat_token || !s.session_id) return null;
+      // Defence in depth: the key is already server-scoped, but never hand a
+      // token to a host it wasn't issued for.
+      if (s.server_id !== CFG.serverId) return null;
+      return s;
+    } catch (_) { return null; }
+  }
+
+  function storageClear() {
+    try { window.localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+  }
 
   // --- Visitor-chat encryption -------------------------------------
   //
@@ -270,7 +329,13 @@
     root.innerHTML = ''
       + '<header class="hc-bar">'
       +   '<strong>Chat with us</strong>'
-      +   '<button class="hc-close" aria-label="Close">&times;</button>'
+      +   '<span class="hc-bar-actions">'
+      // "End chat" is deliberately distinct from the &times; button: &times;
+      // only hides the panel and leaves the conversation live, whereas this
+      // ends it for good (after confirmation). Hidden until a session exists.
+      +     '<button type="button" class="hc-end" hidden>End chat</button>'
+      +     '<button class="hc-close" aria-label="Close">&times;</button>'
+      +   '</span>'
       + '</header>'
       + '<div class="hc-start">'
       +   '<label>Your email</label>'
@@ -289,6 +354,26 @@
       + '<div class="hc-ended" hidden>'
       +   '<p class="hc-ended-note">This chat has ended.</p>'
       +   '<button type="button" class="hc-primary hc-restart">Start new chat</button>'
+      + '</div>'
+      // Shown when the server reports this session was taken over by another
+      // tab. The socket is NOT auto-reconnected in that state (that would
+      // livelock two tabs kicking each other); the visitor opts back in here.
+      + '<div class="hc-takeover" hidden>'
+      +   '<p class="hc-takeover-note">This chat is open in another tab.</p>'
+      +   '<button type="button" class="hc-primary hc-resume-here">Continue here</button>'
+      + '</div>'
+      // In-widget confirmation for "End chat". Built here rather than using
+      // window.confirm so it is styleable, themed, and doesn't block the JS
+      // thread (which would stall the socket).
+      + '<div class="hc-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="hc-confirm-title">'
+      +   '<div class="hc-confirm-box">'
+      +     '<p class="hc-confirm-title" id="hc-confirm-title">End this chat?</p>'
+      +     '<p class="hc-confirm-note">You won\'t be able to send any more messages in this conversation.</p>'
+      +     '<div class="hc-confirm-actions">'
+      +       '<button type="button" class="hc-btn-secondary hc-confirm-cancel">Cancel</button>'
+      +       '<button type="button" class="hc-btn-danger hc-confirm-ok">End chat</button>'
+      +     '</div>'
+      +   '</div>'
       + '</div>';
     document.body.appendChild(root);
     return root;
@@ -481,13 +566,18 @@
     // the time the visitor finishes typing the form. Non-blocking; the submit
     // handler tolerates it not yet being ready (falls back to plaintext for
     // that one chat-start, then the WS still uses whatever state exists).
-    initEncryption().catch(function () { /* plaintext fallback */ });
+    // The promise is retained because the resume-on-load path below MUST
+    // await it: dialing before the keypair exists would present no ?vpub= and
+    // silently drop the connection to plaintext.
+    var encSettled = initEncryption().catch(function () { return false; });
     var panel = buildPanel();
 
     var startEl    = panel.querySelector(".hc-start");
     var logEl      = panel.querySelector(".hc-log");
     var composerEl = panel.querySelector(".hc-composer");
     var endedEl    = panel.querySelector(".hc-ended");
+    var takeoverEl = panel.querySelector(".hc-takeover");
+    var confirmEl  = panel.querySelector(".hc-confirm");
     var emailInput = panel.querySelector('input[name="email"]');
     var firstInput = panel.querySelector('textarea[name="first"]');
     var msgInput   = panel.querySelector('input[name="msg"]');
@@ -495,6 +585,10 @@
     var sendBtn    = panel.querySelector(".hc-send");
     var restartBtn = panel.querySelector(".hc-restart");
     var closeBtn   = panel.querySelector(".hc-close");
+    var endBtn     = panel.querySelector(".hc-end");
+    var resumeHereBtn  = panel.querySelector(".hc-resume-here");
+    var confirmCancel  = panel.querySelector(".hc-confirm-cancel");
+    var confirmOk      = panel.querySelector(".hc-confirm-ok");
     var captchaContainer = panel.querySelector("#hc-captcha");
     var errorEl    = panel.querySelector("#hc-error");
 
@@ -505,6 +599,31 @@
     // generic "Disconnected." notice — an explicit close is final, not
     // a "you can keep typing" reconnect prompt.
     var chatEnded = false;
+    // takenOver latches when the server reports another tab claimed this
+    // session. Suppresses auto-reconnect: two tabs that both redialled would
+    // kick each other forever.
+    var takenOver = false;
+    // seenIds de-dupes messages that arrive both in the replayed history and
+    // as a live frame (possible for anything published between subscribe and
+    // the history read).
+    var seenIds = {};
+    // historyPending / deferredMsgs hold live frames while an async history
+    // render is in flight, so the authoritative swap can't discard them.
+    var historyPending = false;
+    var deferredMsgs = [];
+    // wsGeneration increments per dial. Reconnects are routine now, so an
+    // in-flight async render from a replaced socket must not overwrite the
+    // current one's transcript when it finally resolves.
+    var wsGeneration = 0;
+    // statusNote is a local-only sys line (e.g. "waiting for an agent") that
+    // must survive a history re-render — the server has no copy of it, so the
+    // authoritative-transcript swap would otherwise drop it for good.
+    var statusNote = "";
+    // Reconnect backoff, reset on every successful open.
+    var RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
+    var backoffIdx = 0;
+    var reconnectTimer = null;
+    var endFallbackTimer = null;
 
     function showError(msg) {
       if (!errorEl) return;
@@ -522,6 +641,9 @@
       panel.classList.add("hc-open");
       panel.setAttribute("aria-hidden", "false");
       (session ? msgInput : emailInput).focus();
+      // Remember the panel was open so a refresh restores it open rather than
+      // collapsed — otherwise "the chat survived" isn't visible to the user.
+      if (session) storageSave(session, true);
       // Lazily load + render the captcha each open. Already-loaded
       // script short-circuits; already-rendered widget gets reset.
       if (CAPTCHA && !session) {
@@ -531,6 +653,9 @@
     function close() {
       panel.classList.remove("hc-open");
       panel.setAttribute("aria-hidden", "true");
+      // Note: this only hides the panel. The socket stays open and the chat
+      // stays live — ending it is the separate "End chat" action.
+      if (session) storageSave(session, false);
     }
 
     closeBtn.addEventListener("click", close);
@@ -603,10 +728,12 @@
         });
       }).then(function (sess) {
         session = sess;
-        startEl.hidden = true;
-        logEl.hidden = false;
-        composerEl.hidden = false;
-        appendMsg("sys", "Session " + sess.session_id.slice(0, 8) + " — waiting for an agent…");
+        // Persist immediately: from here a refresh must resume this session
+        // rather than strand it and start another.
+        storageSave(sess, true);
+        enterChatUI();
+        statusNote = "Session " + sess.session_id.slice(0, 8) + " — waiting for an agent…";
+        appendMsg("sys", statusNote);
         if (first) appendMsg("me", first);
         openWebSocket();
       }).catch(function (e) {
@@ -619,7 +746,216 @@
       });
     });
 
+    // enterChatUI swaps the panel from the pre-chat form to the live
+    // conversation view. Shared by the fresh-start and resume paths.
+    function enterChatUI() {
+      startEl.hidden = true;
+      logEl.hidden = false;
+      composerEl.hidden = false;
+      takeoverEl.hidden = true;
+      endedEl.hidden = true;
+      endBtn.hidden = false;
+    }
+
+    // --- Resume -------------------------------------------------------
+    //
+    // Re-credential a persisted session. Never mints a new one: on any
+    // failure the widget drops the stored session and shows the start form,
+    // so a stale token can't wedge the widget.
+    //
+    // Called both on page load (the refresh case) and before each reconnect —
+    // the chat token is short-lived, so a socket that drops after it expires
+    // needs a fresh one before redialling.
+    function requestResume(chatToken) {
+      return fetch(CFG.chatResumeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "omit",
+        body: JSON.stringify({ chat_token: chatToken }),
+      }).then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) {
+            var err = new Error(body.message || ("chat-resume " + res.status));
+            err.code = body.code || "";
+            throw err;
+          }
+          return body;
+        });
+      });
+    }
+
+    // resumeOnLoad runs at mount when a stored session exists. Success
+    // rebuilds the conversation view and dials the socket, which replays the
+    // transcript. Failure is silent: the visitor just sees the normal start
+    // form, exactly as before this feature existed.
+    function resumeOnLoad(stored) {
+      requestResume(stored.chat_token).then(function (sess) {
+        session = sess;
+        storageSave(sess, stored.open);
+        enterChatUI();
+        openWebSocket();
+        if (stored.open) open();
+      }).catch(function () {
+        // Ended, aged out, or no longer valid — nothing to restore.
+        storageClear();
+      });
+    }
+
+    function clearReconnect() {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    // scheduleReconnect backs off 1/2/4/8/16/30s. Suppressed for terminal and
+    // taken-over sessions — both are states the socket must NOT come back
+    // from on its own.
+    function scheduleReconnect() {
+      if (chatEnded || takenOver || !session) return;
+      var delay = RECONNECT_BACKOFF_MS[Math.min(backoffIdx, RECONNECT_BACKOFF_MS.length - 1)];
+      backoffIdx++;
+      clearReconnect();
+      reconnectTimer = setTimeout(reconnectNow, delay);
+    }
+
+    // reconnectNow refreshes the token first, then redials. Going through
+    // resume (rather than reusing the in-memory token) is what lets a socket
+    // that dropped for longer than the token's 30-minute life come back.
+    function reconnectNow() {
+      if (chatEnded || takenOver || !session) return;
+      requestResume(session.chat_token).then(function (sess) {
+        session = sess;
+        storageSave(sess, panel.classList.contains("hc-open"));
+        openWebSocket();
+      }).catch(function (e) {
+        // The session is gone for good (closed, swept, or past the resume
+        // window). Surface it as a normal ending rather than retrying
+        // forever against something that will never come back.
+        if (e && (e.code === "session_closed" || e.code === "resume_expired" || e.code === "cannot_resume")) {
+          endChat();
+          return;
+        }
+        // Transient (offline, 5xx) — keep trying.
+        scheduleReconnect();
+      });
+    }
+    resumeHereBtn.addEventListener("click", function () {
+      takenOver = false;
+      takeoverEl.hidden = true;
+      composerEl.hidden = false;
+      msgInput.disabled = false;
+      backoffIdx = 0;
+      appendMsg("sys", "Reconnecting…");
+      reconnectNow();
+    });
+
+    // renderHistory replaces the transcript with the server's authoritative
+    // copy. It REPLACES rather than appends so the optimistic local echo of a
+    // just-sent first message doesn't end up duplicated next to its persisted
+    // twin.
+    function renderHistory(items) {
+      if (!items || !items.length) return;
+      // Decryption below is genuinely async (WebCrypto), so live frames can
+      // interleave. Buffer them until the swap is done — see the "msg" case.
+      historyPending = true;
+      deferredMsgs = [];
+      var gen = wsGeneration;
+      var pending = items.map(function (m) {
+        if (m.enc && enc.ready) {
+          var env;
+          try {
+            env = window.HulaVisitorCrypto.b64urlDecode(m.enc);
+          } catch (_) {
+            return Promise.resolve({ m: m, text: "[could not decrypt message]" });
+          }
+          return window.HulaVisitorCrypto.open(enc.sessionPriv, env)
+            .then(function (pt) { return { m: m, text: new TextDecoder().decode(pt) }; })
+            .catch(function () { return { m: m, text: "[could not decrypt message]" }; });
+        }
+        return Promise.resolve({ m: m, text: m.content || "" });
+      });
+      // Promise.all, not a per-message .then: decryption is async, and
+      // resolving out of order would scramble the transcript.
+      Promise.all(pending).then(function (rows) {
+        // A newer dial already owns the log (and the pending-frame buffer);
+        // this render is stale, so drop it rather than overwrite.
+        if (gen !== wsGeneration) return;
+        // Swap in one synchronous block. Clearing before the awaits would
+        // leave the log empty across them, and a live message landing in that
+        // window would end up rendered ABOVE the history that precedes it.
+        logEl.innerHTML = "";
+        seenIds = {};
+        rows.forEach(function (r) {
+          if (r.m.id) seenIds[r.m.id] = true;
+          appendMsg(kindForDirection(r.m.direction), r.text);
+        });
+        // The transcript is authoritative, so the wipe above also removed any
+        // local status line. Restore it — it's UI state the server has no
+        // copy of, and on a fresh start it's the "waiting for an agent" note.
+        if (statusNote) appendMsg("sys", statusNote);
+        // Replay anything that landed mid-render, in arrival order.
+        historyPending = false;
+        var held = deferredMsgs;
+        deferredMsgs = [];
+        held.forEach(handleMsgFrame);
+      }).catch(function () {
+        // Never strand the socket in "buffering" mode — a stuck flag would
+        // silently swallow every subsequent message.
+        if (gen !== wsGeneration) return;
+        historyPending = false;
+        var held = deferredMsgs;
+        deferredMsgs = [];
+        held.forEach(handleMsgFrame);
+      });
+    }
+
+    function kindForDirection(dir) {
+      if (dir === "agent") return "them";
+      if (dir === "visitor") return "me";
+      return "sys";
+    }
+
+    // handleMsgFrame renders one live "msg" frame. Split out of the socket's
+    // message switch so buffered frames (held across a history render) can be
+    // replayed through exactly the same path.
+    function handleMsgFrame(frame) {
+      // Skip anything already rendered from the replayed history.
+      if (frame.id && seenIds[frame.id]) return;
+      if (frame.id) seenIds[frame.id] = true;
+      // Encrypted inbound: open the sealed envelope with our session
+      // private. On failure show a placeholder rather than dropping —
+      // the operator's message still arrived, we just can't render it.
+      if (frame.enc && enc.ready) {
+        var who = frame.direction === "agent" ? "them" : "me";
+        var env;
+        try {
+          env = window.HulaVisitorCrypto.b64urlDecode(frame.enc);
+        } catch (_) {
+          // Decode failure: still surface a placeholder so the operator's
+          // message isn't silently lost.
+          appendMsg(who, "[could not decrypt message]");
+          return;
+        }
+        window.HulaVisitorCrypto.open(enc.sessionPriv, env).then(function (pt) {
+          appendMsg(who, new TextDecoder().decode(pt));
+        }).catch(function () {
+          appendMsg(who, "[could not decrypt message]");
+        });
+        return;
+      }
+      appendMsg(frame.direction === "agent" ? "them" : "me", frame.content || "");
+    }
+
     function openWebSocket() {
+      clearReconnect();
+      // Invalidate any in-flight async work owned by the previous socket.
+      wsGeneration++;
+      historyPending = false;
+      deferredMsgs = [];
+      // Drop any previous socket before dialling a new one so a reconnect
+      // can't leave two live sockets racing onto the same UI.
+      if (ws) {
+        try { ws.onclose = null; ws.close(); } catch (_) {}
+        ws = null;
+      }
       var wsBase = session.chat_url
         || (location.origin.replace(/^http/, "ws") + CFG.chatWsUrl);
       var url = wsBase + "?token=" + encodeURIComponent(session.chat_token);
@@ -630,35 +966,35 @@
       ws = new WebSocket(url);
       ws.onopen = function () {
         sendBtn.disabled = false;
+        backoffIdx = 0;
         msgInput.focus();
       };
       ws.onmessage = function (ev) {
         var frame;
         try { frame = JSON.parse(ev.data); } catch (_) { return; }
         switch (frame.type) {
+          case "history":
+            // Authoritative transcript sent right after connect — this is
+            // what makes a refreshed page look like nothing happened.
+            renderHistory(frame.messages);
+            break;
+          case "session_takeover":
+            // Another tab claimed this session. Go passive: do NOT
+            // reconnect, or the two tabs would kick each other in a loop.
+            takenOver = true;
+            sendBtn.disabled = true;
+            msgInput.disabled = true;
+            composerEl.hidden = true;
+            takeoverEl.hidden = false;
+            clearReconnect();
+            break;
           case "msg":
-            // Encrypted inbound: open the sealed envelope with our session
-            // private. On failure show a placeholder rather than dropping —
-            // the operator's message still arrived, we just can't render it.
-            if (frame.enc && enc.ready) {
-              var who = frame.direction === "agent" ? "them" : "me";
-              var env;
-              try {
-                env = window.HulaVisitorCrypto.b64urlDecode(frame.enc);
-              } catch (_) {
-                // Decode failure: still surface a placeholder so the operator's
-                // message isn't silently lost.
-                appendMsg(who, "[could not decrypt message]");
-                break;
-              }
-              window.HulaVisitorCrypto.open(enc.sessionPriv, env).then(function (pt) {
-                appendMsg(who, new TextDecoder().decode(pt));
-              }).catch(function () {
-                appendMsg(who, "[could not decrypt message]");
-              });
-            } else {
-              appendMsg(frame.direction === "agent" ? "them" : "me", frame.content || "");
-            }
+            // While a history render is in flight the log is about to be
+            // replaced wholesale, so anything appended now would be wiped by
+            // that swap and is NOT in the replayed set (it was published after
+            // the server read it). Hold it and replay it afterwards.
+            if (historyPending) { deferredMsgs.push(frame); break; }
+            handleMsgFrame(frame);
             break;
           case "session_closed":
             // Authoritative terminal signal from the server. The chat
@@ -681,7 +1017,13 @@
         // A terminal close already showed "This chat has ended." — don't
         // follow it with a "Disconnected." that implies reconnect/retry.
         if (chatEnded) return;
-        appendMsg("sys", "Disconnected.");
+        // Taken over by another tab: this socket is meant to stay down.
+        if (takenOver) return;
+        // Otherwise the session is still live — the connection just dropped.
+        // Reconnect rather than stranding the visitor, which is the whole
+        // point of persisting the session.
+        if (backoffIdx === 0) appendMsg("sys", "Reconnecting…");
+        scheduleReconnect();
       };
     }
 
@@ -691,21 +1033,109 @@
     function endChat() {
       if (chatEnded) return;
       chatEnded = true;
+      clearReconnect();
+      if (endFallbackTimer) { clearTimeout(endFallbackTimer); endFallbackTimer = null; }
+      // The session is terminal: drop the persisted credential so a later
+      // refresh starts fresh instead of resuming a dead chat.
+      storageClear();
       msgInput.disabled = true;
       sendBtn.disabled = true;
       composerEl.hidden = true;
+      takeoverEl.hidden = true;
+      endBtn.hidden = true;
       endedEl.hidden = false;
       appendMsg("sys", "This chat has ended.");
       try { if (ws) ws.close(); } catch (_) {}
     }
 
+    // --- End chat (visitor-initiated) ---------------------------------
+
+    var lastFocusedBeforeConfirm = null;
+
+    function openConfirm() {
+      lastFocusedBeforeConfirm = document.activeElement;
+      confirmEl.hidden = false;
+      // Focus the safe option, not the destructive one.
+      confirmCancel.focus();
+    }
+
+    function closeConfirm() {
+      confirmEl.hidden = true;
+      if (lastFocusedBeforeConfirm && lastFocusedBeforeConfirm.focus) {
+        try { lastFocusedBeforeConfirm.focus(); } catch (_) {}
+      }
+    }
+
+    endBtn.addEventListener("click", function () {
+      if (chatEnded) return;
+      openConfirm();
+    });
+    confirmCancel.addEventListener("click", closeConfirm);
+
+    // Keep Tab inside the dialog while it's up, and let Esc dismiss it.
+    confirmEl.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { e.preventDefault(); closeConfirm(); return; }
+      if (e.key !== "Tab") return;
+      var focusables = [confirmCancel, confirmOk];
+      var idx = focusables.indexOf(document.activeElement);
+      e.preventDefault();
+      var next = e.shiftKey ? idx - 1 : idx + 1;
+      if (next < 0) next = focusables.length - 1;
+      if (next >= focusables.length) next = 0;
+      focusables[next].focus();
+    });
+
+    confirmOk.addEventListener("click", function () {
+      closeConfirm();
+      if (chatEnded) return;
+      // Lock the composer immediately — the visitor asked to be done, so no
+      // further typing regardless of how long the server takes to confirm.
+      msgInput.disabled = true;
+      sendBtn.disabled = true;
+      clearReconnect();
+
+      // Prefer the socket. Fall back to REST when it's down: a broken
+      // connection is precisely when someone wants to leave, and without the
+      // fallback that's the one case "End chat" wouldn't work.
+      var viaSocket = false;
+      try {
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: "close" }));
+          viaSocket = true;
+        }
+      } catch (_) {}
+      if (!viaSocket && session && session.chat_token) {
+        fetch(CFG.chatCloseUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "omit",
+          body: JSON.stringify({ chat_token: session.chat_token }),
+        }).catch(function () { /* fallback timer below still ends the UI */ });
+      }
+
+      // The server's session_closed frame is authoritative and normally
+      // lands within a round-trip; endChat() is idempotent, so this timer
+      // only matters when the socket died silently or REST never answered.
+      endFallbackTimer = setTimeout(endChat, 2500);
+    });
+
     // startNewChat tears down the ended session and returns to the start
     // form, so the next "Start chat" mints a brand-new session id.
     function startNewChat() {
-      try { if (ws) ws.close(); } catch (_) {}
+      clearReconnect();
+      try { if (ws) { ws.onclose = null; ws.close(); } } catch (_) {}
       ws = null;
       session = null;
       chatEnded = false;
+      takenOver = false;
+      backoffIdx = 0;
+      seenIds = {};
+      historyPending = false;
+      deferredMsgs = [];
+      statusNote = "";
+      storageClear();
+      takeoverEl.hidden = true;
+      endBtn.hidden = true;
       logEl.innerHTML = "";
       msgInput.disabled = false;
       msgInput.value = "";
@@ -764,6 +1194,17 @@
       });
     } else {
       buildFAB(open);
+    }
+
+    // Restore a chat left running on a previous page view. Deferred until
+    // encryption has settled so the socket presents its ?vpub= and the
+    // replayed transcript comes back sealed rather than in the clear.
+    //
+    // Visitors with no stored session (the common case) do no extra work
+    // here — storageLoad() is a single synchronous read that returns null.
+    var stored = storageLoad();
+    if (stored) {
+      encSettled.then(function () { resumeOnLoad(stored); });
     }
   }
 

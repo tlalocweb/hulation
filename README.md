@@ -176,10 +176,16 @@ Privacy-first visitor analytics, backed by ClickHouse, that never involve a thir
 
 Live visitor-to-agent chat, served from the same origin over **WebSocket** — no third-party widget. Visitors connect through the public `/chat/start` endpoint; agents connect through the admin UI. Sessions move through queued → assigned → open states with agent routing, and are **closable and terminal** (a closed or expired session can't be reopened). The [bad-actor](#security) scorer gates chat start, sharing its rate-limit and abuse signals with HTTP-probe detection.
 
+Chat **survives a page refresh.** The widget persists its session in the browser and re-credentials through `/chat/resume`, so reloading, closing the tab, or reopening the browser rejoins the same conversation — with the transcript replayed on connect — instead of stranding it and starting a duplicate. Visitors can end a chat themselves with an **End chat** button (confirmed, then read-only), and abandoned chats are auto-closed so they don't pile up in the agent's queue.
+
 ```yaml
 chat:
   retention_days: 30
   captcha_provider: turnstile     # or 'recaptcha' | 'none'
+  resume_window: 24h              # how long a visitor may rejoin after last activity
+  idle_timeout: 2h                # auto-close abandoned chats ('0' disables)
+  sweep_interval: 5m              # how often to scan for idle chats
+  history_limit: 200              # messages replayed to a reconnecting widget
 ```
 
 Chat is enabled with sensible defaults even when the `chat:` block is omitted. Optional application-layer encryption (Noise for the mobile gRPC stream, sealed-box for the browser widget) can be layered on top of TLS.

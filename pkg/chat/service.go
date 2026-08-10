@@ -35,6 +35,10 @@ type VisitorWS struct {
 	Store  *Store
 	Hub    *Hub
 	JWTKey string
+	// HistoryLimit caps how many past messages are replayed to the visitor on
+	// connect. A widget that persisted its session across a page refresh has
+	// an empty transcript, so the socket rebuilds it. 0 = 200.
+	HistoryLimit int
 }
 
 // RouterEnqueuer is the small interface Service needs from the

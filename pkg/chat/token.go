@@ -83,16 +83,44 @@ func IssueToken(jwtKey string, sessionID uuid.UUID, visitorID, serverID, email s
 // ParseToken validates the signature, expiry, and subject. Returns
 // the claims on success.
 func ParseToken(jwtKey, token string) (*ChatClaims, error) {
+	return parseToken(jwtKey, token, false)
+}
+
+// ParseTokenAllowExpired validates everything ParseToken does EXCEPT the
+// expiry claim. It exists solely for the resume path (/chat/resume): a widget
+// that persisted its token across a page refresh will routinely present one
+// whose 30-minute TTL lapsed while the visitor was away, and the whole point
+// of resume is to re-issue rather than force a fresh captcha-gated /chat/start.
+//
+// Ignoring `exp` here is safe ONLY because the caller re-derives the real
+// authority from the session row: Service.Resume rejects a terminal session
+// and enforces the configured resume window against the stored
+// last_message_at. The signature, subject and sid/srv shape are still fully
+// validated, so this never widens WHO may resume — only for how long, under a
+// bound the database (not the token) decides.
+//
+// Never use this for /chat/ws: a live socket must hold an unexpired token.
+func ParseTokenAllowExpired(jwtKey, token string) (*ChatClaims, error) {
+	return parseToken(jwtKey, token, true)
+}
+
+func parseToken(jwtKey, token string, allowExpired bool) (*ChatClaims, error) {
 	if jwtKey == "" {
 		return nil, errors.New("chat: missing jwt key")
 	}
 	claims := &ChatClaims{}
+	opts := []jwt.ParserOption{}
+	if allowExpired {
+		// Skip only the time-based claim checks; signature verification and
+		// our own subject/sid/srv checks below are unaffected.
+		opts = append(opts, jwt.WithoutClaimsValidation())
+	}
 	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("chat: unexpected signing method: %v", t.Header["alg"])
 		}
 		return []byte(jwtKey), nil
-	})
+	}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("chat: parse token: %w", err)
 	}
