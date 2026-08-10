@@ -56,11 +56,21 @@ pass "chat/start issued token + session ${session_id:0:8}…"
 
 # --- 2. Visitor opens WS, sends a message, expects ack -------------
 
+# --no-close plus the trailing sleep keep the socket alive long enough to
+# observe the server's reply.
+#
+# websocat sends a WebSocket Close as soon as its stdin reaches EOF (that is
+# precisely what --no-close suppresses), so a bare `printf | websocat` hangs up
+# the instant the message is written. The server still receives and persists
+# the message — which is why the persistence assertion passed — but the ack it
+# writes back lands on a socket that is already going away. The ack was
+# therefore never observable here; the old assertion simply passed regardless,
+# which is how this stayed hidden.
 runner_shell_bg hula-chat-visitor "
-  printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite33 ws msg\"}' \
-    | websocat -v 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4
+  { printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite33 ws msg\"}'; sleep 8; } \
+    | websocat -v --no-close 'wss://${HULA_HOST}/api/v1/chat/ws?token=${chat_token}' --max-messages 4
 "
-sleep 3
+sleep 4
 
 vout=$(docker logs hula-chat-visitor 2>/dev/null || true)
 docker rm -f hula-chat-visitor >/dev/null 2>&1 || true
