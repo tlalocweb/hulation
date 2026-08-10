@@ -357,6 +357,56 @@ func (s *Store) MarkSessionOpen(ctx context.Context, serverID string, id uuid.UU
 	})
 }
 
+// ListStaleSessions returns non-terminal sessions whose last activity is
+// older than cutoff, across EVERY server_id. The idle sweeper uses it to find
+// chats the visitor abandoned so they can be auto-closed instead of sitting in
+// the agent's live queue forever.
+//
+// Deliberately not expressed via ListSessions: that one requires a single
+// server_id (it is the operator-facing, per-tenant reader), whereas the
+// sweeper is a process-wide janitor. Results are capped by limit so one pass
+// can never load an unbounded set; the sweeper simply picks the rest up on its
+// next tick.
+func (s *Store) ListStaleSessions(ctx context.Context, cutoff time.Time, limit uint32) ([]Session, error) {
+	if err := s.checkDB(); err != nil {
+		return nil, err
+	}
+	if limit == 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	// status NOT IN (closed, expired) rather than IN (queued, assigned, open)
+	// so a status added later is swept by default instead of leaking.
+	const q = `
+SELECT id, server_id, visitor_id, visitor_email,
+       visitor_country, visitor_device, IPv6NumToString(visitor_ip), user_agent,
+       started_at, closed_at, last_message_at, message_count,
+       status, assigned_agent_id, assigned_at, meta
+FROM chat_sessions FINAL
+WHERE status NOT IN (?, ?) AND last_message_at < ?
+ORDER BY last_message_at ASC
+LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, StatusClosed, StatusExpired, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("chat: list stale sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // --- Messages ---------------------------------------------------
 
 // AppendMessage persists one chat_messages row. Caller assigns the

@@ -148,14 +148,22 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 		// terminal session — there is no live stream to protect.
 		if !terminalAtConnect {
 			if old := svc.Hub.VisitorSubscriber(sessionID); old != nil {
-				// Send a system close-ish notice; we don't have a
+				// Send a distinct session_takeover frame; we don't have a
 				// handle on the old conn directly, but draining its
 				// Out + closing it via the hub achieves the effect:
 				// the writer goroutine on the old WS will see the
 				// channel close and exit.
+				//
+				// This MUST be distinguishable from an ordinary drop. The
+				// widget reconnects with backoff now that it persists its
+				// session, so if a displaced tab couldn't tell "you were
+				// taken over" from "the network blipped" it would redial and
+				// kick the new tab, which would redial and kick it back —
+				// two tabs livelocking each other forever. On this frame the
+				// widget goes passive instead of reconnecting.
 				_ = trySend(old.Out, mustMarshal(map[string]any{
-					"type":    "system",
-					"content": "Reconnected from another tab; closing this connection.",
+					"type":    "session_takeover",
+					"content": "This chat continued in another tab or window.",
 				}))
 				svc.Hub.Unsubscribe(sessionID, old)
 				close(old.Out)
@@ -191,6 +199,30 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			"type":  "presence",
 			"event": "visitor_connected",
 		}), sub)
+
+		// Replay the transcript. A widget that persisted its session across a
+		// page refresh comes back with an empty log, so the socket rebuilds
+		// it; on a brand-new session this is just the first message.
+		//
+		// Written straight to the conn rather than pushed through sub.Out: the
+		// subscriber buffer holds only SubscriberOutBufferSize (32) frames and
+		// trySend drops on overflow, so a 200-message replay would silently
+		// lose most of itself. Safe to write here because neither the reader
+		// goroutine nor the writer loop has started — this is the only writer.
+		//
+		// Ordering: we Subscribe BEFORE reading history, so a message landing
+		// mid-replay is buffered and delivered after it rather than lost. That
+		// can duplicate a message present in both; the frame carries its id and
+		// the widget de-dupes on it.
+		if frame, herr := visitorHistoryFrame(r.Context(), svc, claims.ServerID, sessionID, encOutbound, visitorPub); herr != nil {
+			// Non-fatal: a live chat without its backlog still beats no chat.
+			log.Warnf("chat ws: history replay: %s", herr)
+		} else if frame != nil {
+			_ = conn.SetWriteDeadline(time.Now().Add(cfg.WriteTimeout))
+			if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+				return
+			}
+		}
 
 		ratelimit := chatpkg.NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
 		// Reset deadlines based on cfg.
@@ -234,6 +266,29 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 						"from":   "visitor",
 						"active": active,
 					}), sub)
+				case "close":
+					// The visitor explicitly ended their own chat ("End chat"
+					// in the widget). Funnels through the same CloseSession
+					// every agent-close path uses, so a visitor-ended session
+					// is terminal in exactly the same way: persisted status,
+					// hub closed-flag, authoritative session_closed broadcast
+					// to the visitor AND any agents in the room.
+					if _, _, cerr := chatpkg.CloseSession(
+						r.Context(), svc.Store, svc.Hub,
+						claims.ServerID, sessionID, chatCloseReasonVisitor,
+					); cerr != nil {
+						if errors.Is(cerr, chatpkg.ErrNotFound) {
+							readOnly = true
+							_ = trySend(sub.Out, chatpkg.SessionClosedFrame(""))
+							continue
+						}
+						log.Warnf("chat ws: visitor close: %s", cerr)
+						_ = trySend(sub.Out, errFrame("internal", "could not end chat"))
+						continue
+					}
+					// CloseSession already broadcast session_closed to every
+					// subscriber including this one, so don't echo it again.
+					readOnly = true
 				case "msg":
 					// Encrypted inbound: Open the sealed envelope to recover
 					// the content. A present `enc` that fails to open is a hard
@@ -347,6 +402,65 @@ func chatVisitorWSHandler(svc *chatpkg.VisitorWS) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// visitorHistoryFrame builds the one-shot transcript frame sent to a visitor
+// right after connect:
+//
+//	{"type":"history","messages":[{"id","direction","content"|"enc","ts"},…]}
+//
+// Returns (nil, nil) when the session has no messages, so a fresh connect
+// doesn't pay for an empty frame.
+//
+// Encryption mirrors the live path: when the connection negotiated a visitor
+// session key (?vpub=), each message's content is sealed to it individually
+// and carried as "enc" instead of "content". maybeSealOutbound can't be reused
+// here because it only rewrites a single top-level "content" field, not an
+// array — but the primitive (sealToVisitor) is the same, so a replayed message
+// is exactly as opaque to a middlebox as a live one. A seal failure downgrades
+// that one message to plaintext rather than dropping it, matching
+// maybeSealOutbound's degrade-don't-drop policy.
+func visitorHistoryFrame(
+	ctx context.Context,
+	svc *chatpkg.VisitorWS,
+	serverID string,
+	sessionID uuid.UUID,
+	encOutbound bool,
+	visitorPub []byte,
+) ([]byte, error) {
+	limit := svc.HistoryLimit
+	if limit <= 0 {
+		limit = 200
+	}
+	msgs, _, err := svc.Store.ListMessages(ctx, serverID, sessionID, uint32(limit), 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		item := map[string]any{
+			"id":        m.ID.String(),
+			"direction": m.Direction,
+			"ts":        m.When,
+		}
+		if encOutbound && m.Content != "" {
+			if envB64, serr := sealToVisitor(visitorPub, []byte(m.Content)); serr == nil {
+				item["enc"] = envB64
+			} else {
+				item["content"] = m.Content
+			}
+		} else {
+			item["content"] = m.Content
+		}
+		out = append(out, item)
+	}
+	return mustMarshal(map[string]any{
+		"type":     "history",
+		"messages": out,
+	}), nil
 }
 
 // serveClosedVisitorWS handles a visitor WebSocket bound to a session

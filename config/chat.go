@@ -1,9 +1,32 @@
 package config
 
+import "time"
+
+const (
+	// DefaultChatResumeWindow is how long after a session's last activity a
+	// visitor may still resume it (POST /chat/resume re-issues a chat token
+	// without re-running captcha). Bounds how long the token persisted in the
+	// browser stays useful.
+	DefaultChatResumeWindow = 24 * time.Hour
+	// DefaultChatIdleTimeout is how long a non-terminal session may sit idle
+	// before the sweeper closes it. Keeps abandoned chats out of the agent's
+	// live queue. Zero disables auto-close.
+	DefaultChatIdleTimeout = 2 * time.Hour
+	// DefaultChatSweepInterval is how often the idle sweeper runs.
+	DefaultChatSweepInterval = 5 * time.Minute
+	// DefaultChatHistoryLimit is how many past messages the visitor WS
+	// replays on connect so a reconnecting widget can rebuild its transcript.
+	DefaultChatHistoryLimit = 200
+)
+
 // ChatConfig holds Phase-4b visitor-chat tunables. All fields
 // optional. Sensible defaults are applied at boot:
 //
 //   retention_days: 365
+//   resume_window:  24h
+//   idle_timeout:   2h
+//   sweep_interval: 5m
+//   history_limit:  200
 //   captcha:        { provider: "turnstile", test_bypass: false }
 //   email_verifier: { smtp_check: false, disposable_check: true,
 //                     role_check: true, misspell_check: true }
@@ -36,6 +59,102 @@ type ChatConfig struct {
 	// POST /chat/start returns 503 with a machine-readable error
 	// code; existing sessions stay live. Useful during spam waves.
 	DisableNewSessions bool `yaml:"disable_new_sessions,omitempty"`
+
+	// ResumeWindow is how long after a session's last activity the visitor
+	// may still resume it, as a Go duration string ("24h", "30m"). The chat
+	// token itself is short-lived (30m); resuming re-issues one without
+	// re-running captcha, so THIS is the knob that governs how long a
+	// browser-persisted session stays usable. Default 24h.
+	//
+	// Note this interacts with IdleTimeout: a session the sweeper has already
+	// closed is terminal, so in practice an idle chat stops being resumable
+	// after IdleTimeout regardless of this value. Resuming a closed session
+	// isn't an error — the widget gets a read-only transcript.
+	ResumeWindow string `yaml:"resume_window,omitempty" default:"24h"`
+
+	// IdleTimeout is how long a non-terminal session may sit with no new
+	// messages before the sweeper closes it, as a Go duration string.
+	// Prevents abandoned chats accumulating in the agent's live queue.
+	// "0" (or a negative duration) disables auto-close entirely. Default 2h.
+	IdleTimeout string `yaml:"idle_timeout,omitempty" default:"2h"`
+
+	// SweepInterval is how often the idle sweeper scans for stale sessions.
+	// Only meaningful when IdleTimeout is enabled. Default 5m.
+	SweepInterval string `yaml:"sweep_interval,omitempty" default:"5m"`
+
+	// HistoryLimit caps how many past messages the visitor WebSocket
+	// replays on connect so a reconnecting widget can rebuild its
+	// transcript. 0 = default (200); the store clamps at 1000.
+	HistoryLimit int `yaml:"history_limit,omitempty"`
+}
+
+// parseDurationOr returns the parsed Go duration string, or def when the
+// string is empty or unparseable. Shared by the Resolve* helpers below so a
+// typo in the config degrades to the documented default rather than a boot
+// failure — matching how ddns.ResolveInterval treats its interval.
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
+}
+
+// ResolveResumeWindow returns the configured resume window, or the 24h
+// default. Nil-safe: a missing `chat:` block resolves to the default.
+func (c *ChatConfig) ResolveResumeWindow() time.Duration {
+	if c == nil {
+		return DefaultChatResumeWindow
+	}
+	d := parseDurationOr(c.ResumeWindow, DefaultChatResumeWindow)
+	if d <= 0 {
+		return DefaultChatResumeWindow
+	}
+	return d
+}
+
+// ResolveIdleTimeout returns the configured idle auto-close timeout, or the
+// 2h default. A configured non-positive duration ("0", "0s") is honoured as
+// "disabled" and returns 0 — distinct from an absent value, which defaults.
+func (c *ChatConfig) ResolveIdleTimeout() time.Duration {
+	if c == nil {
+		return DefaultChatIdleTimeout
+	}
+	if c.IdleTimeout == "" {
+		return DefaultChatIdleTimeout
+	}
+	d, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		return DefaultChatIdleTimeout
+	}
+	if d <= 0 {
+		return 0 // explicitly disabled
+	}
+	return d
+}
+
+// ResolveSweepInterval returns how often the idle sweeper runs, or the 5m
+// default.
+func (c *ChatConfig) ResolveSweepInterval() time.Duration {
+	if c == nil {
+		return DefaultChatSweepInterval
+	}
+	d := parseDurationOr(c.SweepInterval, DefaultChatSweepInterval)
+	if d <= 0 {
+		return DefaultChatSweepInterval
+	}
+	return d
+}
+
+// ResolveHistoryLimit returns how many messages to replay on WS connect.
+func (c *ChatConfig) ResolveHistoryLimit() int {
+	if c == nil || c.HistoryLimit <= 0 {
+		return DefaultChatHistoryLimit
+	}
+	return c.HistoryLimit
 }
 
 // ChatCaptchaConfig — populated in stage 4b.3.
@@ -67,6 +186,13 @@ type ChatEmailVerifierConfig struct {
 	// MisspellCheck surfaces "did you mean gmail.com?" failures.
 	// Default true.
 	MisspellCheck *bool `yaml:"misspell_check,omitempty"`
+	// DNSCheck requires the address's domain to publish MX records.
+	// Default true. Set false where outbound DNS isn't available or
+	// resolvable — a sandboxed test environment, or an intranet
+	// deployment whose mail domain has no public MX. Without an opt-out
+	// this check alone makes chat unusable in those environments, since
+	// every address fails before any other rule is consulted.
+	DNSCheck *bool `yaml:"dns_check,omitempty"`
 }
 
 // ChatOpenAIConfig — populated in stage 4b.3.

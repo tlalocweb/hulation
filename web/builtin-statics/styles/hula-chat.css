@@ -71,7 +71,10 @@
 #hula-chat .hc-start[hidden],
 #hula-chat .hc-log[hidden],
 #hula-chat .hc-composer[hidden],
-#hula-chat .hc-ended[hidden] {
+#hula-chat .hc-ended[hidden],
+#hula-chat .hc-takeover[hidden],
+#hula-chat .hc-confirm[hidden],
+#hula-chat .hc-end[hidden] {
   display: none;
 }
 
@@ -84,6 +87,11 @@
   color: #f9fafb;
   font-weight: 600;
 }
+#hula-chat .hc-bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 #hula-chat .hc-close {
   background: transparent;
   border: none;
@@ -92,6 +100,22 @@
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;
+}
+/* "End chat" sits beside the × but is deliberately quieter than it: × only
+   hides the panel, this ends the conversation. Text (not an icon) so the
+   difference is unambiguous. */
+#hula-chat .hc-end {
+  background: transparent;
+  border: 1px solid rgba(249, 250, 251, 0.35);
+  color: inherit;
+  font: 600 11px/1 inherit;
+  border-radius: 999px;
+  padding: 5px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#hula-chat .hc-end:hover {
+  background: rgba(249, 250, 251, 0.12);
 }
 
 #hula-chat .hc-start {
@@ -246,6 +270,87 @@
   margin-top: 0;
 }
 
+/* Taken-over state: shown in place of the composer when another tab claimed
+   this session. Mirrors .hc-ended's footer treatment. */
+#hula-chat .hc-takeover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+  text-align: center;
+}
+#hula-chat .hc-takeover-note {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+/* "End chat" confirmation. Scoped inside #hula-chat and absolutely
+   positioned over the panel, so it never escapes the widget's stacking
+   context onto the customer's page. */
+#hula-chat .hc-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(17, 24, 39, 0.55);
+}
+#hula-chat .hc-confirm-box {
+  width: 100%;
+  background: #fff;
+  color: #111827;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+}
+#hula-chat .hc-confirm-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+#hula-chat .hc-confirm-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+#hula-chat .hc-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#hula-chat .hc-btn-secondary,
+#hula-chat .hc-btn-danger {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font: 600 13px/1 inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+#hula-chat .hc-btn-secondary {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #d1d5db;
+}
+#hula-chat .hc-btn-danger {
+  background: #b91c1c;
+  color: #fff;
+}
+#hula-chat .hc-btn-danger:hover {
+  background: #991b1b;
+}
+#hula-chat .hc-btn-secondary:focus-visible,
+#hula-chat .hc-btn-danger:focus-visible,
+#hula-chat .hc-end:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 @media (prefers-color-scheme: dark) {
   #hula-chat {
     background: #1f2937;
@@ -269,8 +374,18 @@
     background: #1f2937;
     border-top-color: #374151;
   }
-  #hula-chat .hc-ended {
+  #hula-chat .hc-ended,
+  #hula-chat .hc-takeover {
     background: #1f2937;
     border-top-color: #374151;
+  }
+  #hula-chat .hc-confirm-box {
+    background: #1f2937;
+    color: #f9fafb;
+  }
+  #hula-chat .hc-btn-secondary {
+    background: #374151;
+    color: #f9fafb;
+    border-color: #4b5563;
   }
 }
