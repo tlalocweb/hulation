@@ -25,25 +25,42 @@ assert_contains "$cf_out" "Form created" "createform succeeds"
 token=$(runner_shell 'cat /root/.hula/hulactl.yaml' 2>/dev/null \
     | grep -oE 'token: [^ ]+' | head -1 | awk '{print $2}' || true)
 if [ -z "$token" ]; then
-    fail "could not read admin token for form ID lookup" "skipping submit test"
+    fail "could not read admin token for form ID lookup"
+    return 0 2>/dev/null || exit 0
+fi
+pass "read admin token for form ID lookup"
+
+# Actually USE the token. It was previously read and then never referenced, so
+# nothing verified it was a working credential rather than a junk string —
+# which is precisely how the old broken read went unnoticed. A 200 from an
+# authenticated, permission-gated endpoint proves both.
+forms_status=$(curl_test -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer ${token}" \
+    "https://${HULA_HOST}/api/v1/forms/testsite-seed" || true)
+if [ "$forms_status" = "200" ]; then
+    pass "admin token authenticates against the forms API (HTTP 200)"
 else
-    pass "read admin token for form ID lookup"
+    fail "forms API rejected the admin token (HTTP ${forms_status})"
 fi
 
 # Try modifyform on the just-created form. We don't have the ID, so as a smoke
-# test we pass a fake ID and expect a non-200 response (not a crash).
+# test we pass a fake ID and expect a server error (not a crash).
+#
+# Match on hulactl's actual failure output — it prints "Error: <msg>" — and
+# require the success line to be ABSENT. The old pattern (error|status|400|404,
+# case-insensitive) matched almost any output including a success response, so
+# it could not meaningfully fail.
 mf_out=$(hulactl modifyform "nonexistent-form-id" '{"name":"x","schema":"{}"}' 2>&1 || true)
-# Should be a server error, not a hulactl crash
-if echo "$mf_out" | grep -qiE "error|status|400|404"; then
+if echo "$mf_out" | grep -q 'Error:' && ! echo "$mf_out" | grep -q 'Form created'; then
     pass "modifyform handles unknown form id gracefully"
 else
-    fail "modifyform handles unknown form id gracefully" "got: $(echo "$mf_out" | head -1)"
+    fail "modifyform handles unknown form id gracefully" "got: $(echo "$mf_out" | head -2 | tr '\n' ' ')"
 fi
 
 # submitform with a fake id should return a server error
 sf_out=$(hulactl submitform "nonexistent-form-id" '{"url":"https://site.test.local","fields":{},"sscookie":""}' 2>&1 || true)
-if echo "$sf_out" | grep -qiE "error|status|400|404"; then
+if echo "$sf_out" | grep -q 'Error:'; then
     pass "submitform handles unknown form id gracefully"
 else
-    fail "submitform handles unknown form id gracefully" "got: $(echo "$sf_out" | head -1)"
+    fail "submitform handles unknown form id gracefully" "got: $(echo "$sf_out" | head -2 | tr '\n' ' ')"
 fi

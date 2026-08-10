@@ -28,8 +28,10 @@ if [ "$probe" != "200" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
+# websocat is installed by runner_preamble(); its absence means runner
+# provisioning broke, not that this environment can't run the suite.
 if ! runner_shell 'command -v websocat' >/dev/null 2>&1; then
-    pass "websocat not installed on runner — routing round-trip skipped"
+    fail "websocat missing from the runner — provisioning broken (see runner_preamble in lib/harness.sh)"
     return 0 2>/dev/null || exit 0
 fi
 

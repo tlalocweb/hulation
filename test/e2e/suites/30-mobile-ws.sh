@@ -27,14 +27,19 @@ case "$probe" in
         pass "/api/mobile/v1/events route registered (HTTP ${probe} on non-WS GET)"
         ;;
     *)
-        pass "/api/mobile/v1/events probe unexpected status ${probe} — WS may not be active"
+        # The route is unconditionally registered, so an unexpected status is a
+        # real regression. This used to pass-and-return, which meant a route
+        # that vanished entirely reported success.
+        fail "/api/mobile/v1/events probe unexpected status ${probe} — route may be unregistered"
         return 0 2>/dev/null || exit 0
         ;;
 esac
 
-# websocat availability check.
+# websocat is installed by runner_preamble(), so its absence means runner
+# provisioning broke — fail rather than silently skipping the only assertion
+# this suite exists for.
 if ! runner_shell 'command -v websocat' >/dev/null 2>&1; then
-    pass "websocat not installed on runner — WS propagation probe skipped"
+    fail "websocat missing from the runner — provisioning broken (see runner_preamble in lib/harness.sh)"
     return 0 2>/dev/null || exit 0
 fi
 
@@ -59,18 +64,24 @@ pub_resp=$(curl_test -s \
 if echo "$pub_resp" | grep -q '"delivered_to"'; then
     pass "debug/publish returned delivery count"
 else
-    pass "debug/publish reachable (resp=$(echo "$pub_resp" | head -c 120))"
+    fail "debug/publish did not return a delivery count (resp=$(echo "$pub_resp" | head -c 160))"
 fi
 
-# Give the frame 3s to arrive.
-sleep 3
-out=$(docker logs hula-ws-probe 2>/dev/null || true)
+# Poll rather than sleeping a fixed 3s. The original comment justified an
+# unconditional pass here with "WS plumbing can be slow to settle on a cold
+# compose" — but a pass-on-timeout means this suite's one real assertion could
+# never fail. Waiting longer removes the flake that motivated it; failing after
+# that is then meaningful.
+out=""
+for _ in $(seq 1 15); do
+    out=$(docker logs hula-ws-probe 2>/dev/null || true)
+    echo "$out" | grep -q '"visitor_id":"ws-probe"' && break
+    sleep 1
+done
 docker rm -f hula-ws-probe >/dev/null 2>&1 || true
 
 if echo "$out" | grep -q '"visitor_id":"ws-probe"'; then
     pass "WS frame delivered synthetic event to subscriber"
 else
-    # WS plumbing can be slow to settle on a cold compose; surface
-    # as pass-skip rather than breaking the suite.
-    pass "WS subscriber did not confirm frame within 3s (log tail: $(echo "$out" | tail -c 120))"
+    fail "WS subscriber never received the published frame (log tail: $(echo "$out" | tail -c 160))"
 fi

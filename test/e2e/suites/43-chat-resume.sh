@@ -66,7 +66,12 @@ pass "suite43 chat started, session ${session_id:0:8}…"
 # reload". Without websocat the opening message alone carries the replay
 # assertion.
 have_ws=false
-if runner_shell 'command -v websocat' >/dev/null 2>&1; then
+if ! runner_shell 'command -v websocat' >/dev/null 2>&1; then
+    # Installed by runner_preamble(); absence means provisioning broke. The
+    # HTTP invariants below still run, but the replay assertion — the one that
+    # actually proves a refresh keeps the conversation — would not.
+    fail "websocat missing from the runner — transcript-replay assertion cannot run"
+else
     have_ws=true
     runner_shell_bg hula-c43-pre "
       printf '%s\n' '{\"type\":\"msg\",\"content\":\"suite43 pre-refresh msg\"}' \
@@ -138,8 +143,6 @@ if [ "$have_ws" = true ]; then
     else
         fail "history frame missing prior messages (tail: $(echo "$post_out" | tail -c 250))"
     fi
-else
-    pass "websocat absent — transcript-replay assertion skipped (HTTP invariants still ran)"
 fi
 
 # --- 5. Visitor ends the chat (REST fallback path) ------------------
