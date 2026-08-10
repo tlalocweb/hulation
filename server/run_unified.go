@@ -98,6 +98,11 @@ func RunUnified(parentCtx context.Context, conf *config.Config) (exitcode int) {
 	// the badactor incident recorder once badactor.Init completes.
 	go preloadSlowSubsystems(ctx, conf, srv.SetIncidentRecorder)
 
+	// SIGHUP → config reload. Installed unconditionally and BEFORE the wait
+	// below: Go's default disposition for SIGHUP is to terminate, so without a
+	// handler `hulactl reload` kills the server it means to reload.
+	startSignalReload(ctx)
+
 	// Wait for SIGINT/SIGTERM.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
