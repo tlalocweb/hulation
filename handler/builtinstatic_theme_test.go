@@ -135,3 +135,75 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+// --- panel surfaces -------------------------------------------------------
+
+// Every custom property the stylesheet declares must be wired to a var, in
+// BOTH the base block and the dark-mode block. A missing one renders
+// "--hc-bg: ;" — invalid CSS behind a 200, which is exactly the class of bug
+// that shipped a broken widget last time.
+func TestChatCSSAllCustomPropertiesRendered(t *testing.T) {
+	css := renderChatCSS(t, &config.Server{ID: "s1"}, &config.Config{})
+
+	if strings.Contains(css, "{{") || strings.Contains(css, "}}") {
+		t.Error("stylesheet contains unrendered mustache tags")
+	}
+	for _, prop := range []string{
+		"--hc-accent", "--hc-header-bg", "--hc-header-fg",
+		"--hc-bg", "--hc-text", "--hc-thread-bg", "--hc-bubble", "--hc-input-bg",
+	} {
+		if !strings.Contains(css, prop+":") {
+			t.Errorf("%s is never declared", prop)
+		}
+		if strings.Contains(css, prop+": ;") {
+			t.Errorf("%s rendered empty — not wired into the vars map", prop)
+		}
+	}
+	// Each surface var must be declared twice: base + dark override.
+	for _, prop := range []string{"--hc-bg", "--hc-text", "--hc-thread-bg", "--hc-bubble", "--hc-input-bg"} {
+		if n := strings.Count(css, prop+":"); n < 2 {
+			t.Errorf("%s declared %d time(s); expected a base value and a dark-mode override", prop, n)
+		}
+	}
+}
+
+// The chosen behaviour: a configured colour is emitted for both schemes.
+func TestChatCSSExplicitThemeOverridesDarkMode(t *testing.T) {
+	srv := &config.Server{
+		ID: "gravhl",
+		ChatTheme: &config.ChatThemeConfig{
+			Background: "#fbf7f0",
+			Text:       "#1f2a26",
+		},
+	}
+	css := renderChatCSS(t, srv, &config.Config{})
+
+	i := strings.Index(css, "@media (prefers-color-scheme: dark)")
+	if i < 0 {
+		t.Fatal("dark-mode block missing")
+	}
+	base, dark := css[:i], css[i:]
+
+	if !strings.Contains(base, "--hc-bg: #fbf7f0;") {
+		t.Error("configured background missing from the base block")
+	}
+	if !strings.Contains(dark, "--hc-bg: #fbf7f0;") {
+		t.Error("configured background did not override dark mode")
+	}
+	if strings.Contains(dark, "--hc-bg: "+config.DefaultChatBackgroundDark+";") {
+		t.Error("dark mode still forces hula's dark background over an explicit theme")
+	}
+}
+
+// Unconfigured installs must keep working dark mode — this is what would break
+// if "explicit wins" were implemented by simply deleting the dark overrides.
+func TestChatCSSUnthemedKeepsDarkMode(t *testing.T) {
+	css := renderChatCSS(t, &config.Server{ID: "s1"}, &config.Config{})
+	i := strings.Index(css, "@media (prefers-color-scheme: dark)")
+	if i < 0 {
+		t.Fatal("dark-mode block missing")
+	}
+	if !strings.Contains(css[i:], "--hc-bg: "+config.DefaultChatBackgroundDark+";") {
+		t.Error("unthemed widget lost its dark-mode background")
+	}
+}

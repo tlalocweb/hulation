@@ -11,7 +11,10 @@ package config
 //     malformed value must be REJECTED rather than emitted. A value that can
 //     close the declaration could append arbitrary rules.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestChatThemeDefaultsWhenUnset(t *testing.T) {
 	var nilTheme *ChatThemeConfig
@@ -103,5 +106,109 @@ func TestChatThemeTrimsWhitespace(t *testing.T) {
 	// Whitespace-only is treated as unset, not as an invalid colour.
 	if got := (&ChatThemeConfig{Accent: "   "}).ResolveAccent(nil); got != DefaultChatAccent {
 		t.Errorf("blank accent = %q, want default", got)
+	}
+}
+
+// --- panel surfaces -------------------------------------------------------
+
+func TestChatSurfacesDefaultsIncludeDarkPalette(t *testing.T) {
+	var nilTheme *ChatThemeConfig
+	s := nilTheme.ResolveSurfaces(nil)
+
+	if s.Background != DefaultChatBackground || s.Text != DefaultChatText {
+		t.Errorf("light defaults wrong: bg=%q text=%q", s.Background, s.Text)
+	}
+	// Nothing configured, so dark mode must still get hula's dark palette —
+	// otherwise an unthemed widget would render white for dark-mode visitors.
+	if s.BackgroundDark != DefaultChatBackgroundDark || s.TextDark != DefaultChatTextDark {
+		t.Errorf("dark defaults wrong: bg=%q text=%q", s.BackgroundDark, s.TextDark)
+	}
+	if s.ThreadBackgroundDark != DefaultChatThreadBackgroundDark || s.AgentBubbleDark != DefaultChatAgentBubbleDark {
+		t.Errorf("dark thread/bubble wrong: %q / %q", s.ThreadBackgroundDark, s.AgentBubbleDark)
+	}
+}
+
+// The behaviour chosen for this feature: a configured colour applies in BOTH
+// colour schemes, so a themed widget keeps matching its site for visitors
+// whose OS prefers dark.
+func TestChatSurfacesExplicitConfigWinsOverDarkMode(t *testing.T) {
+	theme := &ChatThemeConfig{
+		Background:       "#fbf7f0", // gravhl cream
+		Text:             "#1f2a26", // gravhl ink
+		ThreadBackground: "#f5efe3",
+		AgentBubble:      "#ede8f5",
+	}
+	s := theme.ResolveSurfaces(nil)
+
+	if s.Background != "#fbf7f0" || s.BackgroundDark != "#fbf7f0" {
+		t.Errorf("configured background must apply in both schemes: light=%q dark=%q", s.Background, s.BackgroundDark)
+	}
+	if s.Text != "#1f2a26" || s.TextDark != "#1f2a26" {
+		t.Errorf("configured text must apply in both schemes: light=%q dark=%q", s.Text, s.TextDark)
+	}
+	if s.ThreadBackground != "#f5efe3" || s.ThreadBackgroundDark != "#f5efe3" {
+		t.Error("configured thread background must apply in both schemes")
+	}
+	if s.AgentBubble != "#ede8f5" || s.AgentBubbleDark != "#ede8f5" {
+		t.Error("configured agent bubble must apply in both schemes")
+	}
+}
+
+// Partial configuration must not drag unrelated colours out of dark mode.
+func TestChatSurfacesPartialConfigKeepsDarkDefaultsForUnsetFields(t *testing.T) {
+	s := (&ChatThemeConfig{Background: "#fbf7f0"}).ResolveSurfaces(nil)
+
+	if s.BackgroundDark != "#fbf7f0" {
+		t.Errorf("set field: dark = %q, want the configured value", s.BackgroundDark)
+	}
+	if s.TextDark != DefaultChatTextDark {
+		t.Errorf("unset field: dark text = %q, want hula's dark default", s.TextDark)
+	}
+	if s.ThreadBackgroundDark != DefaultChatThreadBackgroundDark {
+		t.Errorf("unset field: dark thread = %q, want hula's dark default", s.ThreadBackgroundDark)
+	}
+}
+
+// Inputs follow the panel background rather than being a separate knob.
+func TestChatSurfacesInputFollowsBackground(t *testing.T) {
+	s := (&ChatThemeConfig{Background: "#fbf7f0"}).ResolveSurfaces(nil)
+	if s.InputBackground != "#fbf7f0" || s.InputBackgroundDark != "#fbf7f0" {
+		t.Errorf("input should follow a configured background: %q / %q", s.InputBackground, s.InputBackgroundDark)
+	}
+	// Unconfigured, inputs keep their own light/dark defaults.
+	d := (&ChatThemeConfig{}).ResolveSurfaces(nil)
+	if d.InputBackground != DefaultChatInputBackground || d.InputBackgroundDark != DefaultChatInputBackgroundDark {
+		t.Errorf("unset input defaults wrong: %q / %q", d.InputBackground, d.InputBackgroundDark)
+	}
+}
+
+func TestChatSurfacesVhostOverridesGlobal(t *testing.T) {
+	global := &ChatThemeConfig{Background: "#ffffff", Text: "#000000"}
+	vhost := &ChatThemeConfig{Background: "#fbf7f0"}
+	s := vhost.ResolveSurfaces(global)
+
+	if s.Background != "#fbf7f0" {
+		t.Errorf("vhost background should win: %q", s.Background)
+	}
+	if s.Text != "#000000" {
+		t.Errorf("unset vhost field should inherit global: %q", s.Text)
+	}
+	// Inherited-from-global still counts as configured for dark mode.
+	if s.TextDark != "#000000" {
+		t.Errorf("globally-configured text should apply in dark too: %q", s.TextDark)
+	}
+}
+
+func TestChatSurfacesRejectInjection(t *testing.T) {
+	bad := "#fff; } body { display: none"
+	s := (&ChatThemeConfig{Background: bad, Text: bad, ThreadBackground: bad, AgentBubble: bad}).ResolveSurfaces(nil)
+	for name, got := range map[string]string{
+		"Background": s.Background, "Text": s.Text,
+		"ThreadBackground": s.ThreadBackground, "AgentBubble": s.AgentBubble,
+		"BackgroundDark": s.BackgroundDark, "TextDark": s.TextDark,
+	} {
+		if strings.Contains(got, "body") {
+			t.Errorf("%s emitted an injected value: %q", name, got)
+		}
 	}
 }
