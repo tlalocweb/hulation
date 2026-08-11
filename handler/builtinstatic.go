@@ -325,6 +325,21 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 		}
 	}
 
+	// Theme: per-vhost overrides the installation-wide chat.theme, which in
+	// turn overrides the widget's built-in palette. Both levels are nil-safe,
+	// so an install that configures neither renders exactly as before.
+	var srvTheme *config.ChatThemeConfig
+	if srv != nil {
+		srvTheme = srv.ChatTheme
+	}
+	var globalTheme *config.ChatThemeConfig
+	if cfg != nil {
+		globalTheme = cfg.Chat.ChatTheme()
+	}
+	themeAccent := srvTheme.ResolveAccent(globalTheme)
+	themeHeaderBG := srvTheme.ResolveHeaderBackground(globalTheme)
+	themeHeaderFG := srvTheme.ResolveHeaderText(globalTheme)
+
 	return map[string]string{
 		"server_id":             srv.ID,
 		"chat_start_url":        "/api/v1/chat/start",
@@ -344,5 +359,12 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 		"visitor_crypto_sri":          cryptoSRI,
 		"widget_manifest_url":         manifestURL,
 		"widget_manifest_public_key_b64": manifestPub,
+		// Widget theme. Resolved per-vhost first, then the installation-wide
+		// chat.theme, then the widget's built-in palette — so a multi-brand
+		// deployment can give each host its own colours. Values are validated
+		// as CSS colours in config before reaching the stylesheet.
+		"chat_theme_accent":    themeAccent,
+		"chat_theme_header_bg": themeHeaderBG,
+		"chat_theme_header_fg": themeHeaderFG,
 	}
 }
