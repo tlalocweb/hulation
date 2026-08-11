@@ -1,8 +1,20 @@
 /*
- * Hula built-in chat widget styles. Mustache-templated; today no
- * substitution vars are used but the file is rendered through the
- * same pipeline as hula-chat.js so future theming hooks land in one
- * place.
+ * Hula built-in chat widget styles. Mustache-templated per host.
+ *
+ * Theming: the three brand-carrying colours come from config —
+ * servers[].chat_theme first, then the installation-wide chat.theme,
+ * then the defaults baked in below. They are substituted ONCE into the
+ * custom properties in the block that follows; everything else refers to
+ * var(--hc-*). Add a themable colour by adding a property there, not by
+ * templating another literal into a rule.
+ *
+ * The var() fallbacks repeat the defaults so the stylesheet still renders
+ * correctly if it is ever served unrendered (e.g. copied out as a customer
+ * overlay, where the {{...}} tags are never substituted).
+ *
+ * Greys, spacing and layout are deliberately NOT themable: they carry no
+ * brand, and exposing them would turn every widget change into a
+ * compatibility problem for sites that had pinned them.
  *
  * Scoped to #hula-chat and #hula-chat-fab — no global selectors, so
  * dropping the widget on a customer page never disturbs their layout.
@@ -10,6 +22,13 @@
  * Customer overlay: drop a file at <static-root>/{prefix}styles/hula-chat.css
  * to replace these styles wholesale.
  */
+
+#hula-chat,
+#hula-chat-fab {
+  --hc-accent: {{chat_theme_accent}};
+  --hc-header-bg: {{chat_theme_header_bg}};
+  --hc-header-fg: {{chat_theme_header_fg}};
+}
 
 #hula-chat-fab {
   position: fixed;
@@ -22,7 +41,7 @@
   padding: 12px 18px;
   border: none;
   border-radius: 999px;
-  background: #2563eb;
+  background: var(--hc-accent, #2563eb);
   color: #fff;
   font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
@@ -83,8 +102,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: #111827;
-  color: #f9fafb;
+  background: var(--hc-header-bg, #111827);
+  color: var(--hc-header-fg, #f9fafb);
   font-weight: 600;
 }
 #hula-chat .hc-bar-actions {
@@ -147,7 +166,7 @@
 }
 #hula-chat .hc-primary {
   margin-top: 6px;
-  background: #2563eb;
+  background: var(--hc-accent, #2563eb);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -203,7 +222,7 @@
 }
 #hula-chat .hc-msg-me {
   align-self: flex-end;
-  background: #2563eb;
+  background: var(--hc-accent, #2563eb);
   color: #fff;
   border-bottom-right-radius: 4px;
 }
@@ -236,7 +255,7 @@
   font: inherit;
 }
 #hula-chat .hc-send {
-  background: #2563eb;
+  background: var(--hc-accent, #2563eb);
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -347,7 +366,7 @@
 #hula-chat .hc-btn-secondary:focus-visible,
 #hula-chat .hc-btn-danger:focus-visible,
 #hula-chat .hc-end:focus-visible {
-  outline: 2px solid #2563eb;
+  outline: 2px solid var(--hc-accent, #2563eb);
   outline-offset: 2px;
 }
 

@@ -1,6 +1,12 @@
 package config
 
-import "time"
+import (
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/tlalocweb/hulation/log"
+)
 
 const (
 	// DefaultChatResumeWindow is how long after a session's last activity a
@@ -86,6 +92,19 @@ type ChatConfig struct {
 	// replays on connect so a reconnecting widget can rebuild its
 	// transcript. 0 = default (200); the store clamps at 1000.
 	HistoryLimit int `yaml:"history_limit,omitempty"`
+
+	// Theme recolours the built-in widget installation-wide. Individual
+	// vhosts can override it with servers[].chat_theme.
+	Theme *ChatThemeConfig `yaml:"theme,omitempty" conf:"skipnil"`
+}
+
+// ChatTheme returns the installation-wide theme, or nil when unset. Nil-safe
+// so callers can pass it straight into the per-vhost Resolve* helpers.
+func (c *ChatConfig) ChatTheme() *ChatThemeConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Theme
 }
 
 // parseDurationOr returns the parsed Go duration string, or def when the
@@ -155,6 +174,101 @@ func (c *ChatConfig) ResolveHistoryLimit() int {
 		return DefaultChatHistoryLimit
 	}
 	return c.HistoryLimit
+}
+
+// Built-in chat widget theme defaults. These are the values the shipped
+// stylesheet used as literals before theming existed, so an install that
+// configures nothing renders exactly as it did before.
+const (
+	DefaultChatAccent     = "#2563eb"
+	DefaultChatHeaderBG   = "#111827"
+	DefaultChatHeaderText = "#f9fafb"
+)
+
+// safeCSSColor matches the color syntaxes we are willing to interpolate into
+// the served stylesheet: hex (#rgb/#rgba/#rrggbb/#rrggbbaa), a CSS named
+// colour, or an rgb()/rgba()/hsl()/hsla() function containing only digits,
+// separators and percent signs.
+//
+// This is a whitelist on purpose. These values come from the operator's config
+// and are substituted into a CSS file that browsers execute as a stylesheet;
+// an unvalidated string could close the declaration and append arbitrary rules
+// (`red; } body { display: none`). Operator config is trusted-ish, but a
+// stylesheet is the wrong place to find out a value was malformed — a typo
+// would otherwise silently corrupt every rule after it.
+var safeCSSColor = regexp.MustCompile(
+	`^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20}|(rgb|rgba|hsl|hsla)\([0-9.,%\s/deg]+\))$`)
+
+// ChatThemeConfig recolours the built-in chat widget so it can match the site
+// it is embedded in. Only the brand-carrying colours are exposed; greys,
+// spacing and layout stay with the widget so it keeps working when a site's
+// palette changes.
+//
+// Set globally under `chat.theme`, and/or per vhost under
+// `servers[].chat_theme` — the per-vhost value wins, which is what a
+// deployment serving several brands from one hula needs.
+//
+// For anything beyond colours, the customer-overlay mechanism still applies:
+// dropping a file at <static-root>/<prefix>styles/hula-chat.css replaces the
+// stylesheet wholesale.
+type ChatThemeConfig struct {
+	// Accent is the brand colour: launcher button, primary buttons, the
+	// visitor's own message bubbles, and focus rings. Default #2563eb.
+	Accent string `yaml:"accent,omitempty"`
+	// HeaderBackground is the panel's title-bar background. Default #111827.
+	HeaderBackground string `yaml:"header_background,omitempty"`
+	// HeaderText is the title-bar foreground (title, close/end buttons).
+	// Default #f9fafb.
+	HeaderText string `yaml:"header_text,omitempty"`
+}
+
+// resolveColor returns v when it is a syntactically safe CSS colour, else def.
+// An invalid value is reported so the operator finds out from the log rather
+// than from a broken-looking widget.
+func resolveColor(v, def, field string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return def
+	}
+	if !safeCSSColor.MatchString(v) {
+		log.Warnf("chat theme: %s=%q is not a valid CSS colour — using %s", field, v, def)
+		return def
+	}
+	return v
+}
+
+// ResolveAccent returns the accent colour, falling back to the global theme
+// then the built-in default. Nil-safe at both levels.
+func (t *ChatThemeConfig) ResolveAccent(global *ChatThemeConfig) string {
+	if t != nil && strings.TrimSpace(t.Accent) != "" {
+		return resolveColor(t.Accent, DefaultChatAccent, "accent")
+	}
+	if global != nil {
+		return resolveColor(global.Accent, DefaultChatAccent, "accent")
+	}
+	return DefaultChatAccent
+}
+
+// ResolveHeaderBackground returns the title-bar background colour.
+func (t *ChatThemeConfig) ResolveHeaderBackground(global *ChatThemeConfig) string {
+	if t != nil && strings.TrimSpace(t.HeaderBackground) != "" {
+		return resolveColor(t.HeaderBackground, DefaultChatHeaderBG, "header_background")
+	}
+	if global != nil {
+		return resolveColor(global.HeaderBackground, DefaultChatHeaderBG, "header_background")
+	}
+	return DefaultChatHeaderBG
+}
+
+// ResolveHeaderText returns the title-bar foreground colour.
+func (t *ChatThemeConfig) ResolveHeaderText(global *ChatThemeConfig) string {
+	if t != nil && strings.TrimSpace(t.HeaderText) != "" {
+		return resolveColor(t.HeaderText, DefaultChatHeaderText, "header_text")
+	}
+	if global != nil {
+		return resolveColor(global.HeaderText, DefaultChatHeaderText, "header_text")
+	}
+	return DefaultChatHeaderText
 }
 
 // ChatCaptchaConfig — populated in stage 4b.3.

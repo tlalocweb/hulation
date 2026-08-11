@@ -531,7 +531,14 @@ type Server struct {
 	// list overrides. conf:"skipnil" preserves the opt-in semantics against
 	// conftagz auto-materialisation.
 	DDNS *DDNSRecordConfig `yaml:"ddns,omitempty" conf:"skipnil"`
-	CSP  CSP               `yaml:"csp,omitempty"`
+	// ChatTheme recolours the built-in chat widget for THIS vhost, so one
+	// hula serving several brands can match each site. Overrides the
+	// installation-wide chat.theme; unset fields fall back to it, then to
+	// the widget's built-in palette. conf:"skipnil" keeps "unset" distinct
+	// from "materialised with zero values", which is what the fallback
+	// chain depends on.
+	ChatTheme *ChatThemeConfig `yaml:"chat_theme,omitempty" conf:"skipnil"`
+	CSP       CSP              `yaml:"csp,omitempty"`
 	// HSTS lets the operator override the global tunables.hsts_*
 	// defaults for this specific virtual host. nil = inherit
 	// tunables wholesale. Useful when one server in the multi-vhost

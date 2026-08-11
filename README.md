@@ -186,7 +186,22 @@ chat:
   idle_timeout: 2h                # auto-close abandoned chats ('0' disables)
   sweep_interval: 5m              # how often to scan for idle chats
   history_limit: 200              # messages replayed to a reconnecting widget
+  theme:                          # recolour the built-in widget to match the site
+    accent: "#0f6fff"             # launcher, buttons, visitor bubbles, focus ring
+    header_background: "#111827"
+    header_text: "#f9fafb"
 ```
+
+The widget is served and templated per host, so a single hula fronting several brands can give each its own colours — set `chat_theme` on the vhost and it overrides the installation-wide `chat.theme`, falling back field by field:
+
+```yaml
+servers:
+  - host: www.example.com
+    chat_theme:
+      accent: "#0f6fff"
+```
+
+Only brand-carrying colours are exposed; greys and layout stay with the widget. For anything more, drop a file at `<static-root>/hula-styles/hula-chat.css` and hula serves that instead of the built-in stylesheet.
 
 Chat is enabled with sensible defaults even when the `chat:` block is omitted. Optional application-layer encryption (Noise for the mobile gRPC stream, sealed-box for the browser widget) can be layered on top of TLS.
 
