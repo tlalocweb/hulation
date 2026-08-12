@@ -336,9 +336,7 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 	if cfg != nil {
 		globalTheme = cfg.Chat.ChatTheme()
 	}
-	themeAccent := srvTheme.ResolveAccent(globalTheme)
-	themeHeaderBG := srvTheme.ResolveHeaderBackground(globalTheme)
-	themeHeaderFG := srvTheme.ResolveHeaderText(globalTheme)
+	theme := srvTheme.ResolveSurfaces(globalTheme)
 
 	return map[string]string{
 		"server_id":             srv.ID,
@@ -363,8 +361,26 @@ func buildBuiltinVarsFromConfig(srv *config.Server, cfg *config.Config) map[stri
 		// chat.theme, then the widget's built-in palette — so a multi-brand
 		// deployment can give each host its own colours. Values are validated
 		// as CSS colours in config before reaching the stylesheet.
-		"chat_theme_accent":    themeAccent,
-		"chat_theme_header_bg": themeHeaderBG,
-		"chat_theme_header_fg": themeHeaderFG,
+		//
+		// The *_dark values are what the prefers-color-scheme: dark block
+		// redefines. A colour the operator set explicitly is emitted for BOTH
+		// schemes, so a themed widget keeps matching its site for visitors
+		// whose OS prefers dark; only unset colours fall back to hula's dark
+		// palette.
+		"chat_theme_accent":    theme.Accent,
+		"chat_theme_header_bg": theme.HeaderBackground,
+		"chat_theme_header_fg": theme.HeaderText,
+
+		"chat_theme_bg":        theme.Background,
+		"chat_theme_text":      theme.Text,
+		"chat_theme_thread_bg": theme.ThreadBackground,
+		"chat_theme_bubble":    theme.AgentBubble,
+		"chat_theme_input_bg":  theme.InputBackground,
+
+		"chat_theme_bg_dark":        theme.BackgroundDark,
+		"chat_theme_text_dark":      theme.TextDark,
+		"chat_theme_thread_bg_dark": theme.ThreadBackgroundDark,
+		"chat_theme_bubble_dark":    theme.AgentBubbleDark,
+		"chat_theme_input_bg_dark":  theme.InputBackgroundDark,
 	}
 }

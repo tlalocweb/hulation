@@ -190,7 +190,13 @@ chat:
     accent: "#0f6fff"             # launcher, buttons, visitor bubbles, focus ring
     header_background: "#111827"
     header_text: "#f9fafb"
+    background: "#ffffff"         # panel surface (composer + inputs follow it)
+    text: "#111827"               # panel foreground
+    thread_background: "#f9fafb"  # message area behind the bubbles
+    agent_bubble: "#e5e7eb"       # incoming messages
 ```
+
+A colour you set explicitly applies in **both** light and dark mode, so a themed widget keeps matching its site for visitors whose OS prefers dark; colours you leave unset still follow hula's dark palette.
 
 The widget is served and templated per host, so a single hula fronting several brands can give each its own colours — set `chat_theme` on the vhost and it overrides the installation-wide `chat.theme`, falling back field by field:
 

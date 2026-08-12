@@ -183,6 +183,22 @@ const (
 	DefaultChatAccent     = "#2563eb"
 	DefaultChatHeaderBG   = "#111827"
 	DefaultChatHeaderText = "#f9fafb"
+
+	// Panel surfaces, light mode.
+	DefaultChatBackground       = "#ffffff"
+	DefaultChatText             = "#111827"
+	DefaultChatThreadBackground = "#f9fafb"
+	DefaultChatAgentBubble      = "#e5e7eb"
+	DefaultChatInputBackground  = "#ffffff"
+
+	// Panel surfaces, dark mode. Used ONLY when the operator has not set the
+	// corresponding colour — a configured colour applies in both schemes (see
+	// ResolveSurfaces).
+	DefaultChatBackgroundDark       = "#1f2937"
+	DefaultChatTextDark             = "#f9fafb"
+	DefaultChatThreadBackgroundDark = "#111827"
+	DefaultChatAgentBubbleDark      = "#374151"
+	DefaultChatInputBackgroundDark  = "#111827"
 )
 
 // safeCSSColor matches the color syntaxes we are willing to interpolate into
@@ -220,6 +236,111 @@ type ChatThemeConfig struct {
 	// HeaderText is the title-bar foreground (title, close/end buttons).
 	// Default #f9fafb.
 	HeaderText string `yaml:"header_text,omitempty"`
+
+	// Background is the chat panel's surface — the panel itself, the
+	// composer, the confirm dialog and the input fields. Default #ffffff.
+	Background string `yaml:"background,omitempty"`
+	// Text is the panel foreground: agent message text, notes, labels that
+	// sit on Background. Default #111827.
+	Text string `yaml:"text,omitempty"`
+	// ThreadBackground is the scrolling message area behind the bubbles.
+	// Defaults to a hair off Background (#f9fafb) so the thread reads as a
+	// distinct surface.
+	ThreadBackground string `yaml:"thread_background,omitempty"`
+	// AgentBubble is the incoming (agent) message bubble. The visitor's own
+	// bubbles use Accent, so these two carry the conversation's contrast.
+	// Default #e5e7eb.
+	AgentBubble string `yaml:"agent_bubble,omitempty"`
+}
+
+// ChatSurfaces is the fully-resolved palette handed to the stylesheet: one
+// value per custom property, for each colour scheme.
+type ChatSurfaces struct {
+	Accent           string
+	HeaderBackground string
+	HeaderText       string
+
+	Background       string
+	Text             string
+	ThreadBackground string
+	AgentBubble      string
+	InputBackground  string
+
+	// *Dark are what the prefers-color-scheme: dark block redefines. When the
+	// operator configured the corresponding colour these hold the SAME value,
+	// which is what makes an explicit theme win over dark mode.
+	BackgroundDark       string
+	TextDark             string
+	ThreadBackgroundDark string
+	AgentBubbleDark      string
+	InputBackgroundDark  string
+}
+
+// pickSurface resolves one colour through vhost → global → default, and
+// returns whether it was explicitly configured at either level. The bool is
+// what drives the dark-mode decision: a configured colour is used in BOTH
+// schemes, so a themed widget looks the same to every visitor rather than
+// reverting to hula's palette for anyone with a dark OS preference.
+func pickSurface(vhost, global *ChatThemeConfig, get func(*ChatThemeConfig) string, def, field string) (val string, configured bool) {
+	if vhost != nil {
+		if v := strings.TrimSpace(get(vhost)); v != "" {
+			return resolveColor(v, def, field), true
+		}
+	}
+	if global != nil {
+		if v := strings.TrimSpace(get(global)); v != "" {
+			return resolveColor(v, def, field), true
+		}
+	}
+	return def, false
+}
+
+// darkFor returns the value the dark-mode block should use: the operator's
+// colour when they set one, otherwise the built-in dark default.
+func darkFor(val string, configured bool, darkDefault string) string {
+	if configured {
+		return val
+	}
+	return darkDefault
+}
+
+// ResolveSurfaces resolves the whole widget palette. t is the vhost theme
+// (may be nil), global the installation-wide one (may be nil).
+func (t *ChatThemeConfig) ResolveSurfaces(global *ChatThemeConfig) ChatSurfaces {
+	bg, bgSet := pickSurface(t, global, func(c *ChatThemeConfig) string { return c.Background },
+		DefaultChatBackground, "background")
+	text, textSet := pickSurface(t, global, func(c *ChatThemeConfig) string { return c.Text },
+		DefaultChatText, "text")
+	thread, threadSet := pickSurface(t, global, func(c *ChatThemeConfig) string { return c.ThreadBackground },
+		DefaultChatThreadBackground, "thread_background")
+	bubble, bubbleSet := pickSurface(t, global, func(c *ChatThemeConfig) string { return c.AgentBubble },
+		DefaultChatAgentBubble, "agent_bubble")
+
+	// Inputs and the composer sit on the panel, so they follow Background
+	// rather than being a separate knob — one fewer thing to get wrong, and
+	// an operator setting a cream panel never ends up with white inputs.
+	input := DefaultChatInputBackground
+	if bgSet {
+		input = bg
+	}
+
+	return ChatSurfaces{
+		Accent:           t.ResolveAccent(global),
+		HeaderBackground: t.ResolveHeaderBackground(global),
+		HeaderText:       t.ResolveHeaderText(global),
+
+		Background:       bg,
+		Text:             text,
+		ThreadBackground: thread,
+		AgentBubble:      bubble,
+		InputBackground:  input,
+
+		BackgroundDark:       darkFor(bg, bgSet, DefaultChatBackgroundDark),
+		TextDark:             darkFor(text, textSet, DefaultChatTextDark),
+		ThreadBackgroundDark: darkFor(thread, threadSet, DefaultChatThreadBackgroundDark),
+		AgentBubbleDark:      darkFor(bubble, bubbleSet, DefaultChatAgentBubbleDark),
+		InputBackgroundDark:  darkFor(input, bgSet, DefaultChatInputBackgroundDark),
+	}
 }
 
 // resolveColor returns v when it is a syntactically safe CSS colour, else def.

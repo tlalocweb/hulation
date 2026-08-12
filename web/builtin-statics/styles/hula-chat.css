@@ -1,18 +1,29 @@
 /*
  * Hula built-in chat widget styles. Mustache-templated per host.
  *
- * Theming: the three brand-carrying colours come from config —
+ * Theming: the brand-carrying colours come from config —
  * servers[].chat_theme first, then the installation-wide chat.theme,
  * then the defaults baked in below. They are substituted ONCE into the
  * custom properties in the block that follows; everything else refers to
  * var(--hc-*). Add a themable colour by adding a property there, not by
  * templating another literal into a rule.
  *
+ * Themable: accent (launcher, primary/send buttons, the visitor's own
+ * bubbles, focus rings), the header background/text, and the panel
+ * surfaces — background, text, thread background and the agent bubble.
+ * Input fields follow the panel background rather than being their own
+ * knob, so a cream panel never ends up with white inputs.
+ *
+ * Dark mode redefines the same VARIABLES instead of restating each rule.
+ * A colour the operator configured is emitted there with the same value, so
+ * an explicit theme wins over the visitor's dark preference; only unset
+ * colours fall back to hula's dark palette.
+ *
  * The var() fallbacks repeat the defaults so the stylesheet still renders
  * correctly if it is ever served unrendered (e.g. copied out as a customer
  * overlay, where the {{...}} tags are never substituted).
  *
- * Greys, spacing and layout are deliberately NOT themable: they carry no
+ * Borders, spacing and layout are deliberately NOT themable: they carry no
  * brand, and exposing them would turn every widget change into a
  * compatibility problem for sites that had pinned them.
  *
@@ -28,6 +39,11 @@
   --hc-accent: {{chat_theme_accent}};
   --hc-header-bg: {{chat_theme_header_bg}};
   --hc-header-fg: {{chat_theme_header_fg}};
+  --hc-bg: {{chat_theme_bg}};
+  --hc-text: {{chat_theme_text}};
+  --hc-thread-bg: {{chat_theme_thread_bg}};
+  --hc-bubble: {{chat_theme_bubble}};
+  --hc-input-bg: {{chat_theme_input_bg}};
 }
 
 #hula-chat-fab {
@@ -69,8 +85,8 @@
   height: 480px;
   max-height: calc(100vh - 120px);
   z-index: 2147483001;
-  background: #ffffff;
-  color: #111827;
+  background: var(--hc-bg, #ffffff);
+  color: var(--hc-text, #111827);
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   display: none;
@@ -158,7 +174,7 @@
   padding: 8px 10px;
   font: inherit;
   color: inherit;
-  background: #fff;
+  background: var(--hc-input-bg, #fff);
   resize: vertical;
 }
 #hula-chat .hc-start textarea {
@@ -209,7 +225,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: #f9fafb;
+  background: var(--hc-thread-bg, #f9fafb);
 }
 #hula-chat .hc-msg {
   max-width: 80%;
@@ -228,8 +244,8 @@
 }
 #hula-chat .hc-msg-them {
   align-self: flex-start;
-  background: #e5e7eb;
-  color: #111827;
+  background: var(--hc-bubble, #e5e7eb);
+  color: var(--hc-text, #111827);
   border-bottom-left-radius: 4px;
 }
 #hula-chat .hc-msg-sys {
@@ -245,7 +261,7 @@
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--hc-bg, #fff);
 }
 #hula-chat .hc-composer input[type="text"] {
   flex: 1 1 auto;
@@ -253,6 +269,11 @@
   border-radius: 999px;
   padding: 8px 12px;
   font: inherit;
+  /* Explicit rather than inherited: the dark-mode block used to set this,
+     and now that dark mode only redefines variables, an unset background
+     would leave a browser-default white input on a dark panel. */
+  background: var(--hc-input-bg, #fff);
+  color: inherit;
 }
 #hula-chat .hc-send {
   background: var(--hc-accent, #2563eb);
@@ -277,7 +298,7 @@
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--hc-bg, #fff);
   text-align: center;
 }
 #hula-chat .hc-ended-note {
@@ -297,7 +318,7 @@
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--hc-bg, #fff);
   text-align: center;
 }
 #hula-chat .hc-takeover-note {
@@ -321,8 +342,8 @@
 }
 #hula-chat .hc-confirm-box {
   width: 100%;
-  background: #fff;
-  color: #111827;
+  background: var(--hc-bg, #fff);
+  color: var(--hc-text, #111827);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
@@ -371,36 +392,30 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  #hula-chat {
-    background: #1f2937;
-    color: #f9fafb;
+  /* Redefine the variables rather than restating every rule: any colour the
+     operator configured is emitted here with the SAME value (see
+     ResolveSurfaces), so an explicit theme wins over the visitor's dark
+     preference. Only unset colours fall back to hula's dark palette. */
+  #hula-chat,
+  #hula-chat-fab {
+    --hc-bg: {{chat_theme_bg_dark}};
+    --hc-text: {{chat_theme_text_dark}};
+    --hc-thread-bg: {{chat_theme_thread_bg_dark}};
+    --hc-bubble: {{chat_theme_bubble_dark}};
+    --hc-input-bg: {{chat_theme_input_bg_dark}};
   }
+  /* Borders and the secondary button are not themable; they only need to
+     stop looking like light-mode chrome. */
   #hula-chat .hc-start input[type="email"],
   #hula-chat .hc-start textarea,
   #hula-chat .hc-composer input[type="text"] {
-    background: #111827;
     border-color: #374151;
     color: inherit;
   }
-  #hula-chat .hc-log {
-    background: #111827;
-  }
-  #hula-chat .hc-msg-them {
-    background: #374151;
-    color: #f9fafb;
-  }
-  #hula-chat .hc-composer {
-    background: #1f2937;
-    border-top-color: #374151;
-  }
+  #hula-chat .hc-composer,
   #hula-chat .hc-ended,
   #hula-chat .hc-takeover {
-    background: #1f2937;
     border-top-color: #374151;
-  }
-  #hula-chat .hc-confirm-box {
-    background: #1f2937;
-    color: #f9fafb;
   }
   #hula-chat .hc-btn-secondary {
     background: #374151;
