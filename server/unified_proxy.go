@@ -208,12 +208,16 @@ func (t *grpcAwareTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 // It forwards the original host + scheme via X-Forwarded-* so the upstream can
 // honour its own public_base.
 func newPlainProxy(target *url.URL) http.Handler {
+	return newPlainProxyWithTransport(target, &checkpointBindingTransport{next: newGRPCAwareTransport()})
+}
+
+func newPlainProxyWithTransport(target *url.URL, transport http.RoundTripper) http.Handler {
 	return &httputil.ReverseProxy{
 		// Streaming and trailers come for free: ReverseProxy flushes
 		// immediately when the response has no Content-Length (which gRPC
 		// never sets), and re-adds the `Te: trailers` request header it
 		// would otherwise strip as hop-by-hop.
-		Transport: newGRPCAwareTransport(),
+		Transport: transport,
 		Director: func(req *http.Request) {
 			origHost := req.Host
 			scheme := "http"
@@ -394,11 +398,23 @@ func compileProxyRoutes(proxies []*config.Proxy) []*proxyRoute {
 			log.Errorf("proxy: target %q must be scheme://host[:port] with no path/query/fragment (the request path is forwarded as-is); skipping", targetRaw)
 			continue
 		}
+		handler := newPlainProxy(target)
+		if p.UpstreamTLS != nil {
+			if p.UpstreamTLS.CheckpointBinding && (p.GRPC || domain == "" || path != "/checkpoints") {
+				log.Errorf("checkpoint proxy requires a dedicated host and /checkpoints route")
+				continue
+			}
+			handler, err = newCheckpointProxy(target, p.UpstreamTLS)
+			if err != nil {
+				log.Errorf("checkpoint proxy configuration rejected: %v", err)
+				continue
+			}
+		}
 		routes = append(routes, &proxyRoute{
 			byDomain: domain,
 			byPath:   path,
 			grpc:     p.GRPC,
-			handler:  newPlainProxy(target),
+			handler:  handler,
 		})
 		// Redacted() is defensive (userinfo is rejected above) — keeps any future
 		// credential-bearing string from reaching the log.

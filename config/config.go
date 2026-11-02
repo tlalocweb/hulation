@@ -1220,6 +1220,7 @@ func (cfg *Config) GetHulaACMEHTTPPort() int {
 // behind hulation's TLS via `by_domain: relay.example.com` → `http://127.0.0.1:8088`
 // (add the domain to ssl.acme.domains so hulation provisions its cert).
 type Proxy struct {
+	UpstreamTLS *ProxyUpstreamTLS `yaml:"upstream_tls,omitempty" conf:"skipnil"`
 	// Target URL to forward to, e.g. http://127.0.0.1:8088 (scheme + host[:port]).
 	Target string `yaml:"target,omitempty" test:"~.+"`
 	// by_domain proxies a host (recommended; the matched host is fully delegated
